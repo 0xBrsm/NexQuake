@@ -1,0 +1,103 @@
+# WebQuake Source Provenance
+
+## Upstream Base Source
+
+**Repository:** https://github.com/id-Software/Quake
+**Commit:** HEAD (master branch, depth=1 clone)
+**License:** GPL-2.0-or-later
+**Released:** December 21, 1999 by John Carmack / id Software
+
+### What We Use
+
+- `Quake/WinQuake/` directory - Complete Quake engine source
+- Version: 1.09 (final GPL release)
+
+## Directory Structure
+
+- `client/` - WASM client patches and overlays (tracked in git)
+- `server/` - Headless server patches and overlays (tracked in git)
+- `gateway/` - Go WebSocket proxy (tracked in git)
+- `build/` - Generated build directory (upstream + patches, NOT in git)
+
+## Modification History
+
+This repository builds on multiple layers of work:
+
+1. **id Software** (1999) - Original Quake GPL source
+2. **Gregory Maynard-Hoare** - Original WASM port (GMH-Code/Quake-WASM)
+3. **initialed85** - WebSocket multiplayer and Go gateway (upstream of this fork)
+4. **This repository** - Docker containerization and build system
+
+## Our Source Modifications
+
+This repository contains patches and overlays for two components:
+
+### 1. client/ - WASM Client Port
+**Original WASM port:** Gregory Maynard-Hoare
+**WebSocket layer:** initialed85
+**Purpose:** Enable Quake to run in web browsers via WebAssembly with multiplayer
+
+**Added files:**
+- SDL2 platform layer: sys_sdl.c, vid_sdl.c, snd_sdl.c
+- WebSocket network driver: net_websocket.c, net_websocket.h, net_bsd.c
+- Emscripten build system: Makefile.emscripten, shell.html
+- Patches: net.h.patch, net_main.c.patch, net_dgrm.c.patch, chase.c.patch, d_local.h.patch, d_vars.c.patch, d_edge.c.patch
+
+### 2. server/ - Minimal Headless Server
+**Author:** This repository
+**Purpose:** Clean, dependency-free dedicated server build
+
+**Added files:**
+- `Makefile.dedicated` - Minimal headless server build (no graphics/audio)
+- `sys_linux_stub.c` - Linux stub layer
+- Patches: net_dgrm.c.patch, sv_main.c.patch, host_cmd.c.patch
+
+## Build Process
+
+Builds clone the upstream source and apply patches/overlays:
+
+```bash
+# 1. Clone upstream
+git clone --depth 1 https://github.com/id-Software/Quake.git
+cp -r Quake/WinQuake build
+
+# 2. Apply WASM client patches and overlays
+cp client/net_bsd.c client/net_websocket.c client/net_websocket.h build/
+cp client/snd_sdl.c client/sys_sdl.c client/vid_sdl.c build/
+cp client/Makefile.emscripten client/shell.html build/
+patch -p0 -d build < client/net.h.patch
+patch -p0 -d build < client/net_main.c.patch
+patch -p0 -d build < client/net_dgrm.c.patch
+patch -p0 -d build < client/chase.c.patch
+patch -p0 -d build < client/d_local.h.patch
+patch -p0 -d build < client/d_vars.c.patch
+patch -p0 -d build < client/d_edge.c.patch
+
+# 3. OR apply server patches
+cp server/Makefile.dedicated build/
+patch -p0 -d build < server/net_dgrm.c.patch
+patch -p0 -d build < server/sv_main.c.patch
+patch -p0 -d build < server/host_cmd.c.patch
+cat server/sys_linux_stub.c >> build/sys_linux.c
+
+# 4. Build
+cd build
+make -f Makefile.emscripten        # WASM client
+# OR
+make -f Makefile.dedicated         # Headless server
+```
+
+## Why This Approach?
+
+1. **Clarity** - Easy to see what we added vs. original id Software code
+2. **Provenance** - Always know which upstream version we're based on
+3. **Size** - Repository is ~200KB instead of ~15MB
+4. **Educational** - Clear separation makes changes obvious
+5. **Modularity** - WASM and server changes are independent
+
+## Note on `build/` Directory
+
+The `build/` directory is NOT tracked in git - it's generated during build.
+This is intentional to keep the repository small and focused on our innovations.
+
+If you need to modify the build, edit the files in `client/` or `server/` and re-run the build.

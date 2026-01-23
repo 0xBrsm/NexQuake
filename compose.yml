@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "7071:7071"
+    volumes:
+      # Application binaries and static files (nqwasm, gateway, nqserver)
+      - ./apps:/apps:ro
+      # Game data (id1, mods, mission packs) - read-only
+      - ./data:/data:ro
+      # Server logs, demos, temp files - read-write
+      - ./logs:/logs:rw
+    environment:
+      - QUAKE_DATA_DIR=/data
+      - LOGS_DIR=/logs
+      - CLIENT_DIR=/apps/nqwasm
+      - SERVER_BINARY=/apps/nqserver
+      - GATEWAY_BINARY=/apps/gateway
+      - HTTP_PORT=7071
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7071/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# For production: Configure your own reverse proxy to forward to gateway:7071
+# Examples: Nginx, Traefik, Caddy, HAProxy, or cloud load balancer

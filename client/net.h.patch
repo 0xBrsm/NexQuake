@@ -1,0 +1,10 @@
+--- net.h
++++ net.h
+@@ -314,7 +314,7 @@
+ {
+ 	struct _PollProcedure	*next;
+ 	double					nextTime;
+-	void					(*procedure)();
++	void					(*procedure)(void *arg);
+ 	void					*arg;
+ } PollProcedure;

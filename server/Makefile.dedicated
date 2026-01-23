@@ -1,0 +1,124 @@
+#
+# NetQuake Server Makefile (Full build, can run as dedicated server with -dedicated flag)
+# For x86_64 and ARM64 Linux
+#
+# Builds complete NetQuake server from WinQuake source
+# Based on id Software's WinQuake source
+#
+
+CC?=gcc
+BASE_CFLAGS=-Dstricmp=strcasecmp -fcommon -no-pie -DNO_X86_ASM=1 -fno-strict-aliasing
+RELEASE_CFLAGS=$(BASE_CFLAGS) -O3 -Wall
+DEBUG_CFLAGS=$(BASE_CFLAGS) -g -Wall
+LDFLAGS=-lm -rdynamic
+
+# Detect architecture for build directory naming
+# Can be overridden: make CC=aarch64-linux-gnu-gcc ARCH=aarch64
+ARCH?=$(shell uname -m)
+BUILD_DIR=build-netquake-$(ARCH)
+
+# Use release flags by default
+CFLAGS=$(RELEASE_CFLAGS)
+
+# NetQuake source files (server + client combined)
+# Full WinQuake build with software renderer
+OBJS = \
+	$(BUILD_DIR)/chase.o \
+	$(BUILD_DIR)/cl_demo.o \
+	$(BUILD_DIR)/cl_input.o \
+	$(BUILD_DIR)/cl_main.o \
+	$(BUILD_DIR)/cl_parse.o \
+	$(BUILD_DIR)/cl_tent.o \
+	$(BUILD_DIR)/cmd.o \
+	$(BUILD_DIR)/common.o \
+	$(BUILD_DIR)/console.o \
+	$(BUILD_DIR)/crc.o \
+	$(BUILD_DIR)/cvar.o \
+	$(BUILD_DIR)/host.o \
+	$(BUILD_DIR)/host_cmd.o \
+	$(BUILD_DIR)/keys.o \
+	$(BUILD_DIR)/mathlib.o \
+	$(BUILD_DIR)/menu.o \
+	$(BUILD_DIR)/net_bsd.o \
+	$(BUILD_DIR)/net_dgrm.o \
+	$(BUILD_DIR)/net_loop.o \
+	$(BUILD_DIR)/net_main.o \
+	$(BUILD_DIR)/net_udp.o \
+	$(BUILD_DIR)/net_vcr.o \
+	$(BUILD_DIR)/pr_cmds.o \
+	$(BUILD_DIR)/pr_edict.o \
+	$(BUILD_DIR)/pr_exec.o \
+	$(BUILD_DIR)/r_part.o \
+	$(BUILD_DIR)/sbar.o \
+	$(BUILD_DIR)/sv_main.o \
+	$(BUILD_DIR)/sv_move.o \
+	$(BUILD_DIR)/sv_phys.o \
+	$(BUILD_DIR)/sv_user.o \
+	$(BUILD_DIR)/view.o \
+	$(BUILD_DIR)/wad.o \
+	$(BUILD_DIR)/world.o \
+	$(BUILD_DIR)/zone.o \
+	$(BUILD_DIR)/d_edge.o \
+	$(BUILD_DIR)/d_fill.o \
+	$(BUILD_DIR)/d_init.o \
+	$(BUILD_DIR)/d_modech.o \
+	$(BUILD_DIR)/d_part.o \
+	$(BUILD_DIR)/d_polyse.o \
+	$(BUILD_DIR)/d_scan.o \
+	$(BUILD_DIR)/d_sky.o \
+	$(BUILD_DIR)/d_sprite.o \
+	$(BUILD_DIR)/d_surf.o \
+	$(BUILD_DIR)/d_vars.o \
+	$(BUILD_DIR)/d_zpoint.o \
+	$(BUILD_DIR)/draw.o \
+	$(BUILD_DIR)/model.o \
+	$(BUILD_DIR)/nonintel.o \
+	$(BUILD_DIR)/r_aclip.o \
+	$(BUILD_DIR)/r_alias.o \
+	$(BUILD_DIR)/r_bsp.o \
+	$(BUILD_DIR)/r_draw.o \
+	$(BUILD_DIR)/r_edge.o \
+	$(BUILD_DIR)/r_efrag.o \
+	$(BUILD_DIR)/r_light.o \
+	$(BUILD_DIR)/r_main.o \
+	$(BUILD_DIR)/r_misc.o \
+	$(BUILD_DIR)/r_sky.o \
+	$(BUILD_DIR)/r_sprite.o \
+	$(BUILD_DIR)/r_surf.o \
+	$(BUILD_DIR)/r_vars.o \
+	$(BUILD_DIR)/screen.o \
+	$(BUILD_DIR)/cd_null.o \
+	$(BUILD_DIR)/in_null.o \
+	$(BUILD_DIR)/snd_null.o \
+	$(BUILD_DIR)/sys_linux.o \
+	$(BUILD_DIR)/vid_null.o
+
+.PHONY: all clean debug info
+
+all: $(BUILD_DIR)/nqserver
+
+debug: CFLAGS=$(DEBUG_CFLAGS)
+debug: all
+
+$(BUILD_DIR)/nqserver: $(OBJS)
+	@echo "Linking NetQuake server..."
+	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LDFLAGS)
+	@echo "Built: $@ ($(ARCH))"
+	@echo "Run with -dedicated flag for server mode"
+
+# Build source files
+$(BUILD_DIR)/%.o: %.c
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling $<..."
+	$(CC) $(CFLAGS) -c $< -o $@
+
+clean:
+	rm -rf $(BUILD_DIR)
+	@echo "Cleaned $(BUILD_DIR)"
+
+# Show configuration
+info:
+	@echo "Architecture: $(ARCH)"
+	@echo "Build directory: $(BUILD_DIR)"
+	@echo "Compiler: $(CC)"
+	@echo "Flags: $(CFLAGS)"

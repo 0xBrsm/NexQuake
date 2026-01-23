@@ -1,0 +1,87 @@
+--- net_dgrm.c
++++ net_dgrm.c
+@@ -54,6 +54,9 @@
+ 
+ #include "quakedef.h"
+ #include "net_dgrm.h"
++#ifdef __EMSCRIPTEN__
++#include <emscripten/emscripten.h>
++#endif
+ 
+ // these two macros are to make the code more readable
+ #define sfunc	net_landrivers[sock->landriver]
+@@ -438,9 +441,21 @@
+ 			sock->receiveSequence++;
+ 
+ 			length -= NET_HEADERSIZE;
++			if (length > NET_MAXMESSAGE)
++			{
++				Con_Printf("Datagram_GetMessage: oversize packet (%u)\n", length);
++				sock->receiveMessageLength = 0;
++				continue;
++			}
+ 
+ 			if (flags & NETFLAG_EOM)
+ 			{
++				if (sock->receiveMessageLength + (int)length > NET_MAXMESSAGE)
++				{
++					Con_Printf("Datagram_GetMessage: oversize message (%d)\n", sock->receiveMessageLength + (int)length);
++					sock->receiveMessageLength = 0;
++					continue;
++				}
+ 				SZ_Clear(&net_message);
+ 				SZ_Write(&net_message, sock->receiveMessage, sock->receiveMessageLength);
+ 				SZ_Write(&net_message, packetBuffer.data, length);
+@@ -450,6 +465,12 @@
+ 				break;
+ 			}
+ 
++			if (sock->receiveMessageLength + (int)length > NET_MAXMESSAGE)
++			{
++				Con_Printf("Datagram_GetMessage: oversize message (%d)\n", sock->receiveMessageLength + (int)length);
++				sock->receiveMessageLength = 0;
++				continue;
++			}
+ 			Q_memcpy(sock->receiveMessage + sock->receiveMessageLength, packetBuffer.data, length);
+ 			sock->receiveMessageLength += length;
+ 			continue;
+@@ -516,10 +537,10 @@
+ static int		testDriver;
+ static int		testSocket;
+ 
+-static void Test_Poll(void);
++static void Test_Poll(void *unused);
+ PollProcedure	testPollProcedure = {NULL, 0.0, Test_Poll};
+ 
+-static void Test_Poll(void)
++static void Test_Poll(void *unused)
+ {
+ 	struct qsockaddr clientaddr;
+ 	int		control;
+@@ -644,10 +665,10 @@
+ static int		test2Driver;
+ static int		test2Socket;
+ 
+-static void Test2_Poll(void);
++static void Test2_Poll(void *unused);
+ PollProcedure	test2PollProcedure = {NULL, 0.0, Test2_Poll};
+ 
+-static void Test2_Poll(void)
++static void Test2_Poll(void *unused)
+ {
+ 	struct qsockaddr clientaddr;
+ 	int		control;
+@@ -1302,6 +1323,13 @@
+ 					continue;
+ 				}
+ 			}
++#ifdef __EMSCRIPTEN__
++			// In the browser, the WebSocket onmessage callback cannot run while
++			// the engine spins in a tight loop. Yield briefly so inbound frames
++			// are delivered and queued for dfunc.Read().
++			if (ret == 0)
++				emscripten_sleep(1);
++#endif
+ 		}
+ 		while (ret == 0 && (SetNetTime() - start_time) < 2.5);
+ 		if (ret)
