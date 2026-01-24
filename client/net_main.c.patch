@@ -29,3 +29,13 @@
  {
  	for (net_driverlevel=0; net_driverlevel < net_numdrivers; net_driverlevel++)
  	{
+
+@@ -63,7 +63,7 @@
+ int unreliableMessagesSent = 0;
+ int unreliableMessagesReceived = 0;
+ 
+-cvar_t	net_messagetimeout = {"net_messagetimeout","300"};
++cvar_t	net_messagetimeout = {"net_messagetimeout","30"};
+ cvar_t	hostname = {"hostname", "UNNAMED"};
+ 
+ qboolean	configRestored = false;

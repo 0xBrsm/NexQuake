@@ -50,7 +50,7 @@ This repository contains patches and overlays for two components:
 **Added files:**
 - `Makefile.dedicated` - Minimal headless server build (no graphics/audio)
 - `sys_linux_stub.c` - Linux stub layer
-- Patches: net_dgrm.c.patch, sv_main.c.patch, host_cmd.c.patch
+- Patches: net_dgrm.c.patch, net_main.c.patch, sv_main.c.patch, host_cmd.c.patch, pr_cmds.c.patch
 
 ## Build Process
 
@@ -76,8 +76,10 @@ patch -p0 -d build < client/d_edge.c.patch
 # 3. OR apply server patches
 cp server/Makefile.dedicated build/
 patch -p0 -d build < server/net_dgrm.c.patch
+patch -p0 -d build < server/net_main.c.patch
 patch -p0 -d build < server/sv_main.c.patch
 patch -p0 -d build < server/host_cmd.c.patch
+patch -p0 -d build < server/pr_cmds.c.patch
 cat server/sys_linux_stub.c >> build/sys_linux.c
 
 # 4. Build

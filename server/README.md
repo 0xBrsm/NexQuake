@@ -7,8 +7,10 @@ Build configuration for a NetQuake dedicated server from id Software's WinQuake 
 - `Makefile.dedicated` - Builds full NetQuake with null drivers
 - `sys_linux_stub.c` - Stub for `Sys_SendKeyEvents()` function
 - `net_dgrm.c.patch` - Fixes Quake’s built-in `BAN_TEST` POSIX fallback structs on 64-bit (prevents bogus `You have been banned.` rejects)
+- `net_main.c.patch` - Reduces `net_messagetimeout` from 300s to 30s (faster dead-client cleanup)
 - `sv_main.c.patch` - Fixes 64-bit `string_t` assignments for worldspawn/map globals (uses `ED_NewString`)
 - `host_cmd.c.patch` - Fixes 64-bit `string_t` assignments for player name globals (uses `ED_NewString`)
+- `pr_cmds.c.patch` - Fixes 64-bit `string_t` return values for `ftos`/`vtos` (prevents disconnect crashes in QuakeC)
 
 ## Approach
 
@@ -36,8 +38,10 @@ cp /path/to/src/server/Makefile.dedicated .
 
 # Apply 64-bit progs string fixes
 patch -p0 < /path/to/src/server/net_dgrm.c.patch
+patch -p0 < /path/to/src/server/net_main.c.patch
 patch -p0 < /path/to/src/server/sv_main.c.patch
 patch -p0 < /path/to/src/server/host_cmd.c.patch
+patch -p0 < /path/to/src/server/pr_cmds.c.patch
 
 # Append stub to sys_linux.c
 cat /path/to/src/server/sys_linux_stub.c >> sys_linux.c
@@ -52,7 +56,7 @@ Output: `build-netquake-{arch}/nqserver`
 ## Running
 
 ```bash
-./nqserver -dedicated +map e1m1
+./nqserver -dedicated
 ```
 
 ## NetQuake vs QuakeWorld

@@ -24,7 +24,7 @@ RUN mkdir -p /apps /data /logs
 ENV HTTP_PORT=7071 \
     QUAKE_DATA_DIR=/data \
     LOGS_DIR=/logs \
-    STATIC_DIR=/apps/nqwasm \
+    CLIENT_DIR=/apps/nqwasm \
     SERVER_BINARY=/apps/nqserver \
     GATEWAY_BINARY=/apps/gateway
 

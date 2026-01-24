@@ -38,7 +38,7 @@ func main() {
 	// Get configuration from environment (matching start.sh defaults)
 	httpPort := getEnv("HTTP_PORT", "7071")
 	dataDir := getEnv("QUAKE_DATA_DIR", "/data")
-	staticDir := getEnv("CLIENT_DIR", "/apps/nqwasm")
+	clientDir := getEnv("CLIENT_DIR", "/apps/nqwasm")
 	corsOrigin := getEnv("CORS_ALLOWED_ORIGIN", "*")
 	wsOrigin := getEnv("WS_ALLOWED_ORIGIN", "*")
 	debugBrowserConsole := getEnv("DEBUG_BROWSER_CONSOLE", "") != ""
@@ -156,13 +156,13 @@ func main() {
 	dataFS := http.FileServer(http.Dir(dataDir))
 	mux.Handle("/data/", addCORSHeaders(contentTypeOverride(http.StripPrefix("/data/", dataFS)), corsOrigin))
 
-	// Serve static files (WASM client, HTML, JS, CSS)
-	staticFS := http.FileServer(http.Dir(staticDir))
-	staticHandler := http.Handler(staticFS)
+	// Serve client files (WASM, HTML, JS, CSS)
+	clientFS := http.FileServer(http.Dir(clientDir))
+	clientHandler := http.Handler(clientFS)
 	if debugBrowserConsole {
-		staticHandler = maybeInjectDebugConsole(staticDir, staticHandler)
+		clientHandler = maybeInjectDebugConsole(clientDir, clientHandler)
 	}
-	mux.Handle("/", addCORSHeaders(contentTypeOverride(cacheControlStatic(staticHandler)), corsOrigin))
+	mux.Handle("/", addCORSHeaders(contentTypeOverride(cacheControlClient(clientHandler)), corsOrigin))
 
 	// Create server
 	server := &http.Server{
@@ -218,7 +218,7 @@ func contentTypeOverride(h http.Handler) http.Handler {
 	})
 }
 
-func cacheControlStatic(h http.Handler) http.Handler {
+func cacheControlClient(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// If another layer already set Cache-Control (e.g. reverse proxy), keep it.
 		if w.Header().Get("Cache-Control") == "" {
@@ -241,7 +241,7 @@ func cacheControlStatic(h http.Handler) http.Handler {
 	})
 }
 
-func maybeInjectDebugConsole(staticDir string, fallback http.Handler) http.Handler {
+func maybeInjectDebugConsole(clientDir string, fallback http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Only inject when explicitly requested (avoid perturbing normal runs).
 		if r.URL.Query().Get("debug_console") != "1" {
@@ -259,13 +259,13 @@ func maybeInjectDebugConsole(staticDir string, fallback http.Handler) http.Handl
 		}
 
 		rel := filepath.Clean(strings.TrimPrefix(path, "/"))
-		// Prevent traversal outside staticDir.
+		// Prevent traversal outside clientDir.
 		if rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
 			fallback.ServeHTTP(w, r)
 			return
 		}
 
-		full := filepath.Join(staticDir, rel)
+		full := filepath.Join(clientDir, rel)
 		contents, err := os.ReadFile(full)
 		if err != nil {
 			fallback.ServeHTTP(w, r)

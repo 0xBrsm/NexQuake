@@ -23,6 +23,10 @@ type UDPRelay struct {
 	clientToServer chan []byte
 	dstMu          sync.RWMutex
 	dstAddr        *net.UDPAddr
+
+	seqMu                sync.Mutex
+	lastClientUnreliable uint32
+	haveClientUnreliable bool
 }
 
 // NewUDPRelay creates a new UDP relay for a client connection
@@ -86,8 +90,54 @@ func (r *UDPRelay) Start() {
 
 // Stop stops the relay and cleans up resources
 func (r *UDPRelay) Stop() {
+	r.sendClientDisconnectToServer()
 	r.cancel()
 	_ = r.udpConn.Close()
+}
+
+func (r *UDPRelay) noteClientUnreliableSeq(seq uint32) {
+	r.seqMu.Lock()
+	r.lastClientUnreliable = seq
+	r.haveClientUnreliable = true
+	r.seqMu.Unlock()
+}
+
+func (r *UDPRelay) sendClientDisconnectToServer() {
+	r.seqMu.Lock()
+	have := r.haveClientUnreliable
+	last := r.lastClientUnreliable
+	r.seqMu.Unlock()
+	if !have {
+		return
+	}
+
+	// Craft a minimal NetQuake unreliable packet whose payload is a single
+	// `clc_disconnect` byte. This lets the server drop the client immediately
+	// when the WebSocket closes (when possible), rather than waiting for
+	// net_messagetimeout.
+	const (
+		netFlagUnreliable = 0x00100000
+		netHeaderSize     = 8
+		clcDisconnect     = 2
+	)
+
+	packetLen := netHeaderSize + 1
+	packet := make([]byte, packetLen)
+	binary.BigEndian.PutUint32(packet[0:4], uint32(packetLen)|netFlagUnreliable)
+	binary.BigEndian.PutUint32(packet[4:8], last+1)
+	packet[8] = clcDisconnect
+
+	r.dstMu.RLock()
+	dst := &net.UDPAddr{
+		IP:   append([]byte(nil), r.dstAddr.IP...),
+		Port: r.dstAddr.Port,
+		Zone: r.dstAddr.Zone,
+	}
+	r.dstMu.RUnlock()
+
+	if _, err := r.udpConn.WriteToUDP(packet, dst); err == nil {
+		debugf("Sent clc_disconnect to server at %s", dst.String())
+	}
 }
 
 // SendToServer queues a packet to be sent to the UDP server
@@ -255,6 +305,13 @@ func (r *UDPRelay) udpWriter() {
 				if flags == 0x80000000 {
 					cmd = packet[4]
 				}
+			}
+
+			// Track the last client unreliable sequence so we can send a best-effort
+			// clc_disconnect when the WebSocket closes.
+			if flags == 0x00100000 && len(packet) >= 8 {
+				seq := binary.BigEndian.Uint32(packet[4:8])
+				r.noteClientUnreliableSeq(seq)
 			}
 
 			// If the client starts a new out-of-band NetQuake handshake (connect/info),

@@ -86,7 +86,11 @@ pick_udp_port() {
         return 0
     fi
 
-    for i in $(seq 0 "$max_tries"); do
+    if [ "$max_tries" -lt 1 ]; then
+        max_tries=1
+    fi
+
+    for i in $(seq 0 $((max_tries - 1))); do
         local port=$((start_port + i))
         if python3 - "$port" <<'PY' >/dev/null 2>&1; then
 import socket, sys
@@ -102,8 +106,8 @@ PY
         fi
     done
 
-    echo "$start_port"
-    return 0
+    echo "ERROR: Could not find an open UDP port after ${max_tries} attempts." >&2
+    return 1
 }
 
 # Function to spawn a server for a mod
@@ -134,7 +138,6 @@ spawn_server() {
     # -game: Specify mod directory
     # -port: UDP port
     # +maxplayers: Max players (16)
-    # +map: Initial map
     cd "$QUAKE_DATA_DIR"
 
     # When stdout is redirected to a file, libc can fully-buffer output; this

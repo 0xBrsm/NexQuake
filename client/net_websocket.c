@@ -20,7 +20,12 @@ Added by initialed85
 #include "net_websocket.h"
 
 #define DEFAULT_WEBSOCKET_URL "ws://localhost:7071/ws"
-#define MAX_WS_MESSAGES 256 // size of an array using a unsigned char as an index
+// Incoming WebSocket frames are queued here until the Quake net loop drains them.
+// In browsers, the main loop can be throttled (background tabs, long frames),
+// while WebSocket events may still deliver bursts of packets. A small ring buffer
+// can overflow and force disconnects. Use a larger queue and drop the oldest
+// packet on overflow (mirrors how UDP socket buffers behave under load).
+#define MAX_WS_MESSAGES 2048
 
 // For NetQuake datagrams, payloads should fit in NET_DATAGRAMSIZE.
 #define MAX_WS_MESSAGE_SIZE NET_DATAGRAMSIZE
@@ -79,15 +84,13 @@ static EMSCRIPTEN_WEBSOCKET_T ws;
 
 struct
 {
-	unsigned char read_index;
-	unsigned char write_index;
+	uint16_t read_index;
+	uint16_t write_index;
 	WsMessage messages[MAX_WS_MESSAGES];
 } wsMessages = {0};
 
 static void WebSocket_ResetMessageQueue(void)
 {
-	for (int i = 0; i < MAX_WS_MESSAGES; i++)
-		wsMessages.messages[i].length = 0;
 	wsMessages.read_index = 0;
 	wsMessages.write_index = 0;
 }
@@ -192,24 +195,29 @@ EM_BOOL _WebSocket_onmessage(int eventType, const EmscriptenWebSocketMessageEven
 
 	// Queue packet (ring buffer).
 	{
-		int delta = wsMessages.write_index - wsMessages.read_index;
-		if (delta < 0)
-			delta += MAX_WS_MESSAGES;
-
-		if ((unsigned char)(wsMessages.write_index + 1) == wsMessages.read_index)
+		uint16_t next = (uint16_t)((wsMessages.write_index + 1u) % MAX_WS_MESSAGES);
+		if (next == wsMessages.read_index)
 		{
-			Sys_Printf("_WebSocket_onmessage: wsMessages buffer overflow (r: %d, w: %d, d: %d); disconnecting.\n",
-				wsMessages.read_index, wsMessages.write_index, delta);
-			Con_Printf("_WebSocket_onmessage: wsMessages buffer overflow (r: %d, w: %d, d: %d); disconnecting.\n",
-				wsMessages.read_index, wsMessages.write_index, delta);
-			WebSocket_CloseUnderlying();
-			return EM_FALSE;
+			static int overflow_warnings = 0;
+			if (overflow_warnings < 5)
+			{
+				int depth = (wsMessages.write_index >= wsMessages.read_index)
+					? (int)(wsMessages.write_index - wsMessages.read_index)
+					: (int)(wsMessages.write_index + MAX_WS_MESSAGES - wsMessages.read_index);
+				Sys_Printf("_WebSocket_onmessage: wsMessages overflow (depth: %d); dropping oldest packet.\n", depth);
+				Con_Printf("_WebSocket_onmessage: wsMessages overflow (depth: %d); dropping oldest packet.\n", depth);
+				overflow_warnings++;
+			}
+
+			wsMessages.messages[wsMessages.read_index].length = 0;
+			wsMessages.read_index = (uint16_t)((wsMessages.read_index + 1u) % MAX_WS_MESSAGES);
+			next = (uint16_t)((wsMessages.write_index + 1u) % MAX_WS_MESSAGES);
 		}
 
 		wsMessages.messages[wsMessages.write_index].length = (unsigned int)websocketEvent->numBytes;
 		memcpy(wsMessages.messages[wsMessages.write_index].data, websocketEvent->data, websocketEvent->numBytes);
 
-		wsMessages.write_index++;
+		wsMessages.write_index = next;
 	}
 
 	return EM_TRUE;
@@ -333,8 +341,8 @@ int WebSocket_Read(int socket, byte *buf, int len, struct qsockaddr *addr)
 	if (!ws_onopen_handled)
 		return 0;
 
-	unsigned char read_index = wsMessages.read_index;
-	if (wsMessages.messages[read_index].length == 0)
+	uint16_t read_index = wsMessages.read_index;
+	if (read_index == wsMessages.write_index)
 		return 0;
 
 	unsigned int length = wsMessages.messages[read_index].length;
@@ -342,14 +350,13 @@ int WebSocket_Read(int socket, byte *buf, int len, struct qsockaddr *addr)
 	{
 		Con_Printf("WebSocket_Read: packet too large (%u bytes, max %d); dropping\n", length, len);
 		wsMessages.messages[read_index].length = 0;
-		wsMessages.read_index = (read_index + 1) % MAX_WS_MESSAGES;
+		wsMessages.read_index = (uint16_t)((read_index + 1u) % MAX_WS_MESSAGES);
 		return 0;
 	}
 
 	memcpy(buf, wsMessages.messages[read_index].data, length);
 	wsMessages.messages[read_index].length = 0;
-	read_index++;
-	wsMessages.read_index = read_index;
+	wsMessages.read_index = (uint16_t)((read_index + 1u) % MAX_WS_MESSAGES);
 
 	WebSocket_FillDummyAddr(addr);
 	return (int)length;

@@ -33,7 +33,7 @@ docker compose up
 ```
 
 **Directory Structure:**
-- `apps/` - Application binaries and static files (read-only)
+- `apps/` - Application binaries and client files (read-only)
   - `nqwasm/` - WebAssembly client files
   - `gateway` - Go HTTP/WebSocket proxy binary
   - `nqserver` - NetQuake server binary
@@ -97,7 +97,7 @@ Gateway (Go HTTP Server)
 NetQuake Server (id1)
 ```
 
-The gateway serves static files and proxies WebSocket connections to UDP-based Quake servers.
+The gateway serves client files and proxies WebSocket connections to UDP-based Quake servers.
 
 ## Documentation
 
