@@ -320,21 +320,35 @@
         }
 
         // Optional auto-connect without needing an autoexec.cfg:
-        // http://localhost:7071/?connect=127.0.0.1
-        // If connect is present but empty/1/true, default to 127.0.0.1.
+        // http://localhost:7071/?connect=127.255.255.1
+        // If connect is present but empty/1/true, default to 127.255.255.1.
         try {
           var params = new URLSearchParams(window.location.search);
           if (params.has('connect')) {
             var host = params.get('connect') || '';
             host = host.trim();
             if (host === '' || host === '1' || host.toLowerCase() === 'true' || host.toLowerCase() === 'any') {
-              host = '127.0.0.1';
+              host = '127.255.255.1';
             }
             args.push('+connect', host);
           }
         } catch (e) {}
 
         Module['arguments'] = args;
+      })();
+
+      // Best-effort graceful disconnect when the tab/window is closed.
+      // Without this, the server may keep the player slot until timeout.
+      (function() {
+        function requestDisconnect() {
+          try {
+            if (typeof Module !== 'undefined' && Module && typeof Module.ccall === 'function') {
+              Module.ccall('WebQuake_OnPageHide', 'void', [], []);
+            }
+          } catch (e) {}
+        }
+        window.addEventListener('pagehide', requestDisconnect);
+        window.addEventListener('beforeunload', requestDisconnect);
       })();
       Module.setStatus('Downloading...');
       window.onerror = function() {

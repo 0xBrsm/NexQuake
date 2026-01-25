@@ -6,8 +6,8 @@ Build configuration for a NetQuake dedicated server from id Software's WinQuake 
 
 - `Makefile.dedicated` - Builds full NetQuake with null drivers
 - `sys_linux_stub.c` - Stub for `Sys_SendKeyEvents()` function
-- `net_dgrm.c.patch` - Fixes Quake’s built-in `BAN_TEST` POSIX fallback structs on 64-bit (prevents bogus `You have been banned.` rejects)
-- `net_main.c.patch` - Reduces `net_messagetimeout` from 300s to 30s (faster dead-client cleanup)
+- `net_dgrm.c.patch` - Fixes Quake's built-in `BAN_TEST` POSIX fallback structs on 64-bit (prevents bogus `You have been banned.` rejects)
+- `net_udp.c.patch` - Adds `-ip <address>` flag support for binding to specific IP addresses (enables multi-server on same port)
 - `sv_main.c.patch` - Fixes 64-bit `string_t` assignments for worldspawn/map globals (uses `ED_NewString`)
 - `host_cmd.c.patch` - Fixes 64-bit `string_t` assignments for player name globals (uses `ED_NewString`)
 - `pr_cmds.c.patch` - Fixes 64-bit `string_t` return values for `ftos`/`vtos` (prevents disconnect crashes in QuakeC)
@@ -36,9 +36,9 @@ cd Quake/WinQuake
 # Copy overlay
 cp /path/to/src/server/Makefile.dedicated .
 
-# Apply 64-bit progs string fixes
+# Apply patches
 patch -p0 < /path/to/src/server/net_dgrm.c.patch
-patch -p0 < /path/to/src/server/net_main.c.patch
+patch -p0 < /path/to/src/server/net_udp.c.patch
 patch -p0 < /path/to/src/server/sv_main.c.patch
 patch -p0 < /path/to/src/server/host_cmd.c.patch
 patch -p0 < /path/to/src/server/pr_cmds.c.patch

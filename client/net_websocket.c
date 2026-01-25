@@ -26,9 +26,19 @@ Added by initialed85
 // can overflow and force disconnects. Use a larger queue and drop the oldest
 // packet on overflow (mirrors how UDP socket buffers behave under load).
 #define MAX_WS_MESSAGES 2048
+#define MAX_WS_CTL_MESSAGES 512
 
-// For NetQuake datagrams, payloads should fit in NET_DATAGRAMSIZE.
-#define MAX_WS_MESSAGE_SIZE NET_DATAGRAMSIZE
+// WebSocket frames carry a small routing header plus one NetQuake UDP datagram.
+// Header:
+//   u8  routing_byte (server_id)
+//   u16 udp_port_be
+// Payload:
+//   u8[] raw NetQuake datagram (<= NET_DATAGRAMSIZE)
+#define WS_ROUTING_HEADER_SIZE 3
+#define MAX_WS_MESSAGE_SIZE (NET_DATAGRAMSIZE + WS_ROUTING_HEADER_SIZE)
+
+// Servers listen on the standard NetQuake port (no -port).
+#define WEBQUAKE_SERVER_LISTEN_PORT 26000
 
 EM_JS(char *, WebSocket_GetUrl, (), {
 	try {
@@ -81,18 +91,75 @@ static qboolean ws_opened = false;
 static qboolean ws_onopen_handled = false;
 static qboolean ws_close_requested = false;
 static EMSCRIPTEN_WEBSOCKET_T ws;
+static int ws_next_socket_id = 1;
+static int ws_open_socket_count = 0;
 
 struct
 {
 	uint16_t read_index;
 	uint16_t write_index;
 	WsMessage messages[MAX_WS_MESSAGES];
-} wsMessages = {0};
+} wsDataMessages = {0};
+
+struct
+{
+	uint16_t read_index;
+	uint16_t write_index;
+	WsMessage messages[MAX_WS_CTL_MESSAGES];
+} wsCtlMessages = {0};
 
 static void WebSocket_ResetMessageQueue(void)
 {
-	wsMessages.read_index = 0;
-	wsMessages.write_index = 0;
+	wsDataMessages.read_index = 0;
+	wsDataMessages.write_index = 0;
+	wsCtlMessages.read_index = 0;
+	wsCtlMessages.write_index = 0;
+}
+
+static void WebSocket_QueueMessage(
+	uint16_t *read_index,
+	uint16_t *write_index,
+	WsMessage *messages,
+	uint16_t capacity,
+	const void *data,
+	unsigned int length,
+	const char *queue_name)
+{
+	uint16_t next = (uint16_t)((*write_index + 1u) % capacity);
+	if (next == *read_index)
+	{
+		static int overflow_warnings = 0;
+		if (overflow_warnings < 5)
+		{
+			int depth = (*write_index >= *read_index)
+				? (int)(*write_index - *read_index)
+				: (int)(*write_index + capacity - *read_index);
+			Sys_Printf("_WebSocket_onmessage: %s overflow (depth: %d); dropping oldest packet.\n", queue_name, depth);
+			Con_Printf("_WebSocket_onmessage: %s overflow (depth: %d); dropping oldest packet.\n", queue_name, depth);
+			overflow_warnings++;
+		}
+
+		messages[*read_index].length = 0;
+		*read_index = (uint16_t)((*read_index + 1u) % capacity);
+		next = (uint16_t)((*write_index + 1u) % capacity);
+	}
+
+	messages[*write_index].length = length;
+	memcpy(messages[*write_index].data, data, length);
+	*write_index = next;
+}
+
+static void WebSocket_WaitForOnOpen(int timeout_ms)
+{
+	// Emscripten WebSocket callbacks run on the JS event loop. If Quake sends
+	// packets (e.g., server browser broadcast) before onopen fires, returning 0
+	// here makes discovery flaky. Yield briefly so onopen can be delivered.
+	int waited = 0;
+	while (ws_opened && !ws_onopen_handled && waited < timeout_ms)
+	{
+		emscripten_sleep(10);
+		waited += 10;
+	}
 }
 
 static void WebSocket_CloseUnderlying(void)
@@ -103,30 +170,92 @@ static void WebSocket_CloseUnderlying(void)
 	ws_close_requested = true;
 	ws_opened = false;
 	ws_onopen_handled = false;
+	ws_open_socket_count = 0;
 	WebSocket_ResetMessageQueue();
 
 	emscripten_websocket_close(ws, 1000, "Closed by WebSocket_CloseSocket");
 }
 
-static void WebSocket_FillDummyAddr(struct qsockaddr *addr)
+static void WebSocket_FillAddrWithServerID(struct qsockaddr *addr, byte server_id, int port)
 {
 	if (!addr)
 		return;
 
-	// WebSocket landriver doesn't have a real UDP endpoint address, but NetQuake
-	// validates reply addresses. Provide a stable dummy sockaddr.
+	// For multi-server support, encode server routing info in the address.
+	// Gateway prepends a server_id byte to packets. We use 127.255.255.x:26000
+	// where x is the server_id (1-254). 127.255.255.255 is the broadcast address.
 	Q_memset(addr, 0, sizeof(*addr));
 	addr->sa_family = AF_INET;
 	// sockaddr_in layout (without including <netinet/in.h>):
 	// - sa_data[0..1] = port (big endian)
 	// - sa_data[2..5] = IPv4 address
-	// Use a fixed dummy endpoint 6.9.42.0:13337.
-	addr->sa_data[0] = 0x34;
-	addr->sa_data[1] = 0x19;
-	addr->sa_data[2] = 6;
-	addr->sa_data[3] = 9;
-	addr->sa_data[4] = 42;
-	addr->sa_data[5] = 0;
+	if (port < 0)
+		port = 0;
+	if (port > 65535)
+		port = 65535;
+	addr->sa_data[0] = (byte)((port >> 8) & 0xff);
+	addr->sa_data[1] = (byte)(port & 0xff);
+	// IP: 127.255.255.server_id
+	addr->sa_data[2] = 127;
+	addr->sa_data[3] = 255;
+	addr->sa_data[4] = 255;
+	addr->sa_data[5] = server_id;
+}
+
+// Called from shell.html on pagehide/beforeunload to give the client a chance
+// to send a proper NetQuake disconnect before the browser tears down the tab.
+EMSCRIPTEN_KEEPALIVE void WebQuake_OnPageHide(void)
+{
+	CL_Disconnect();
+}
+
+// Deterministic command injection for e2e testing and automation.
+// Queues a console command as if typed, with a trailing newline.
+EMSCRIPTEN_KEEPALIVE void WebQuake_ExecCommand(const char *cmd)
+{
+	if (!cmd || !cmd[0])
+		return;
+	Cbuf_AddText((char *)cmd);
+	Cbuf_AddText("\n");
+}
+
+// Executes the command buffer immediately after queueing the provided command.
+EMSCRIPTEN_KEEPALIVE void WebQuake_ExecCommandNow(const char *cmd)
+{
+	WebQuake_ExecCommand(cmd);
+	Cbuf_Execute();
+}
+
+static byte WebSocket_ExtractServerID(struct qsockaddr *addr)
+{
+	if (!addr)
+		return 0;
+
+	// Extract server ID from last octet of IP address (127.255.255.x)
+	if ((byte)addr->sa_data[2] == 127 && (byte)addr->sa_data[3] == 255 && (byte)addr->sa_data[4] == 255)
+		return (byte)addr->sa_data[5];
+
+	// Not an encoded server address.
+	return 0;
+}
+
+static int WebSocket_GetAddrPort(struct qsockaddr *addr)
+{
+	if (!addr)
+		return 0;
+	return (((byte)addr->sa_data[0]) << 8) | ((byte)addr->sa_data[1]);
+}
+
+static void WebSocket_SetAddrPort(struct qsockaddr *addr, int port)
+{
+	if (!addr)
+		return;
+	if (port < 0)
+		port = 0;
+	if (port > 65535)
+		port = 65535;
+	addr->sa_data[0] = (byte)((port >> 8) & 0xff);
+	addr->sa_data[1] = (byte)(port & 0xff);
 }
 
 //=============================================================================
@@ -166,6 +295,7 @@ EM_BOOL _WebSocket_onclose(int eventType, const EmscriptenWebSocketCloseEvent *w
 
 	ws_opened = false;
 	ws_onopen_handled = false;
+	ws_open_socket_count = 0;
 	WebSocket_ResetMessageQueue();
 
 	if (!expected)
@@ -195,29 +325,42 @@ EM_BOOL _WebSocket_onmessage(int eventType, const EmscriptenWebSocketMessageEven
 
 	// Queue packet (ring buffer).
 	{
-		uint16_t next = (uint16_t)((wsMessages.write_index + 1u) % MAX_WS_MESSAGES);
-		if (next == wsMessages.read_index)
+		qboolean is_server_info = false;
+		if (websocketEvent->numBytes >= WS_ROUTING_HEADER_SIZE + sizeof(int) + 1)
 		{
-			static int overflow_warnings = 0;
-			if (overflow_warnings < 5)
+			int control;
+			memcpy(&control, (byte *)websocketEvent->data + WS_ROUTING_HEADER_SIZE, sizeof(control));
+			control = BigLong(control);
+			if ((control & (~NETFLAG_LENGTH_MASK)) == NETFLAG_CTL)
 			{
-				int depth = (wsMessages.write_index >= wsMessages.read_index)
-					? (int)(wsMessages.write_index - wsMessages.read_index)
-					: (int)(wsMessages.write_index + MAX_WS_MESSAGES - wsMessages.read_index);
-				Sys_Printf("_WebSocket_onmessage: wsMessages overflow (depth: %d); dropping oldest packet.\n", depth);
-				Con_Printf("_WebSocket_onmessage: wsMessages overflow (depth: %d); dropping oldest packet.\n", depth);
-				overflow_warnings++;
+				byte cmd = ((byte *)websocketEvent->data)[WS_ROUTING_HEADER_SIZE + 4];
+				if (cmd == CCREP_SERVER_INFO || cmd == CCREP_SERVER_LIST)
+					is_server_info = true;
 			}
-
-			wsMessages.messages[wsMessages.read_index].length = 0;
-			wsMessages.read_index = (uint16_t)((wsMessages.read_index + 1u) % MAX_WS_MESSAGES);
-			next = (uint16_t)((wsMessages.write_index + 1u) % MAX_WS_MESSAGES);
 		}
 
-		wsMessages.messages[wsMessages.write_index].length = (unsigned int)websocketEvent->numBytes;
-		memcpy(wsMessages.messages[wsMessages.write_index].data, websocketEvent->data, websocketEvent->numBytes);
-
-		wsMessages.write_index = next;
+		if (is_server_info)
+		{
+			WebSocket_QueueMessage(
+				&wsCtlMessages.read_index,
+				&wsCtlMessages.write_index,
+				wsCtlMessages.messages,
+				MAX_WS_CTL_MESSAGES,
+				websocketEvent->data,
+				(unsigned int)websocketEvent->numBytes,
+				"wsCtlMessages");
+		}
+		else
+		{
+			WebSocket_QueueMessage(
+				&wsDataMessages.read_index,
+				&wsDataMessages.write_index,
+				wsDataMessages.messages,
+				MAX_WS_MESSAGES,
+				websocketEvent->data,
+				(unsigned int)websocketEvent->numBytes,
+				"wsDataMessages");
+		}
 	}
 
 	return EM_TRUE;
@@ -275,43 +418,47 @@ void WebSocket_Listen(qboolean state)
 int WebSocket_OpenSocket(int port)
 {
 	(void)port;
-	if (ws_opened)
-		return (int)ws;
-
-	char *ws_url = WebSocket_GetUrl();
-	EmscriptenWebSocketCreateAttributes ws_attrs = {
-		ws_url,
-		NULL,
-		EM_TRUE,
-	};
-
-	ws_onopen_handled = false;
-	WebSocket_ResetMessageQueue();
-
-	if ((ws = emscripten_websocket_new(&ws_attrs)) <= 0)
+	if (!ws_opened)
 	{
+		char *ws_url = WebSocket_GetUrl();
+		EmscriptenWebSocketCreateAttributes ws_attrs = {
+			ws_url,
+			NULL,
+			EM_TRUE,
+		};
+
+		ws_onopen_handled = false;
+		WebSocket_ResetMessageQueue();
+
+		if ((ws = emscripten_websocket_new(&ws_attrs)) <= 0)
+		{
+			free(ws_url);
+			Sys_Printf("WebSocket_OpenSocket: failed to open socket\n");
+			Con_Printf("WebSocket_OpenSocket: failed to open socket\n");
+			return -1;
+		}
+
 		free(ws_url);
-		Sys_Printf("WebSocket_OpenSocket: failed to open socket\n");
-		Con_Printf("WebSocket_OpenSocket: failed to open socket\n");
-		return -1;
+		ws_opened = true;
+		ws_close_requested = false;
+
+		emscripten_websocket_set_onopen_callback(ws, (void *)(uintptr_t)ws, _WebSocket_onopen);
+		emscripten_websocket_set_onerror_callback(ws, (void *)(uintptr_t)ws, _WebSocket_onerror);
+		emscripten_websocket_set_onclose_callback(ws, (void *)(uintptr_t)ws, _WebSocket_onclose);
+		emscripten_websocket_set_onmessage_callback(ws, (void *)(uintptr_t)ws, _WebSocket_onmessage);
 	}
 
-	free(ws_url);
-	ws_opened = true;
-	ws_close_requested = false;
-
-	emscripten_websocket_set_onopen_callback(ws, (void *)(uintptr_t)ws, _WebSocket_onopen);
-	emscripten_websocket_set_onerror_callback(ws, (void *)(uintptr_t)ws, _WebSocket_onerror);
-	emscripten_websocket_set_onclose_callback(ws, (void *)(uintptr_t)ws, _WebSocket_onclose);
-	emscripten_websocket_set_onmessage_callback(ws, (void *)(uintptr_t)ws, _WebSocket_onmessage);
-
-	return (int)ws;
+	ws_open_socket_count++;
+	return ws_next_socket_id++;
 }
 
 int WebSocket_CloseSocket(int socket)
 {
 	(void)socket;
-	WebSocket_CloseUnderlying();
+	if (ws_open_socket_count > 0)
+		ws_open_socket_count--;
+	if (ws_open_socket_count == 0)
+		WebSocket_CloseUnderlying();
 	return 0;
 }
 
@@ -334,46 +481,116 @@ int WebSocket_CheckNewConnections(void)
 
 int WebSocket_Read(int socket, byte *buf, int len, struct qsockaddr *addr)
 {
-	(void)socket;
-
 	if (!ws_opened)
 		return -1;
 	if (!ws_onopen_handled)
 		return 0;
 
-	uint16_t read_index = wsMessages.read_index;
-	if (read_index == wsMessages.write_index)
+	qboolean want_ctl = (socket == net_controlsocket);
+	if (want_ctl)
+	{
+		uint16_t read_index = wsCtlMessages.read_index;
+		if (read_index == wsCtlMessages.write_index)
+			return 0;
+
+		unsigned int length = wsCtlMessages.messages[read_index].length;
+
+		if (length < WS_ROUTING_HEADER_SIZE)
+		{
+			wsCtlMessages.messages[read_index].length = 0;
+			wsCtlMessages.read_index = (uint16_t)((read_index + 1u) % MAX_WS_CTL_MESSAGES);
+			return 0;
+		}
+
+		byte server_id = wsCtlMessages.messages[read_index].data[0];
+		int src_port = (((byte)wsCtlMessages.messages[read_index].data[1]) << 8) |
+			((byte)wsCtlMessages.messages[read_index].data[2]);
+		unsigned int payload_length = length - WS_ROUTING_HEADER_SIZE;
+
+		if (payload_length > (unsigned int)len)
+		{
+			Con_Printf("WebSocket_Read: packet too large (%u bytes, max %d); dropping\n", payload_length, len);
+			wsCtlMessages.messages[read_index].length = 0;
+			wsCtlMessages.read_index = (uint16_t)((read_index + 1u) % MAX_WS_CTL_MESSAGES);
+			return 0;
+		}
+
+		memcpy(buf, wsCtlMessages.messages[read_index].data + WS_ROUTING_HEADER_SIZE, payload_length);
+		wsCtlMessages.messages[read_index].length = 0;
+		wsCtlMessages.read_index = (uint16_t)((read_index + 1u) % MAX_WS_CTL_MESSAGES);
+
+		WebSocket_FillAddrWithServerID(addr, server_id, src_port);
+		return (int)payload_length;
+	}
+
+	uint16_t read_index = wsDataMessages.read_index;
+	if (read_index == wsDataMessages.write_index)
 		return 0;
 
-	unsigned int length = wsMessages.messages[read_index].length;
-	if (length > (unsigned int)len)
+	unsigned int length = wsDataMessages.messages[read_index].length;
+
+	if (length < WS_ROUTING_HEADER_SIZE)
 	{
-		Con_Printf("WebSocket_Read: packet too large (%u bytes, max %d); dropping\n", length, len);
-		wsMessages.messages[read_index].length = 0;
-		wsMessages.read_index = (uint16_t)((read_index + 1u) % MAX_WS_MESSAGES);
+		wsDataMessages.messages[read_index].length = 0;
+		wsDataMessages.read_index = (uint16_t)((read_index + 1u) % MAX_WS_MESSAGES);
 		return 0;
 	}
 
-	memcpy(buf, wsMessages.messages[read_index].data, length);
-	wsMessages.messages[read_index].length = 0;
-	wsMessages.read_index = (uint16_t)((read_index + 1u) % MAX_WS_MESSAGES);
+	byte server_id = wsDataMessages.messages[read_index].data[0];
+	int src_port = (((byte)wsDataMessages.messages[read_index].data[1]) << 8) |
+		((byte)wsDataMessages.messages[read_index].data[2]);
+	unsigned int payload_length = length - WS_ROUTING_HEADER_SIZE;
 
-	WebSocket_FillDummyAddr(addr);
-	return (int)length;
+	if (payload_length > (unsigned int)len)
+	{
+		Con_Printf("WebSocket_Read: packet too large (%u bytes, max %d); dropping\n", payload_length, len);
+		wsDataMessages.messages[read_index].length = 0;
+		wsDataMessages.read_index = (uint16_t)((read_index + 1u) % MAX_WS_MESSAGES);
+		return 0;
+	}
+
+	memcpy(buf, wsDataMessages.messages[read_index].data + WS_ROUTING_HEADER_SIZE, payload_length);
+	wsDataMessages.messages[read_index].length = 0;
+	wsDataMessages.read_index = (uint16_t)((read_index + 1u) % MAX_WS_MESSAGES);
+
+	WebSocket_FillAddrWithServerID(addr, server_id, src_port);
+	return (int)payload_length;
 }
 
 int WebSocket_Write(int socket, byte *buf, int len, struct qsockaddr *addr)
 {
 	(void)socket;
-	(void)addr;
 
 	if (!ws_opened)
 		return -1;
 	if (!ws_onopen_handled)
-		return 0;
+	{
+		WebSocket_WaitForOnOpen(2000);
+		if (!ws_opened)
+			return -1;
+		if (!ws_onopen_handled)
+			return 0;
+	}
+	if (len < 0 || len > NET_DATAGRAMSIZE)
+		return -1;
 
-	EMSCRIPTEN_RESULT res;
-	res = emscripten_websocket_send_binary(ws, buf, (uint32_t)len);
+	// Extract server ID from address and prepend to packet for gateway routing
+	byte server_id = WebSocket_ExtractServerID(addr);
+	if (server_id == 0)
+		return -1;
+	int dst_port = WebSocket_GetAddrPort(addr);
+	if (dst_port <= 0 || dst_port > 65535)
+		return -1;
+
+	// Stack buffer: avoids per-packet heap allocations.
+	byte frame[NET_DATAGRAMSIZE + WS_ROUTING_HEADER_SIZE];
+	frame[0] = server_id;
+	frame[1] = (byte)((dst_port >> 8) & 0xff);
+	frame[2] = (byte)(dst_port & 0xff);
+	memcpy(frame + WS_ROUTING_HEADER_SIZE, buf, (size_t)len);
+
+	EMSCRIPTEN_RESULT res = emscripten_websocket_send_binary(ws, frame, (uint32_t)(len + WS_ROUTING_HEADER_SIZE));
+
 	if (res < 0)
 		return -1;
 	return len;
@@ -382,31 +599,119 @@ int WebSocket_Write(int socket, byte *buf, int len, struct qsockaddr *addr)
 int WebSocket_Broadcast(int socket, byte *buf, int len)
 {
 	(void)socket;
-	(void)buf;
-	(void)len;
-	// No UDP broadcast in the browser.
-	return 0;
+
+	if (!ws_opened)
+		return -1;
+	if (!ws_onopen_handled)
+	{
+		WebSocket_WaitForOnOpen(2000);
+		if (!ws_opened)
+			return -1;
+		if (!ws_onopen_handled)
+			return 0;
+	}
+	if (len < 0 || len > NET_DATAGRAMSIZE)
+		return -1;
+
+	// Use server_id = 0xFF as broadcast flag for gateway to fan out to all servers.
+	// Broadcast targets the default listen port (26000).
+	byte frame[NET_DATAGRAMSIZE + WS_ROUTING_HEADER_SIZE];
+	frame[0] = 0xFF;  // Broadcast marker
+	frame[1] = 0;
+	frame[2] = 0;
+	memcpy(frame + WS_ROUTING_HEADER_SIZE, buf, (size_t)len);
+
+	EMSCRIPTEN_RESULT res = emscripten_websocket_send_binary(ws, frame, (uint32_t)(len + WS_ROUTING_HEADER_SIZE));
+
+	if (res < 0)
+		return -1;
+	return len;
 }
 
 char *WebSocket_AddrToString(struct qsockaddr *addr)
 {
-	(void)addr;
 	static char buffer[22];
-	sprintf(buffer, "%s", "6.9.42.0:13337");
+	if (!addr)
+	{
+		sprintf(buffer, "127.255.255.1:26000");
+		return buffer;
+	}
+
+	int a = (byte)addr->sa_data[2];
+	int b = (byte)addr->sa_data[3];
+	int c = (byte)addr->sa_data[4];
+	int d = (byte)addr->sa_data[5];
+	int port = ((byte)addr->sa_data[0] << 8) | (byte)addr->sa_data[1];
+	sprintf(buffer, "%d.%d.%d.%d:%d", a, b, c, d, port);
 	return buffer;
 }
 
 int WebSocket_StringToAddr(char *string, struct qsockaddr *addr)
 {
-	(void)string;
-	WebSocket_FillDummyAddr(addr);
-	return 0;
+	if (!string || !addr)
+		return -1;
+
+	// Parse "127.255.255.x[:port]" format to extract server ID and port.
+	int a, b, c, d, port;
+	int consumed = 0;
+	if (sscanf(string, "%d.%d.%d.%d:%d%n", &a, &b, &c, &d, &port, &consumed) == 5)
+	{
+		while (string[consumed] == ' ' || string[consumed] == '\t')
+			consumed++;
+		if (string[consumed] != '\0')
+			return -1;
+
+		// Only allow user-specified ports that match the server listen port.
+		// The server may still switch to an accepted port during the handshake
+		// (CCREP_ACCEPT); that port change happens internally and does not go
+		// through this parser.
+		if (a == 127 && b == 255 && c == 255 && d >= 1 && d <= 254 && port == WEBQUAKE_SERVER_LISTEN_PORT)
+		{
+			WebSocket_FillAddrWithServerID(addr, (byte)d, port);
+			return 0;
+		}
+		return -1;
+	}
+
+	// The Quake UI and console commonly accept addresses without an explicit port.
+	// Treat "127.255.255.x" as selecting server x (default port 26000).
+	consumed = 0;
+	if (sscanf(string, "%d.%d.%d.%d%n", &a, &b, &c, &d, &consumed) == 4)
+	{
+		while (string[consumed] == ' ' || string[consumed] == '\t')
+			consumed++;
+		if (string[consumed] != '\0')
+			return -1;
+
+		if (a == 127 && b == 255 && c == 255 && d >= 1 && d <= 254)
+		{
+			WebSocket_FillAddrWithServerID(addr, (byte)d, WEBQUAKE_SERVER_LISTEN_PORT);
+			return 0;
+		}
+	}
+
+	return -1;
 }
 
 int WebSocket_GetSocketAddr(int socket, struct qsockaddr *addr)
 {
 	(void)socket;
-	WebSocket_FillDummyAddr(addr);
+	// This is Quake's "local address" display. In the browser we don't have a real
+	// UDP interface, so report a stable loopback address rather than the 127.255.255.x
+	// encoded server routing address.
+	if (addr)
+	{
+		Q_memset(addr, 0, sizeof(*addr));
+		addr->sa_family = AF_INET;
+		// Port 26000 (0x6590 in big-endian)
+		addr->sa_data[0] = 0x65;
+		addr->sa_data[1] = 0x90;
+		// IP: 127.1.1.1
+		addr->sa_data[2] = 127;
+		addr->sa_data[3] = 1;
+		addr->sa_data[4] = 1;
+		addr->sa_data[5] = 1;
+	}
 	return 0;
 }
 
@@ -419,26 +724,53 @@ int WebSocket_GetNameFromAddr(struct qsockaddr *addr, char *name)
 
 int WebSocket_GetAddrFromName(char *name, struct qsockaddr *addr)
 {
-	(void)name;
-	return WebSocket_StringToAddr(name ? name : "", addr);
+	if (!addr)
+		return -1;
+
+	if (!name || !name[0])
+		return -1;
+
+	// Stock NetQuake behavior is handled by the engine (hostcache mapping, etc).
+	// In the browser we can't do synchronous DNS, so only accept explicit
+	// addresses in our simulated server subnet.
+	return WebSocket_StringToAddr(name, addr);
 }
 
 int WebSocket_AddrCompare(struct qsockaddr *addr1, struct qsockaddr *addr2)
 {
-	(void)addr1;
-	(void)addr2;
+	if (!addr1 || !addr2)
+		return -1;
+	if (addr1->sa_family != addr2->sa_family)
+		return -1;
+
+	// Match Quake's net driver semantics:
+	//   0  => same host + same port
+	//   1  => same host, different port
+	//  -1  => different host
+	for (int i = 2; i < 6; i++)
+	{
+		if ((byte)addr1->sa_data[i] != (byte)addr2->sa_data[i])
+		{
+			return -1;
+		}
+	}
+
+	if ((byte)addr1->sa_data[0] != (byte)addr2->sa_data[0] ||
+		(byte)addr1->sa_data[1] != (byte)addr2->sa_data[1])
+	{
+		return 1;
+	}
+
 	return 0;
 }
 
 int WebSocket_GetSocketPort(struct qsockaddr *addr)
 {
-	(void)addr;
-	return 13337;
+	return WebSocket_GetAddrPort(addr);
 }
 
 int WebSocket_SetSocketPort(struct qsockaddr *addr, int port)
 {
-	(void)addr;
-	(void)port;
+	WebSocket_SetAddrPort(addr, port);
 	return 0;
 }

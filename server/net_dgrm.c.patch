@@ -1,5 +1,5 @@
---- net_dgrm.c.orig	2026-01-23 20:19:46.353688404 +0000
-+++ net_dgrm.c	2026-01-23 20:22:44.713039873 +0000
+--- net_dgrm.c
++++ net_dgrm.c
 @@ -29,26 +29,9 @@
  #include <sys/socket.h>
  #include <arpa/inet.h>
@@ -29,19 +29,3 @@
 +#include <arpa/inet.h>
  #endif
  #endif	// BAN_TEST
- 
-@@ -1011,10 +994,12 @@
- 		if (s->driver != net_driverlevel)
- 			continue;
- 		ret = dfunc.AddrCompare(&clientaddr, &s->addr);
--		if (ret >= 0)
-+		// Only handle reconnection for exact address+port match (ret == 0)
-+		// Different ports from same IP should be treated as new connections
-+		if (ret == 0)
- 		{
- 			// is this a duplicate connection reqeust?
--			if (ret == 0 && net_time - s->connecttime < 2.0)
-+			if (net_time - s->connecttime < 2.0)
- 			{
- 				// yes, so send a duplicate reply
- 				SZ_Clear(&net_message);

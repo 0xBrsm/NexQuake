@@ -20,6 +20,9 @@ import (
 func main() {
 	initLogging()
 
+	runCtx, runCancel := context.WithCancel(context.Background())
+	defer runCancel()
+
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "--version", "version":
@@ -45,6 +48,13 @@ func main() {
 
 	// Initialize WebSocket upgrader with configurable origin
 	initWebSocketUpgrader(wsOrigin)
+
+	// Start the gateway-managed server info cache (used for Quake's `slist`).
+	globalServerInfoCache = NewServerInfoCacheFromEnv()
+	if err := globalServerInfoCache.Start(runCtx); err != nil {
+		warnf("Server info cache disabled: %v", err)
+		globalServerInfoCache = nil
+	}
 
 	// Create HTTP server with handlers
 	mux := http.NewServeMux()
@@ -186,6 +196,10 @@ func main() {
 	<-sigChan
 
 	log.Println("Shutting down gracefully...")
+	runCancel()
+	if globalServerInfoCache != nil {
+		globalServerInfoCache.Stop()
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

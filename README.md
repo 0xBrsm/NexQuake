@@ -73,8 +73,8 @@ Both the WASM client and NetQuake servers share the same PAK files from the `dat
 
 Two lightweight options:
 
-- Put an `autoexec.cfg` in `data/id1/` with `connect 127.0.0.1`
-- Or pass a URL param: `http://localhost:7071/?connect=127.0.0.1`
+- Put an `autoexec.cfg` in `data/id1/` with `connect 127.255.255.1`
+- Or pass a URL param: `http://localhost:7071/?connect=127.255.255.1`
 
 ## Features
 

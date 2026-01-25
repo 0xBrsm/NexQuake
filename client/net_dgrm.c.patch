@@ -1,16 +1,18 @@
---- net_dgrm.c
-+++ net_dgrm.c
-@@ -54,6 +54,9 @@
+--- net_dgrm.c	2026-01-25 20:09:30.146260249 +0000
++++ net_dgrm.c	2026-01-25 20:09:30.150660249 +0000
+@@ -54,6 +54,11 @@
  
  #include "quakedef.h"
  #include "net_dgrm.h"
 +#ifdef __EMSCRIPTEN__
 +#include <emscripten/emscripten.h>
 +#endif
++
++qboolean slist_agg_done = false;
  
  // these two macros are to make the code more readable
  #define sfunc	net_landrivers[sock->landriver]
-@@ -438,9 +441,21 @@
+@@ -438,9 +443,21 @@
  			sock->receiveSequence++;
  
  			length -= NET_HEADERSIZE;
@@ -32,7 +34,7 @@
  				SZ_Clear(&net_message);
  				SZ_Write(&net_message, sock->receiveMessage, sock->receiveMessageLength);
  				SZ_Write(&net_message, packetBuffer.data, length);
-@@ -450,6 +465,12 @@
+@@ -450,6 +467,12 @@
  				break;
  			}
  
@@ -45,7 +47,7 @@
  			Q_memcpy(sock->receiveMessage + sock->receiveMessageLength, packetBuffer.data, length);
  			sock->receiveMessageLength += length;
  			continue;
-@@ -516,10 +537,10 @@
+@@ -516,10 +539,10 @@
  static int		testDriver;
  static int		testSocket;
  
@@ -58,7 +60,7 @@
  {
  	struct qsockaddr clientaddr;
  	int		control;
-@@ -644,10 +665,10 @@
+@@ -644,10 +667,10 @@
  static int		test2Driver;
  static int		test2Socket;
  
@@ -71,7 +73,77 @@
  {
  	struct qsockaddr clientaddr;
  	int		control;
-@@ -1302,6 +1323,13 @@
+@@ -1147,8 +1170,68 @@
+ 		if ((control & NETFLAG_LENGTH_MASK) != ret)
+ 			continue;
+ 
+-		if (MSG_ReadByte() != CCREP_SERVER_INFO)
++		// WebQuake extension: aggregated server list for reliable discovery.
++		{
++			int response = MSG_ReadByte();
++			if (response == CCREP_SERVER_LIST)
++			{
++				int num_servers = MSG_ReadByte();
++				slist_agg_done = true;
++				int s;
++				for (s = 0; s < num_servers && hostCacheCount < HOSTCACHESIZE; s++)
++				{
++					char hostbuf[16];
++					char mapbuf[16];
++ 
++					if (dfunc.GetAddrFromName(MSG_ReadString(), &readaddr) == -1)
++					{
++						// Skip this server's remaining fields (best-effort).
++						MSG_ReadString(); MSG_ReadString();
++						MSG_ReadByte(); MSG_ReadByte(); MSG_ReadByte();
++						continue;
++					}
++ 
++					// Check if already in cache
++					for (n = 0; n < hostCacheCount; n++)
++						if (dfunc.AddrCompare(&readaddr, &hostcache[n].addr) == 0)
++							break;
++					if (n < hostCacheCount)
++					{
++						// Skip this server's remaining fields
++						MSG_ReadString(); MSG_ReadString();
++						MSG_ReadByte(); MSG_ReadByte(); MSG_ReadByte();
++						continue;
++					}
++ 
++					hostCacheCount++;
++ 
++					Q_strncpy(hostbuf, MSG_ReadString(), 15);
++					hostbuf[15] = 0;
++					Q_strncpy(mapbuf, MSG_ReadString(), 15);
++					mapbuf[15] = 0;
++ 
++					Q_strcpy(hostcache[n].name, hostbuf);
++					Q_strcpy(hostcache[n].map, mapbuf);
++					hostcache[n].users = MSG_ReadByte();
++					hostcache[n].maxusers = MSG_ReadByte();
++					if (MSG_ReadByte() != NET_PROTOCOL_VERSION)
++					{
++						Q_strcpy(hostcache[n].cname, hostcache[n].name);
++						hostcache[n].cname[14] = 0;
++						Q_strcpy(hostcache[n].name, "*");
++						Q_strcat(hostcache[n].name, hostcache[n].cname);
++					}
++					Q_memcpy(&hostcache[n].addr, &readaddr, sizeof(struct qsockaddr));
++					hostcache[n].driver = net_driverlevel;
++					hostcache[n].ldriver = net_landriverlevel;
++					Q_strcpy(hostcache[n].cname, dfunc.AddrToString(&readaddr));
++				}
++				continue;
++			}
++ 
++			if (response != CCREP_SERVER_INFO)
+ 			continue;
++		}
+ 
+ 		dfunc.GetAddrFromName(MSG_ReadString(), &readaddr);
+ 		// search the cache for this server
+@@ -1302,6 +1385,13 @@
  					continue;
  				}
  			}

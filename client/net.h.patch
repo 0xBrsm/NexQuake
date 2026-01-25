@@ -1,6 +1,12 @@
 --- net.h
 +++ net.h
-@@ -314,7 +314,7 @@
+@@ -114,4 +114,5 @@
+ #define CCREP_SERVER_INFO	0x83
+ #define CCREP_PLAYER_INFO	0x84
+ #define CCREP_RULE_INFO		0x85
++#define CCREP_SERVER_LIST	0x86	// WebQuake extension: aggregated server list for slist
+ 
+@@ -314,6 +315,6 @@
  {
  	struct _PollProcedure	*next;
  	double					nextTime;

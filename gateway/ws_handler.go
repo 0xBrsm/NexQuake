@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -87,17 +85,10 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	debugf("Client connected: %s (subprotocol=%q)", conn.RemoteAddr(), conn.Subprotocol())
 
-	// Create a UDP relay immediately. This gateway is intentionally simple: it
-	// tunnels NetQuake datagrams over WebSocket to a single UDP server.
-	serverAddrStr := getEnv("UDP_SERVER_ADDR", "127.0.0.1:26000")
-	udpAddr, err := resolveUDPAddr(serverAddrStr)
-	if err != nil {
-		errorf("Failed to resolve UDP_SERVER_ADDR=%q: %v", serverAddrStr, err)
-		conn.Close()
-		return
-	}
-
-	relay, err := NewUDPRelay(client, udpAddr, 0)
+	// Create a UDP relay immediately. This gateway intentionally does not parse
+	// NetQuake datagrams. It reads a small routing header from each WebSocket
+	// frame and forwards the datagram to 127.255.255.<server_id>:<udp_port>.
+	relay, err := NewUDPRelay(client)
 	if err != nil {
 		errorf("Failed to create UDP relay: %v", err)
 		conn.Close()
@@ -109,7 +100,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	client.mu.Unlock()
 
 	relay.Start()
-	debugf("UDP relay started for client -> %s", udpAddr.String())
+	debugf("UDP relay started for client")
 
 	// Handle client messages (client -> server)
 	go client.readLoop()
@@ -166,19 +157,4 @@ func (c *ClientConnection) handleGamePacket(data []byte) {
 	// Forward to UDP relay
 	// Copy: websocket.ReadMessage buffers may be reused after the next read.
 	relay.SendToServer(append([]byte(nil), data...))
-}
-
-// resolveUDPAddr is a helper to resolve UDP addresses
-func resolveUDPAddr(addr string) (*net.UDPAddr, error) {
-	udpAddr, err := net.ResolveUDPAddr("udp4", addr)
-	if err != nil {
-		return nil, err
-	}
-	if udpAddr.IP == nil || udpAddr.IP.Equal(net.IPv4zero) {
-		udpAddr.IP = net.ParseIP("127.0.0.1")
-	}
-	if udpAddr.Port <= 0 || udpAddr.Port > 65535 {
-		return nil, fmt.Errorf("invalid UDP port: %d", udpAddr.Port)
-	}
-	return udpAddr, nil
 }

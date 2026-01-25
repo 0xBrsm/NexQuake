@@ -1,0 +1,14 @@
+--- host_cmd.c
++++ host_cmd.c
+@@ -416,7 +416,10 @@
+ 		CL_StopPlayback ();
+ 		CL_Disconnect ();
+ 	}
+-	strcpy (name, Cmd_Argv(1));
++	if (Cmd_Argc() >= 4 && Cmd_Argv(2)[0] == ':' && Cmd_Argv(2)[1] == 0)
++		snprintf(name, sizeof(name), "%s:%s", Cmd_Argv(1), Cmd_Argv(3));
++	else
++		snprintf(name, sizeof(name), "%s", Cmd_Argv(1));
+ 	CL_EstablishConnection (name);
+ 	Host_Reconnect_f ();
+ }

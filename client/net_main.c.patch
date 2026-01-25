@@ -1,6 +1,20 @@
 --- net_main.c
 +++ net_main.c
-@@ -49,8 +49,8 @@
+@@ -21,6 +21,9 @@
+ 
+ #include "quakedef.h"
+ #include "net_vcr.h"
++#ifdef __EMSCRIPTEN__
++#include <emscripten/emscripten.h>
++#endif
+ 
+ qsocket_t	*net_activeSockets = NULL;
+ qsocket_t	*net_freeSockets = NULL;
+@@ -46,11 +49,12 @@
+ qboolean	slistInProgress = false;
+ qboolean	slistSilent = false;
+ qboolean	slistLocal = true;
++extern qboolean	slist_agg_done;
  static double	slistStartTime;
  static int		slistLastShown;
  
@@ -11,7 +25,15 @@
  PollProcedure	slistSendProcedure = {NULL, 0.0, Slist_Send};
  PollProcedure	slistPollProcedure = {NULL, 0.0, Slist_Poll};
  
-@@ -312,7 +312,7 @@
+@@ -295,6 +299,7 @@
+ {
+ 	if (slistInProgress)
+ 		return;
++	slist_agg_done = false;
+ 
+ 	if (! slistSilent)
+ 	{
+@@ -312,7 +317,7 @@
  }
  
  
@@ -20,7 +42,13 @@
  {
  	for (net_driverlevel=0; net_driverlevel < net_numdrivers; net_driverlevel++)
  	{
-@@ -328,7 +328,7 @@
+@@ -323,12 +328,12 @@
+ 		dfunc.SearchForHosts (true);
+ 	}
+ 
+-	if ((Sys_FloatTime() - slistStartTime) < 0.5)
++	if (!slist_agg_done && (Sys_FloatTime() - slistStartTime) < 0.5)
+ 		SchedulePollProcedure(&slistSendProcedure, 0.75);
  }
  
  
@@ -29,13 +57,35 @@
  {
  	for (net_driverlevel=0; net_driverlevel < net_numdrivers; net_driverlevel++)
  	{
-
-@@ -63,7 +63,7 @@
- int unreliableMessagesSent = 0;
- int unreliableMessagesReceived = 0;
+@@ -342,6 +347,18 @@
+ 	if (! slistSilent)
+ 		PrintSlist();
  
--cvar_t	net_messagetimeout = {"net_messagetimeout","300"};
-+cvar_t	net_messagetimeout = {"net_messagetimeout","30"};
- cvar_t	hostname = {"hostname", "UNNAMED"};
++	// If the gateway responded with a single aggregated server list packet,
++	// there's no need to wait out Quake's default 1.5s LAN polling window.
++	if (slist_agg_done)
++	{
++		if (!slistSilent)
++			PrintSlistTrailer();
++		slistInProgress = false;
++		slistSilent = false;
++		slistLocal = true;
++		return;
++	}
++
+ 	if ((Sys_FloatTime() - slistStartTime) < 1.5)
+ 	{
+ 		SchedulePollProcedure(&slistPollProcedure, 0.1);
+@@ -401,7 +418,12 @@
+ 	NET_Slist_f ();
  
- qboolean	configRestored = false;
+ 	while(slistInProgress)
++	{
+ 		NET_Poll();
++		#ifdef __EMSCRIPTEN__
++			emscripten_sleep(1);
++		#endif
++	}
+ 
+ 	if (host == NULL)
+ 	{
