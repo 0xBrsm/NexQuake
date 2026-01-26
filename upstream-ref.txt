@@ -16,7 +16,7 @@
 
 - `client/` - WASM client patches and overlays (tracked in git)
 - `server/` - Headless server patches and overlays (tracked in git)
-- `gateway/` - Go WebSocket proxy (tracked in git)
+- `nexus/` - Go HTTP/WebSocket relay + server orchestrator (tracked in git)
 - `build/` - Generated build directory (upstream + patches, NOT in git)
 
 ## Modification History
@@ -25,7 +25,7 @@ This repository builds on multiple layers of work:
 
 1. **id Software** (1999) - Original Quake GPL source
 2. **Gregory Maynard-Hoare** - Original WASM port (GMH-Code/Quake-WASM)
-3. **initialed85** - WebSocket multiplayer and Go gateway (upstream of this fork)
+3. **initialed85** - WebSocket multiplayer and Go proxy (upstream of this fork)
 4. **This repository** - Docker containerization and build system
 
 ## Our Source Modifications

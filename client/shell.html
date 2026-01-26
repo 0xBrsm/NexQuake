@@ -319,21 +319,6 @@
           args.push(t);
         }
 
-        // Optional auto-connect without needing an autoexec.cfg:
-        // http://localhost:7071/?connect=127.255.255.1
-        // If connect is present but empty/1/true, default to 127.255.255.1.
-        try {
-          var params = new URLSearchParams(window.location.search);
-          if (params.has('connect')) {
-            var host = params.get('connect') || '';
-            host = host.trim();
-            if (host === '' || host === '1' || host.toLowerCase() === 'true' || host.toLowerCase() === 'any') {
-              host = '127.255.255.1';
-            }
-            args.push('+connect', host);
-          }
-        } catch (e) {}
-
         Module['arguments'] = args;
       })();
 

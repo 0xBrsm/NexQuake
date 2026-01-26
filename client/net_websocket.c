@@ -4,7 +4,7 @@ Added by initialed85
 // net_websocket.c
 // Modified by WebQuake:
 // - Dynamic WebSocket URL (derived from window.location, with optional override)
-// - No UUID hello frame (gateway is a simple datagram tunnel)
+// - No UUID hello frame (nexus is a simple datagram tunnel)
 // - Avoid <netinet/in.h> prototype conflicts under Emscripten
 
 #include "quakedef.h"
@@ -39,6 +39,20 @@ Added by initialed85
 
 // Servers listen on the standard NetQuake port (no -port).
 #define WEBQUAKE_SERVER_LISTEN_PORT 26000
+
+// Nexus uses a "virtual addressing" scheme on loopback:
+// - server selection is encoded via 127.255.255.<server_id>
+// - nexus assigns each WS client a unique UDP source IP in 127.1.1.<octet> (server-side only)
+#define WEBQUAKE_SERVER_PREFIX24 (((uint32_t)127 << 16) | ((uint32_t)255 << 8) | (uint32_t)255)
+
+static uint32_t WebSocket_GetAddrPrefix24(struct qsockaddr *addr)
+{
+	if (!addr)
+		return 0;
+	return ((uint32_t)(byte)addr->sa_data[2] << 16) |
+		((uint32_t)(byte)addr->sa_data[3] << 8) |
+		(uint32_t)(byte)addr->sa_data[4];
+}
 
 EM_JS(char *, WebSocket_GetUrl, (), {
 	try {
@@ -182,7 +196,7 @@ static void WebSocket_FillAddrWithServerID(struct qsockaddr *addr, byte server_i
 		return;
 
 	// For multi-server support, encode server routing info in the address.
-	// Gateway prepends a server_id byte to packets. We use 127.255.255.x:26000
+	// Nexus prepends a server_id byte to packets. We use 127.255.255.x:26000
 	// where x is the server_id (1-254). 127.255.255.255 is the broadcast address.
 	Q_memset(addr, 0, sizeof(*addr));
 	addr->sa_family = AF_INET;
@@ -196,9 +210,9 @@ static void WebSocket_FillAddrWithServerID(struct qsockaddr *addr, byte server_i
 	addr->sa_data[0] = (byte)((port >> 8) & 0xff);
 	addr->sa_data[1] = (byte)(port & 0xff);
 	// IP: 127.255.255.server_id
-	addr->sa_data[2] = 127;
-	addr->sa_data[3] = 255;
-	addr->sa_data[4] = 255;
+	addr->sa_data[2] = (byte)((WEBQUAKE_SERVER_PREFIX24 >> 16) & 0xff);
+	addr->sa_data[3] = (byte)((WEBQUAKE_SERVER_PREFIX24 >> 8) & 0xff);
+	addr->sa_data[4] = (byte)(WEBQUAKE_SERVER_PREFIX24 & 0xff);
 	addr->sa_data[5] = server_id;
 }
 
@@ -209,7 +223,7 @@ EMSCRIPTEN_KEEPALIVE void WebQuake_OnPageHide(void)
 	CL_Disconnect();
 }
 
-// Deterministic command injection for e2e testing and automation.
+// Deterministic command injection for automation and debugging.
 // Queues a console command as if typed, with a trailing newline.
 EMSCRIPTEN_KEEPALIVE void WebQuake_ExecCommand(const char *cmd)
 {
@@ -232,7 +246,7 @@ static byte WebSocket_ExtractServerID(struct qsockaddr *addr)
 		return 0;
 
 	// Extract server ID from last octet of IP address (127.255.255.x)
-	if ((byte)addr->sa_data[2] == 127 && (byte)addr->sa_data[3] == 255 && (byte)addr->sa_data[4] == 255)
+	if (WebSocket_GetAddrPrefix24(addr) == WEBQUAKE_SERVER_PREFIX24)
 		return (byte)addr->sa_data[5];
 
 	// Not an encoded server address.
@@ -574,7 +588,7 @@ int WebSocket_Write(int socket, byte *buf, int len, struct qsockaddr *addr)
 	if (len < 0 || len > NET_DATAGRAMSIZE)
 		return -1;
 
-	// Extract server ID from address and prepend to packet for gateway routing
+	// Extract server ID from address and prepend to packet for nexus routing
 	byte server_id = WebSocket_ExtractServerID(addr);
 	if (server_id == 0)
 		return -1;
@@ -613,7 +627,7 @@ int WebSocket_Broadcast(int socket, byte *buf, int len)
 	if (len < 0 || len > NET_DATAGRAMSIZE)
 		return -1;
 
-	// Use server_id = 0xFF as broadcast flag for gateway to fan out to all servers.
+	// Use server_id = 0xFF as broadcast flag for nexus to fan out to all servers.
 	// Broadcast targets the default listen port (26000).
 	byte frame[NET_DATAGRAMSIZE + WS_ROUTING_HEADER_SIZE];
 	frame[0] = 0xFF;  // Broadcast marker
@@ -633,7 +647,12 @@ char *WebSocket_AddrToString(struct qsockaddr *addr)
 	static char buffer[22];
 	if (!addr)
 	{
-		sprintf(buffer, "127.255.255.1:26000");
+		sprintf(buffer, "%d.%d.%d.%d:%d",
+			(int)((WEBQUAKE_SERVER_PREFIX24 >> 16) & 0xff),
+			(int)((WEBQUAKE_SERVER_PREFIX24 >> 8) & 0xff),
+			(int)(WEBQUAKE_SERVER_PREFIX24 & 0xff),
+			1,
+			WEBQUAKE_SERVER_LISTEN_PORT);
 		return buffer;
 	}
 
@@ -661,11 +680,13 @@ int WebSocket_StringToAddr(char *string, struct qsockaddr *addr)
 		if (string[consumed] != '\0')
 			return -1;
 
-		// Only allow user-specified ports that match the server listen port.
+	// Only allow user-specified ports that match the server listen port.
 		// The server may still switch to an accepted port during the handshake
 		// (CCREP_ACCEPT); that port change happens internally and does not go
 		// through this parser.
-		if (a == 127 && b == 255 && c == 255 && d >= 1 && d <= 254 && port == WEBQUAKE_SERVER_LISTEN_PORT)
+		if ((((uint32_t)a << 16) | ((uint32_t)b << 8) | (uint32_t)c) == WEBQUAKE_SERVER_PREFIX24 &&
+			d >= 1 && d <= 254 &&
+			port == WEBQUAKE_SERVER_LISTEN_PORT)
 		{
 			WebSocket_FillAddrWithServerID(addr, (byte)d, port);
 			return 0;
@@ -683,7 +704,8 @@ int WebSocket_StringToAddr(char *string, struct qsockaddr *addr)
 		if (string[consumed] != '\0')
 			return -1;
 
-		if (a == 127 && b == 255 && c == 255 && d >= 1 && d <= 254)
+		if ((((uint32_t)a << 16) | ((uint32_t)b << 8) | (uint32_t)c) == WEBQUAKE_SERVER_PREFIX24 &&
+			d >= 1 && d <= 254)
 		{
 			WebSocket_FillAddrWithServerID(addr, (byte)d, WEBQUAKE_SERVER_LISTEN_PORT);
 			return 0;
@@ -697,20 +719,19 @@ int WebSocket_GetSocketAddr(int socket, struct qsockaddr *addr)
 {
 	(void)socket;
 	// This is Quake's "local address" display. In the browser we don't have a real
-	// UDP interface, so report a stable loopback address rather than the 127.255.255.x
-	// encoded server routing address.
+	// UDP interface, so report an explicit "unknown" address.
 	if (addr)
 	{
 		Q_memset(addr, 0, sizeof(*addr));
 		addr->sa_family = AF_INET;
-		// Port 26000 (0x6590 in big-endian)
-		addr->sa_data[0] = 0x65;
-		addr->sa_data[1] = 0x90;
-		// IP: 127.1.1.1
-		addr->sa_data[2] = 127;
-		addr->sa_data[3] = 1;
-		addr->sa_data[4] = 1;
-		addr->sa_data[5] = 1;
+		// Port 0 (big-endian).
+		addr->sa_data[0] = 0;
+		addr->sa_data[1] = 0;
+		// IP: 0.0.0.0 (unknown / not applicable in browser).
+		addr->sa_data[2] = 0;
+		addr->sa_data[3] = 0;
+		addr->sa_data[4] = 0;
+		addr->sa_data[5] = 0;
 	}
 	return 0;
 }

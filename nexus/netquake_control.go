@@ -39,34 +39,6 @@ func buildCCREQServerInfo() []byte {
 	return buf
 }
 
-func buildCCREPServerInfo(serverID byte, hostname, mapName string, players, maxPlayers byte) ([]byte, error) {
-	if serverID == 0 || serverID == 0xFF {
-		return nil, fmt.Errorf("invalid server id %d", serverID)
-	}
-	if hostname == "" {
-		hostname = "UNNAMED"
-	}
-	if mapName == "" {
-		mapName = "?"
-	}
-
-	serverAddr := fmt.Sprintf("%d.%d.%d.%d:%d", serverSubnetA, serverSubnetB, serverSubnetC, serverID, defaultServerPort)
-
-	buf := make([]byte, 0, 256)
-	buf = append(buf, 0, 0, 0, 0) // placeholder for the header
-	buf = append(buf, ccrepServerInfo)
-	buf = appendCString(buf, serverAddr)
-	buf = appendCString(buf, hostname)
-	buf = appendCString(buf, mapName)
-	buf = append(buf, players)
-	buf = append(buf, maxPlayers)
-	buf = append(buf, netProtocolVersion)
-
-	control := netFlagCtl | uint32(len(buf))
-	binary.BigEndian.PutUint32(buf[0:4], control)
-	return buf, nil
-}
-
 func truncateQuakeString(s string, maxBytes int) string {
 	if maxBytes <= 0 {
 		return ""
@@ -122,7 +94,7 @@ func buildCCREPServerList(entries []struct {
 			mapName = "?"
 		}
 
-		serverAddr := fmt.Sprintf("%d.%d.%d.%d:%d", serverSubnetA, serverSubnetB, serverSubnetC, e.ServerID, defaultServerPort)
+		serverAddr := fmt.Sprintf("%d.%d.%d.%d:%d", subnetServersA, subnetServersB, subnetServersC, e.ServerID, defaultServerPort)
 
 		hostname = truncateQuakeString(hostname, 15)
 		mapName = truncateQuakeString(mapName, 15)

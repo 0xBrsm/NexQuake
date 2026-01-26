@@ -1,8 +1,6 @@
 package main
 
 import (
-	"encoding/json"
-	"net/http"
 	"runtime"
 	"time"
 )
@@ -36,9 +34,4 @@ func currentVersionInfo() versionInfo {
 		GOOS:      runtime.GOOS,
 		GOARCH:    runtime.GOARCH,
 	}
-}
-
-func writeVersionJSON(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(currentVersionInfo())
 }

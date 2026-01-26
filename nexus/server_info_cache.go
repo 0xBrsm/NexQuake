@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -28,26 +26,6 @@ type ServerInfoCache struct {
 	pollConn *net.UDPConn
 }
 
-func maxServerIDFromEnv() int {
-	maxServerID := 254
-	if maxStr := os.Getenv("WEBQUAKE_MAX_SERVER_ID"); maxStr != "" {
-		if v, err := strconv.Atoi(maxStr); err == nil {
-			if v < 1 {
-				v = 1
-			}
-			if v > 254 {
-				v = 254
-			}
-			maxServerID = v
-		}
-	}
-	return maxServerID
-}
-
-func NewServerInfoCacheFromEnv() *ServerInfoCache {
-	return NewServerInfoCache(maxServerIDFromEnv())
-}
-
 func NewServerInfoCache(maxServerID int) *ServerInfoCache {
 	if maxServerID < 1 {
 		maxServerID = 1
@@ -66,11 +44,10 @@ func (c *ServerInfoCache) Start(ctx context.Context) error {
 		return fmt.Errorf("invalid max server id")
 	}
 
-	// Use a single UDP socket for polling. Binding to 127.1.1.x keeps the source
-	// address consistent with our “simulated LAN” loopback scheme, but isn’t
-	// otherwise special.
+	// Use a single UDP socket for polling. Bind it to a stable "nexus" loopback
+	// address so it can't collide with per-client loopback allocations.
 	listenAddr := &net.UDPAddr{
-		IP:   net.IPv4(clientSubnetA, clientSubnetB, clientSubnetC, lastClientHostOct).To4(),
+		IP:   net.IPv4(subnetNexusA, subnetNexusB, subnetNexusC, nexusPollerHostOct).To4(),
 		Port: 0,
 	}
 
@@ -89,7 +66,7 @@ func (c *ServerInfoCache) Start(ctx context.Context) error {
 	go c.pollLoop(ctx)
 
 	infof("Server info cache: polling 127.%d.%d.1..%d:%d every %s (round-robin step %s)",
-		serverSubnetB, serverSubnetC, c.maxServerID, defaultServerPort,
+		subnetServersB, subnetServersC, c.maxServerID, defaultServerPort,
 		time.Duration(c.maxServerID)*serverInfoPollStep, serverInfoPollStep,
 	)
 
@@ -110,10 +87,10 @@ func (c *ServerInfoCache) pollLoop(ctx context.Context) {
 
 	req := buildCCREQServerInfo()
 
-	// Prime the cache quickly at startup (bounded by WEBQUAKE_MAX_SERVER_ID).
+	// Prime the cache quickly at startup (bounded by maxServerID).
 	for id := 1; id <= c.maxServerID; id++ {
 		dst := &net.UDPAddr{
-			IP:   net.IPv4(serverSubnetA, serverSubnetB, serverSubnetC, byte(id)).To4(),
+			IP:   net.IPv4(subnetServersA, subnetServersB, subnetServersC, byte(id)).To4(),
 			Port: defaultServerPort,
 		}
 		_, _ = c.pollConn.WriteToUDP(req, dst)
@@ -122,15 +99,11 @@ func (c *ServerInfoCache) pollLoop(ctx context.Context) {
 	nextID := 1
 	pollOne := func(serverID int) {
 		dst := &net.UDPAddr{
-			IP:   net.IPv4(serverSubnetA, serverSubnetB, serverSubnetC, byte(serverID)).To4(),
+			IP:   net.IPv4(subnetServersA, subnetServersB, subnetServersC, byte(serverID)).To4(),
 			Port: defaultServerPort,
 		}
 		_, _ = c.pollConn.WriteToUDP(req, dst)
 	}
-
-	// Poll immediately so we have data as early as possible.
-	pollOne(nextID)
-	nextID++
 
 	ticker := time.NewTicker(serverInfoPollStep)
 	defer ticker.Stop()
@@ -173,7 +146,7 @@ func (c *ServerInfoCache) readLoop(ctx context.Context) {
 			continue
 		}
 		ip4 := src.IP.To4()
-		if ip4 == nil || ip4[0] != serverSubnetA || ip4[1] != serverSubnetB || ip4[2] != serverSubnetC {
+		if ip4 == nil || ip4[0] != subnetServersA || ip4[1] != subnetServersB || ip4[2] != subnetServersC {
 			continue
 		}
 		serverID := int(ip4[3])

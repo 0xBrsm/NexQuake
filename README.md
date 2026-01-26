@@ -16,7 +16,7 @@ Run with pre-built artifacts (from GitHub Actions or Releases):
 mkdir -p apps
 tar -xzf nqwasm-client.tar.gz -C apps/
 tar -xzf nqserver-x86_64.tar.gz -C apps/    # or nqserver-aarch64.tar.gz
-tar -xzf gateway-amd64.tar.gz -C apps/      # or gateway-arm64.tar.gz
+tar -xzf nexus-amd64.tar.gz -C apps/        # or nexus-arm64.tar.gz
 
 # 3. Create game data directory and add your PAK files
 mkdir -p data/id1
@@ -35,7 +35,7 @@ docker compose up
 **Directory Structure:**
 - `apps/` - Application binaries and client files (read-only)
   - `nqwasm/` - WebAssembly client files
-  - `gateway` - Go HTTP/WebSocket proxy binary
+  - `nexus` - Go HTTP/WebSocket relay + server orchestrator binary
   - `nqserver` - NetQuake server binary
 - `data/` - Game data (read-only)
   - `id1/` - Base Quake game files (PAK0.PAK, PAK1.PAK) plus optional loose files (e.g. `autoexec.cfg`)
@@ -58,7 +58,7 @@ Both the WASM client and NetQuake servers share the same PAK files from the `dat
 
 **Dynamic `/data/id1` Mirroring**
 - Place PAK files in `data/id1/` directory on your host
-- Gateway serves them at `http://localhost:7071/data/id1/...`
+- Nexus serves them at `http://localhost:7071/data/id1/...`
 - WASM client fetches a directory listing from `http://localhost:7071/data-manifest/id1` and downloads everything into the virtual filesystem under `/id1` (lowercased paths) before Quake starts (PAKs + any loose files like `autoexec.cfg`)
 - NetQuake servers read the same files from the `/data` volume bind
 
@@ -71,15 +71,12 @@ Both the WASM client and NetQuake servers share the same PAK files from the `dat
 
 ### Auto-Connect
 
-Two lightweight options:
-
-- Put an `autoexec.cfg` in `data/id1/` with `connect 127.255.255.1`
-- Or pass a URL param: `http://localhost:7071/?connect=127.255.255.1`
+Put an `autoexec.cfg` in `data/id1/` with `connect 127.255.255.1`.
 
 ## Features
 
 - **WASM Client**: Runs entirely in browser via WebAssembly
-- **Multiplayer**: WebSocket gateway bridges browser clients to Quake servers
+- **Multiplayer**: WebSocket nexus bridges browser clients to Quake servers
 - **Renderer**: Software renderer only
 - **Browser Storage**: Saves persist between sessions
 
@@ -92,12 +89,12 @@ Local development tooling (local build scripts, Playwright, devcontainers) is in
 ```
 Browser (WASM Client)
     ↕ WebSocket
-Gateway (Go HTTP Server)
+Nexus (Go HTTP Server)
     ↕ UDP
 NetQuake Server (id1)
 ```
 
-The gateway serves client files and proxies WebSocket connections to UDP-based Quake servers.
+Nexus (Go HTTP server) serves client files and relays WebSocket connections to UDP-based Quake servers.
 
 ## Documentation
 
@@ -108,7 +105,7 @@ The gateway serves client files and proxies WebSocket connections to UDP-based Q
 
 - **id Software** - Original Quake (GPL 2.0)
 - **Gregory Maynard-Hoare** ([GMH-Code](https://github.com/GMH-Code/Quake-WASM)) - Original WASM port
-- **initialed85** - WebSocket multiplayer layer and Go gateway
+- **initialed85** - WebSocket multiplayer layer and Go proxy
 - **This fork** - Docker containerization and build system
 
 ## License

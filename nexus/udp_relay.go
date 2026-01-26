@@ -78,7 +78,7 @@ func NewUDPRelay(client *ClientConnection) (*UDPRelay, error) {
 		return nil, fmt.Errorf("failed to allocate unique client loopback IP")
 	}
 	listenAddr := &net.UDPAddr{
-		IP:   net.IPv4(clientSubnetA, clientSubnetB, clientSubnetC, oct).To4(),
+		IP:   net.IPv4(subnetClientsA, subnetClientsB, subnetClientsC, oct).To4(),
 		Port: 0,
 	}
 
@@ -171,7 +171,7 @@ func (r *UDPRelay) udpReader() {
 		serverID := byte(0)
 		srcPort := 0
 		if udpAddr, ok := remoteSrcAddr.(*net.UDPAddr); ok && udpAddr.IP != nil {
-			if ip4 := udpAddr.IP.To4(); ip4 != nil && ip4[0] == serverSubnetA && ip4[1] == serverSubnetB && ip4[2] == serverSubnetC {
+			if ip4 := udpAddr.IP.To4(); ip4 != nil && ip4[0] == subnetServersA && ip4[1] == subnetServersB && ip4[2] == subnetServersC {
 				serverID = ip4[3]
 			}
 			srcPort = udpAddr.Port
@@ -245,7 +245,7 @@ func (r *UDPRelay) udpWriter() {
 
 			// Control-plane handling for Quake's LAN server discovery.
 			// `slist` broadcasts a connectionless CCREQ_SERVER_INFO. Reply
-			// immediately from the gateway’s polled cache, as a single aggregated
+			// immediately from the nexus polled cache, as a single aggregated
 			// packet to avoid timing/polling flakiness in the client.
 			if routingByte == 0xFF {
 				if globalServerInfoCache != nil && isCCREQServerInfo(payload) {
@@ -269,7 +269,7 @@ func (r *UDPRelay) udpWriter() {
 
 			writeTo := func(serverID byte) {
 				dst := &net.UDPAddr{
-					IP:   net.IPv4(serverSubnetA, serverSubnetB, serverSubnetC, serverID).To4(),
+					IP:   net.IPv4(subnetServersA, subnetServersB, subnetServersC, serverID).To4(),
 					Port: dstPort,
 				}
 

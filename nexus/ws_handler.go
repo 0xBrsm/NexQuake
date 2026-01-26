@@ -2,7 +2,6 @@ package main
 
 import (
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -14,51 +13,8 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:    4096,
 	WriteBufferSize:   4096,
 	Subprotocols:      []string{"binary"},
-	CheckOrigin:       checkOrigin,
+	CheckOrigin:       func(r *http.Request) bool { return true },
 	EnableCompression: false,
-}
-
-var allowedOrigins []string
-
-// initWebSocketUpgrader initializes the WebSocket upgrader with allowed origins
-func initWebSocketUpgrader(origins string) {
-	if origins == "*" {
-		// Allow all origins (development mode)
-		allowedOrigins = []string{"*"}
-		debugf("WebSocket: allowing all origins (WS_ALLOWED_ORIGIN=*)")
-	} else {
-		// Parse comma-separated list of allowed origins
-		allowedOrigins = strings.Split(origins, ",")
-		for i := range allowedOrigins {
-			allowedOrigins[i] = strings.TrimSpace(allowedOrigins[i])
-		}
-		infof("WebSocket: allowed origins: %v", allowedOrigins)
-	}
-}
-
-// checkOrigin validates the WebSocket connection origin
-func checkOrigin(r *http.Request) bool {
-	// Allow all origins if configured with "*"
-	if len(allowedOrigins) == 1 && allowedOrigins[0] == "*" {
-		return true
-	}
-
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		// No origin header - might be a non-browser client
-		debugf("WebSocket connection with no Origin header from %s", r.RemoteAddr)
-		return true
-	}
-
-	// Check if origin is in the allowed list
-	for _, allowed := range allowedOrigins {
-		if origin == allowed {
-			return true
-		}
-	}
-
-	warnf("WebSocket connection rejected: origin %s not in allowed list", origin)
-	return false
 }
 
 // ClientConnection represents a browser client WebSocket connection
@@ -85,7 +41,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	debugf("Client connected: %s (subprotocol=%q)", conn.RemoteAddr(), conn.Subprotocol())
 
-	// Create a UDP relay immediately. This gateway intentionally does not parse
+	// Create a UDP relay immediately. Nexus intentionally does not parse
 	// NetQuake datagrams. It reads a small routing header from each WebSocket
 	// frame and forwards the datagram to 127.255.255.<server_id>:<udp_port>.
 	relay, err := NewUDPRelay(client)

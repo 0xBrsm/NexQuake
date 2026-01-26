@@ -1,14 +1,14 @@
 version: '3.8'
 
 services:
-  gateway:
+  nexus:
     build:
       context: .
       dockerfile: Dockerfile
     ports:
       - "7071:7071"
     volumes:
-      # Application binaries and client files (nqwasm, gateway, nqserver)
+      # Application binaries and client files (nqwasm, nexus, nqserver)
       - ./apps:/apps:ro
       # Game data (id1, mods, mission packs) - read-only
       - ./data:/data:ro
@@ -19,7 +19,6 @@ services:
       - LOGS_DIR=/logs
       - CLIENT_DIR=/apps/nqwasm
       - SERVER_BINARY=/apps/nqserver
-      - GATEWAY_BINARY=/apps/gateway
       - HTTP_PORT=7071
     restart: unless-stopped
     healthcheck:
@@ -29,5 +28,5 @@ services:
       retries: 3
       start_period: 40s
 
-# For production: Configure your own reverse proxy to forward to gateway:7071
+# For production: Configure your own reverse proxy to forward to nexus:7071
 # Examples: Nginx, Traefik, Caddy, HAProxy, or cloud load balancer

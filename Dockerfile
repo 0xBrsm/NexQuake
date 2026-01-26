@@ -14,10 +14,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy startup script
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
-
 # Create directories for bind mounts
 RUN mkdir -p /apps /data /logs
 
@@ -25,9 +21,8 @@ ENV HTTP_PORT=7071 \
     QUAKE_DATA_DIR=/data \
     LOGS_DIR=/logs \
     CLIENT_DIR=/apps/nqwasm \
-    SERVER_BINARY=/apps/nqserver \
-    GATEWAY_BINARY=/apps/gateway
+    SERVER_BINARY=/apps/nqserver
 
 EXPOSE 7071
 
-CMD ["/app/start.sh"]
+CMD ["/apps/nexus"]

@@ -48,4 +48,4 @@ This repo uses upstream `id-Software/Quake` as the base source during CI builds.
 - `src/client/net_websocket.c`: derived from `initialed85` but adjusted to:
   - avoid `<netinet/in.h>` under Emscripten (conflicts with upstream Quake `net.h` prototypes),
   - derive the WebSocket URL from `window.location` (and support `?ws=` override),
-  - not send the upstream “UUID hello” frame (this gateway is a raw datagram tunnel).
+  - not send the upstream “UUID hello” frame (nexus is a raw datagram tunnel).
