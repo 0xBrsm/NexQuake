@@ -17,7 +17,7 @@ var upgrader = websocket.Upgrader{
 	EnableCompression: false,
 }
 
-// ClientConnection represents a browser client WebSocket connection
+// ClientConnection represents a browser WebSocket connection.
 type ClientConnection struct {
 	conn     *websocket.Conn
 	udpRelay *UDPRelay

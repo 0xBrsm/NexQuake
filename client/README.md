@@ -41,7 +41,7 @@ Output: `index.html`, `index.js`, `index.wasm` (and optionally `index.data` if t
 
 This repo uses upstream `id-Software/Quake` as the base source during CI builds. Some `initialed85/Quake-WASM` files assume a different source layout (for example `--preload-file=id1` and direct inclusion of POSIX networking headers). To keep the overlay minimal and compatible with the upstream Quake tree, we intentionally diverge in a few places:
 
-- `src/client/shell.html`: fetches `/data-manifest/id1` and mirrors `data/id1` into `/id1` in the virtual filesystem (lowercased paths) before Quake starts, instead of relying on `index.data` created by `--preload-file=id1`.
+- `src/client/shell.html`: fetches `/data-manifest/id1` and installs a lazy-backed virtual filesystem under `/id1` (lowercased paths), instead of relying on `index.data` created by `--preload-file=id1`.
 - `src/client/Makefile.emscripten`: drops `--preload-file=id1` and does not compile `net_udp.c` (browser networking uses the WebSocket landriver only).
 - `src/client/sys_sdl.c`: fixes `Sys_FileWrite()` to use `fwrite()` (upstream `initialed85/Quake-WASM` uses `fread()` in this function).
 - `src/client/net_bsd.c`: only registers the `WebSocket` landriver (no UDP landriver).

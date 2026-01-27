@@ -12,8 +12,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const wsRoutingHeaderSize = 3
-
 type clientIPAllocator struct {
 	mu   sync.Mutex
 	next byte

@@ -37,6 +37,8 @@ type ServerManager struct {
 	serverBinary string
 
 	servers []*managedServer
+
+	runtimeBasedir string
 }
 
 func NewServerManager(dataDir, logsDir, serverBinary string) *ServerManager {
@@ -80,6 +82,12 @@ func (m *ServerManager) StartAll() error {
 	// Deterministic ordering makes debugging and server-id assignment stable.
 	sort.Strings(mods)
 
+	runtimeBasedir, err := prepareRuntimeBasedir(m.dataDir, mods)
+	if err != nil {
+		return err
+	}
+	m.runtimeBasedir = runtimeBasedir
+
 	var servers []*managedServer
 	serverID := 1
 	for _, mod := range mods {
@@ -94,7 +102,7 @@ func (m *ServerManager) StartAll() error {
 			Hostname: makeServerHostname(mod, serverID),
 		}
 
-		srv, err := m.startOne(spec)
+		srv, err := m.startOne(runtimeBasedir, spec)
 		if err != nil {
 			// Best-effort cleanup for already-started servers.
 			m.servers = servers
@@ -110,7 +118,7 @@ func (m *ServerManager) StartAll() error {
 	return nil
 }
 
-func (m *ServerManager) startOne(spec serverSpec) (*managedServer, error) {
+func (m *ServerManager) startOne(runtimeBasedir string, spec serverSpec) (*managedServer, error) {
 	logDir := filepath.Join(m.logsDir, spec.ModName)
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir %s: %w", logDir, err)
@@ -130,7 +138,7 @@ func (m *ServerManager) startOne(spec serverSpec) (*managedServer, error) {
 	}
 
 	cmd := exec.Command(m.serverBinary, args...)
-	cmd.Dir = m.dataDir
+	cmd.Dir = runtimeBasedir
 
 	// Without a tty, nqserver's stdio is fully-buffered and may never flush (especially if terminated by SIGTERM),
 	// resulting in empty logs. A pty makes it line-buffered so logs are written as they happen.
@@ -236,6 +244,13 @@ func (m *ServerManager) StopAll(ctx context.Context, killAfter time.Duration) er
 		}
 	}
 
+	// Cleanup the ephemeral runtime basedir after all servers have exited (or after
+	// we have attempted to stop them).
+	if m.runtimeBasedir != "" {
+		_ = os.RemoveAll(m.runtimeBasedir)
+		m.runtimeBasedir = ""
+	}
+
 	return errors.Join(errs...)
 }
 
@@ -245,33 +260,6 @@ func isProcessAlive(p *os.Process) bool {
 	}
 	// Signal 0 checks for existence without sending a real signal.
 	return p.Signal(syscall.Signal(0)) == nil
-}
-
-func listMods(dataDir string) ([]string, error) {
-	ents, err := os.ReadDir(dataDir)
-	if err != nil {
-		return nil, fmt.Errorf("read QUAKE_DATA_DIR: %w", err)
-	}
-
-	var mods []string
-	for _, ent := range ents {
-		if !ent.IsDir() {
-			continue
-		}
-		name := ent.Name()
-		dir := filepath.Join(dataDir, name)
-
-		// Minimal heuristic: a "mod" is any directory containing pak0.pak or progs.dat.
-		if exists(filepath.Join(dir, "pak0.pak")) || exists(filepath.Join(dir, "progs.dat")) {
-			mods = append(mods, name)
-		}
-	}
-	return mods, nil
-}
-
-func exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }
 
 func makeServerHostname(modName string, serverID int) string {

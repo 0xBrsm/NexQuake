@@ -2,11 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
 	"time"
 )
+
+// globalServerInfoCache is used by the WS->UDP relay to answer Quake's `slist`
+// broadcast from a stable polled snapshot (rather than relying on UDP broadcast
+// delivery semantics on loopback).
+var globalServerInfoCache *ServerInfoCache
 
 const serverInfoPollStep = 500 * time.Millisecond
 
@@ -24,6 +30,7 @@ type ServerInfoCache struct {
 	entries     []serverInfoEntry // indexed by server id (0 unused)
 
 	pollConn *net.UDPConn
+	stopOnce sync.Once
 }
 
 func NewServerInfoCache(maxServerID int) *ServerInfoCache {
@@ -62,8 +69,8 @@ func (c *ServerInfoCache) Start(ctx context.Context) error {
 
 	c.pollConn = udpConn
 
-	go c.readLoop(ctx)
-	go c.pollLoop(ctx)
+	go c.readLoop(ctx, udpConn)
+	go c.pollLoop(ctx, udpConn)
 
 	infof("Server info cache: polling 127.%d.%d.1..%d:%d every %s (round-robin step %s)",
 		subnetServersB, subnetServersC, c.maxServerID, defaultServerPort,
@@ -74,17 +81,14 @@ func (c *ServerInfoCache) Start(ctx context.Context) error {
 }
 
 func (c *ServerInfoCache) Stop() {
-	if c.pollConn != nil {
-		_ = c.pollConn.Close()
-		c.pollConn = nil
-	}
+	c.stopOnce.Do(func() {
+		if c.pollConn != nil {
+			_ = c.pollConn.Close()
+		}
+	})
 }
 
-func (c *ServerInfoCache) pollLoop(ctx context.Context) {
-	if c.pollConn == nil {
-		return
-	}
-
+func (c *ServerInfoCache) pollLoop(ctx context.Context, conn *net.UDPConn) {
 	req := buildCCREQServerInfo()
 
 	// Prime the cache quickly at startup (bounded by maxServerID).
@@ -93,16 +97,21 @@ func (c *ServerInfoCache) pollLoop(ctx context.Context) {
 			IP:   net.IPv4(subnetServersA, subnetServersB, subnetServersC, byte(id)).To4(),
 			Port: defaultServerPort,
 		}
-		_, _ = c.pollConn.WriteToUDP(req, dst)
+		if _, err := conn.WriteToUDP(req, dst); err != nil && errors.Is(err, net.ErrClosed) {
+			return
+		}
 	}
 
 	nextID := 1
-	pollOne := func(serverID int) {
+	pollOne := func(serverID int) bool {
 		dst := &net.UDPAddr{
 			IP:   net.IPv4(subnetServersA, subnetServersB, subnetServersC, byte(serverID)).To4(),
 			Port: defaultServerPort,
 		}
-		_, _ = c.pollConn.WriteToUDP(req, dst)
+		if _, err := conn.WriteToUDP(req, dst); err != nil {
+			return !errors.Is(err, net.ErrClosed)
+		}
+		return true
 	}
 
 	ticker := time.NewTicker(serverInfoPollStep)
@@ -116,22 +125,23 @@ func (c *ServerInfoCache) pollLoop(ctx context.Context) {
 			if nextID > c.maxServerID {
 				nextID = 1
 			}
-			pollOne(nextID)
+			if !pollOne(nextID) {
+				return
+			}
 			nextID++
 		}
 	}
 }
 
-func (c *ServerInfoCache) readLoop(ctx context.Context) {
-	if c.pollConn == nil {
-		return
-	}
-
+func (c *ServerInfoCache) readLoop(ctx context.Context, conn *net.UDPConn) {
 	buf := make([]byte, 2048)
 	for {
-		_ = c.pollConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-		n, src, err := c.pollConn.ReadFromUDP(buf)
+		_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		n, src, err := conn.ReadFromUDP(buf)
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
 			if ctx.Err() != nil {
 				return
 			}

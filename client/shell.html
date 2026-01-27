@@ -107,37 +107,83 @@
             FS.mkdirTree('/' + parts.join('/'));
           }
 
-          function loadDataFile(relPath, optional) {
-            relPath = String(relPath || '').replace(/^\/+/, '');
-            if (!relPath) return;
-            return fetch(urlJoinDataId1(relPath))
-              .then(function(response) {
-                if (!response.ok) throw new Error('fetch failed: ' + response.status + ' for ' + relPath);
-                return response.arrayBuffer();
-              })
-              .then(function(arrayBuffer) {
-                // Store everything as lowercase in the VFS (Quake expects lowercase paths).
-                var lowerRel = relPath.split('/').filter(Boolean).map(function(p) { return p.toLowerCase(); }).join('/');
-                var outPath = '/id1/' + lowerRel;
-                var parent = outPath.substring(0, outPath.lastIndexOf('/')) || '/';
-                var name = outPath.substring(outPath.lastIndexOf('/') + 1);
+          // Emscripten's built-in FS.createLazyFile only supports browser lazy-loading in Web Workers.
+          // WebQuake runs on the main thread, so we implement a tiny "lazy remote file" wrapper:
+          // - Create the file node up-front so Quake can open it.
+          // - On first read/open, download the full file into MEMFS (blocking via ASYNCIFY).
+          // This preserves Quake's synchronous filesystem model while avoiding upfront downloads.
+          function createRemoteFile(parent, name, url, size) {
+            var node = FS.createFile(parent, name, null, true, false);
+            node.url = url;
+            node.usedBytes = Number.isFinite(size) && size > 0 ? size : 0;
 
-                ensureDirForPath(outPath);
-                FS.createDataFile(parent, name, new Uint8Array(arrayBuffer), true, false, false);
-                console.log('Loaded ' + outPath + ' (' + arrayBuffer.byteLength + ' bytes)');
-              })
-              .catch(function(err) {
-                if (optional) {
-                  console.log('Optional file failed: ' + relPath);
-                  return;
-                }
-                throw err;
-              });
+            function ensureLoaded() {
+              if (node.contents) return;
+              // Synchronous XHR is still permitted on the main thread, but Chrome disallows
+              // setting responseType for sync requests. Use the classic "x-user-defined" path
+              // and convert responseText -> Uint8Array.
+              var xhr = new XMLHttpRequest();
+              xhr.open('GET', node.url, false);
+              try { xhr.overrideMimeType('text/plain; charset=x-user-defined'); } catch (e) {}
+              xhr.send(null);
+
+              if (xhr.status !== 200 && xhr.status !== 0) {
+                throw new Error('remote file fetch failed: ' + xhr.status + ' for ' + node.url);
+              }
+
+              var text = xhr.responseText || '';
+              var bytes = new Uint8Array(text.length);
+              for (var i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i) & 0xFF;
+              node.contents = bytes;
+              node.usedBytes = bytes.length;
+            }
+
+            node.stream_ops = {
+              open: function() {
+                ensureLoaded();
+              },
+              close: function() {},
+              read: function(stream, buffer, offset, length, position) {
+                ensureLoaded();
+                var contents = node.contents;
+                if (!contents) return 0;
+                var size = contents.length;
+                if (position >= size) return 0;
+                var end = Math.min(size, position + length);
+                buffer.set(contents.subarray(position, end), offset);
+                return end - position;
+              },
+              llseek: function(stream, offset, whence) {
+                var position = offset;
+                if (whence === 1) position += stream.position;
+                else if (whence === 2) position += node.usedBytes;
+                if (position < 0) throw new FS.ErrnoError(28); // EINVAL
+                return position;
+              }
+            };
+
+            return node;
           }
 
-          // Mirror /data/id1 into /id1 before starting Quake (including PAKs).
-          // This build relies strictly on the manifest: if it fails, Quake will not start.
-          Module.addRunDependency('preload:id1');
+          function installLazyFile(vfsRelPath, url, size) {
+            vfsRelPath = String(vfsRelPath || '').replace(/^\/+/, '');
+            url = String(url || '').trim();
+            if (!vfsRelPath || !url) return;
+
+            // Store everything as lowercase in the VFS (Quake expects lowercase paths).
+            var lowerRel = vfsRelPath.split('/').filter(Boolean).map(function(p) { return p.toLowerCase(); }).join('/');
+            var outPath = '/id1/' + lowerRel;
+            var parent = outPath.substring(0, outPath.lastIndexOf('/')) || '/';
+            var name = outPath.substring(outPath.lastIndexOf('/') + 1);
+
+            ensureDirForPath(outPath);
+            try { FS.unlink(outPath); } catch (e) {}
+            createRemoteFile(parent, name, url, size);
+          }
+
+          // Mirror a virtualized manifest into /id1 before starting Quake.
+          // Files are installed as lazy-backed VFS entries (download on first read).
+          Module.addRunDependency('manifest:id1');
 
           function fetchManifest() {
             return fetch('/data-manifest/id1').then(function(response) {
@@ -146,60 +192,41 @@
             });
           }
 
-          function preloadAllFiles(files) {
-            if (!Array.isArray(files) || files.length === 0) {
+          function installManifest(entries) {
+            if (!Array.isArray(entries) || entries.length === 0) {
               throw new Error('manifest empty');
             }
 
-            var paths = files
-              .filter(function(p) { return typeof p === 'string' && p.trim() !== ''; })
-              .map(function(p) { return p.trim().replace(/^\/+/, ''); })
-              .filter(Boolean);
+            // Ensure the mount root exists.
+            try { FS.mkdir('/id1'); } catch (e) {}
 
-            var hasPak0 = paths.some(function(p) { return p.toLowerCase() === 'pak0.pak'; });
-            if (!hasPak0) {
-              throw new Error('pak0.pak missing from /data/id1/');
+            // Backwards compatibility: old manifests were arrays of relative paths.
+            if (typeof entries[0] === 'string') {
+              entries
+                .filter(function(p) { return typeof p === 'string' && p.trim() !== ''; })
+                .map(function(p) { return p.trim().replace(/^\/+/, ''); })
+                .filter(Boolean)
+                .forEach(function(relPath) {
+                  installLazyFile(relPath, urlJoinDataId1(relPath));
+                });
+              return;
             }
 
-            // Fetch with bounded concurrency to avoid overwhelming the browser/network stack.
-            var concurrency = 4;
-            var index = 0;
-            var active = 0;
-            var completed = 0;
-            var total = paths.length;
-
-            return new Promise(function(resolve, reject) {
-              function pump() {
-                while (active < concurrency && index < total) {
-                  var relPath = paths[index++];
-                  active++;
-                  loadDataFile(relPath, false)
-                    .then(function() {
-                      active--;
-                      completed++;
-                      if (completed >= total) resolve();
-                      else pump();
-                    })
-                    .catch(function(err) {
-                      reject(err);
-                    });
-                }
-                if (active === 0 && index >= total) {
-                  resolve();
-                }
-              }
-              pump();
+            entries.forEach(function(ent) {
+              if (!ent || typeof ent !== 'object') return;
+              if (typeof ent.path !== 'string' || typeof ent.url !== 'string') return;
+              installLazyFile(ent.path, ent.url, Number(ent.size || 0));
             });
           }
 
           fetchManifest()
-            .then(preloadAllFiles)
+            .then(installManifest)
             .then(function() {
-              Module.removeRunDependency('preload:id1');
+              Module.removeRunDependency('manifest:id1');
             })
             .catch(function(err) {
-              console.error('Failed to preload /data/id1:', err);
-              try { Module.setStatus('Failed to load /data/id1 (see console)'); } catch (e) {}
+              console.error('Failed to install /id1 manifest:', err);
+              try { Module.setStatus('Failed to load game data (see console)'); } catch (e) {}
               // Intentionally do not remove the run dependency: Quake must not start without data.
             });
         }],
