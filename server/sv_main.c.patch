@@ -1,0 +1,22 @@
+--- sv_main.c
++++ sv_main.c
+@@ -1176,3 +1176,18 @@
+-	ED_LoadFromFile (sv.worldmodel->entities);
++	// WebQuake QoL: support classic .ent entity-lump overrides.
++	// Some mods ship maps/<map>.ent instead of modified BSPs; historically users
++	// rebuilt BSPs offline. If a .ent exists, prefer it for server entity spawn.
++	{
++		char entpath[MAX_QPATH];
++		byte *entdata;
++		sprintf(entpath, "maps/%s.ent", server);
++		entdata = COM_LoadHunkFile(entpath);
++		if (entdata)
++		{
++			Con_Printf("Using entity override: %s\n", entpath);
++			ED_LoadFromFile((char *)entdata);
++		}
++		else
++			ED_LoadFromFile(sv.worldmodel->entities);
++	}
+ 
+ 	sv.active = true;

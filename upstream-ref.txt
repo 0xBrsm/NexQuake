@@ -51,6 +51,7 @@ This repository contains patches and overlays for two components:
 - `Makefile.dedicated` - Minimal headless server build (no graphics/audio)
 - `sys_linux_stub.c` - Linux stub layer
 - Patches: common.c.patch, net_udp.c.patch
+- Patches: common.c.patch, net_udp.c.patch, sv_main.c.patch
 
 ## Build Process
 

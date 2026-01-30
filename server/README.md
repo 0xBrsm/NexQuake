@@ -8,6 +8,7 @@ Build configuration for a NetQuake dedicated server from id Software's WinQuake 
 - `sys_linux_stub.c` - Stub for `Sys_SendKeyEvents()` function
 - `net_udp.c.patch` - Adds `-ip <address>` flag support for binding to specific IP addresses (enables multi-server on same port)
 - `common.c.patch` - Fixes `COM_FileBase()` pointer-underflow (armhf crash)
+- `sv_main.c.patch` - Optional QoL: supports `maps/<map>.ent` entity overrides on the server
 - `archived/net_dgrm.c.patch` - Archived networking patch (not applied by default builds)
 
 ## Approach

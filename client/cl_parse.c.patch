@@ -1,0 +1,69 @@
+--- cl_parse.c
++++ cl_parse.c
+@@ -16,6 +16,10 @@
+ 
+ #include "quakedef.h"
+ 
++#ifdef __EMSCRIPTEN__
++#include <emscripten/emscripten.h>
++#endif
++
+ char *svc_strings[] =
+ {
+ 	"svc_bad",
+@@ -284,6 +288,54 @@
+ 		S_TouchSound (str);
+ 	}
+ 
++#ifdef __EMSCRIPTEN__
++	// WebQuake: Prefetch server-provided precache assets in parallel (JS fetch),
++	// then continue with Quake's normal synchronous load path.
++	//
++	// This reduces map-join stalls when caching is absent/weak by avoiding
++	// "death by latency" from many sequential per-file fetches.
++	EM_ASM({
++		if (typeof Module === 'undefined') return;
++		if (typeof Module.webquakePrefetchReset === 'function')
++			Module.webquakePrefetchReset();
++	});
++	for (i = 1; i < nummodels; i++)
++	{
++		EM_ASM({
++			if (typeof Module === 'undefined') return;
++			if (typeof Module.webquakePrefetchEnqueue === 'function')
++				Module.webquakePrefetchEnqueue(UTF8ToString($0));
++		}, model_precache[i]);
++	}
++	for (i = 1; i < numsounds; i++)
++	{
++		EM_ASM({
++			if (typeof Module === 'undefined') return;
++			if (typeof Module.webquakePrefetchEnqueue === 'function')
++				Module.webquakePrefetchEnqueue('sound/' + UTF8ToString($0));
++		}, sound_precache[i]);
++	}
++	EM_ASM({
++		if (typeof Module === 'undefined') return;
++		if (typeof Module.webquakePrefetchStart === 'function')
++			Module.webquakePrefetchStart();
++	});
++
++	{
++		double start = Sys_FloatTime();
++		while ((Sys_FloatTime() - start) < 10.0)
++		{
++			int busy = EM_ASM_INT({
++				if (typeof Module === 'undefined') return 0;
++				return Module.webquakePrefetchBusy ? 1 : 0;
++			});
++			if (!busy)
++				break;
++			emscripten_sleep(1);
++		}
++	}
++#endif
++
+ //
+ // now we try to load everything else until a cache allocation fails
+ //
+ 
