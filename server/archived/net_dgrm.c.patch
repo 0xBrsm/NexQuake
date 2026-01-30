@@ -1,3 +1,9 @@
+### ARCHIVED (not applied by default builds)
+#
+# This patch is kept around in case we later need to support topologies where
+# multiple clients appear from the same IP (different source ports), or where
+# BAN_TEST's POSIX fallback struct definitions cause trouble on some platforms.
+#
 --- net_dgrm.c
 +++ net_dgrm.c
 @@ -29,26 +29,9 @@

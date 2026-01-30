@@ -1,21 +1,58 @@
 #
 # NetQuake Server Makefile (Full build, can run as dedicated server with -dedicated flag)
-# For x86_64 and ARM64 Linux
 #
-# Builds complete NetQuake server from WinQuake source
-# Based on id Software's WinQuake source
+# Default build is 32-bit to avoid 64-bit-only engine quirks (and the extra patching those require).
 #
 
-CC?=gcc
-BASE_CFLAGS=-Dstricmp=strcasecmp -fcommon -no-pie -DNO_X86_ASM=1 -fno-strict-aliasing
-RELEASE_CFLAGS=$(BASE_CFLAGS) -O3 -Wall
-DEBUG_CFLAGS=$(BASE_CFLAGS) -g -Wall
-LDFLAGS=-lm -rdynamic
+# Target architecture label (used for output directory naming and CI artifact naming).
+ARCH ?= $(shell uname -m)
 
-# Detect architecture for build directory naming
-# Can be overridden: make CC=aarch64-linux-gnu-gcc ARCH=aarch64
-ARCH?=$(shell uname -m)
-BUILD_DIR=build-netquake-$(ARCH)
+# Target bitness: 32 or 64.
+BITS ?= 32
+
+# Target ABI for 32-bit builds:
+# - x32   (runs on amd64; 32-bit pointers on x86_64)
+# - armhf (runs on arm64 with armhf compatibility)
+TARGET ?=
+
+CC ?=
+BASE_CFLAGS = -Dstricmp=strcasecmp -fcommon -no-pie -DNO_X86_ASM=1 -Did386=0 -fno-strict-aliasing
+RELEASE_CFLAGS = $(BASE_CFLAGS) -O3 -Wall
+DEBUG_CFLAGS = $(BASE_CFLAGS) -g -Wall
+LDFLAGS = -lm -rdynamic
+
+ifeq ($(BITS),32)
+  ifeq ($(strip $(TARGET)),)
+    ifeq ($(ARCH),x86_64)
+      TARGET := x32
+    else ifeq ($(ARCH),aarch64)
+      TARGET := armhf
+    else
+      $(error Unsupported ARCH for BITS=32: $(ARCH). Set TARGET=x32 or TARGET=armhf explicitly.)
+    endif
+  endif
+
+  ifeq ($(TARGET),x32)
+    ifeq ($(strip $(CC)),)
+      CC := gcc
+    endif
+    BASE_CFLAGS += -mx32
+    LDFLAGS += -mx32
+  else ifeq ($(TARGET),armhf)
+    ifeq ($(strip $(CC)),)
+      CC := arm-linux-gnueabihf-gcc
+    endif
+    BASE_CFLAGS += -march=armv7-a -mfloat-abi=hard -mfpu=vfpv3-d16
+  else
+    $(error Unsupported TARGET for BITS=32: $(TARGET). Use TARGET=x32 or TARGET=armhf.)
+  endif
+endif
+
+ifeq ($(strip $(CC)),)
+  CC := gcc
+endif
+
+BUILD_DIR = build-netquake-$(ARCH)
 
 # Use release flags by default
 CFLAGS=$(RELEASE_CFLAGS)

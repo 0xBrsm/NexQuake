@@ -8,8 +8,19 @@
 
 FROM ubuntu:22.04
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl bash && \
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    if [ "$arch" = "arm64" ]; then \
+      dpkg --add-architecture armhf; \
+    fi; \
+    apt-get update; \
+    pkgs="ca-certificates curl bash"; \
+    if [ "$arch" = "amd64" ]; then \
+      pkgs="$pkgs libc6-x32 libx32gcc-s1"; \
+    elif [ "$arch" = "arm64" ]; then \
+      pkgs="$pkgs libc6:armhf libgcc-s1:armhf"; \
+    fi; \
+    apt-get install -y --no-install-recommends $pkgs; \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

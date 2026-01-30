@@ -41,7 +41,7 @@ This repository contains patches and overlays for two components:
 - SDL2 platform layer: sys_sdl.c, vid_sdl.c, snd_sdl.c
 - WebSocket network driver: net_websocket.c, net_websocket.h, net_bsd.c
 - Emscripten build system: Makefile.emscripten, shell.html
-- Patches: net.h.patch, net_main.c.patch, net_dgrm.c.patch, chase.c.patch, d_local.h.patch, d_vars.c.patch, d_edge.c.patch
+- Patches: net.h.patch, net_main.c.patch, net_dgrm.c.patch, chase.c.patch
 
 ### 2. server/ - Minimal Headless Server
 **Author:** This repository
@@ -50,7 +50,7 @@ This repository contains patches and overlays for two components:
 **Added files:**
 - `Makefile.dedicated` - Minimal headless server build (no graphics/audio)
 - `sys_linux_stub.c` - Linux stub layer
-- Patches: net_dgrm.c.patch, sv_main.c.patch, host_cmd.c.patch, pr_cmds.c.patch
+- Patches: common.c.patch, net_udp.c.patch
 
 ## Build Process
 
@@ -69,16 +69,11 @@ patch -p0 -d build < client/net.h.patch
 patch -p0 -d build < client/net_main.c.patch
 patch -p0 -d build < client/net_dgrm.c.patch
 patch -p0 -d build < client/chase.c.patch
-patch -p0 -d build < client/d_local.h.patch
-patch -p0 -d build < client/d_vars.c.patch
-patch -p0 -d build < client/d_edge.c.patch
 
 # 3. OR apply server patches
 cp server/Makefile.dedicated build/
-patch -p0 -d build < server/net_dgrm.c.patch
-patch -p0 -d build < server/sv_main.c.patch
-patch -p0 -d build < server/host_cmd.c.patch
-patch -p0 -d build < server/pr_cmds.c.patch
+patch -p0 -d build < server/net_udp.c.patch
+patch -p0 -d build < server/common.c.patch
 cat server/sys_linux_stub.c >> build/sys_linux.c
 
 # 4. Build

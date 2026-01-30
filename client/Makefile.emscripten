@@ -9,7 +9,7 @@ endif
 CC := emcc
 CFLAGS := -O3 -ffast-math -funroll-loops -fomit-frame-pointer -Wall -Wextra -Wno-implicit-function-declaration \
 	-Wno-unused-parameter -Wno-missing-field-initializers -Wno-sign-compare -Wno-pointer-sign -sUSE_SDL=2 -DSDL
-LDFLAGS := -O3 -sUSE_SDL=2 -sINITIAL_MEMORY=64MB -sTOTAL_STACK=2MB -sALLOW_MEMORY_GROWTH \
+LDFLAGS := -O3 -Wl,--allow-multiple-definition -sUSE_SDL=2 -sINITIAL_MEMORY=64MB -sTOTAL_STACK=2MB -sALLOW_MEMORY_GROWTH \
 	--shell-file shell.html -lidbfs.js -sWEBSOCKET_URL=$(WEBSOCKET_URL) -sWEBSOCKET_SUBPROTOCOL=binary \
 	-lwebsocket.js -sASYNCIFY=1 -sASYNCIFY_STACK_SIZE=4MB -sASYNCIFY_IGNORE_INDIRECT=0 -sALLOW_BLOCKING_ON_MAIN_THREAD=1 \
 	-sEXPORTED_RUNTIME_METHODS=['addRunDependency','removeRunDependency','ccall'] -sEXPORT_KEEPALIVE=1

@@ -6,11 +6,9 @@ Build configuration for a NetQuake dedicated server from id Software's WinQuake 
 
 - `Makefile.dedicated` - Builds full NetQuake with null drivers
 - `sys_linux_stub.c` - Stub for `Sys_SendKeyEvents()` function
-- `net_dgrm.c.patch` - Fixes Quake's built-in `BAN_TEST` POSIX fallback structs on 64-bit (prevents bogus `You have been banned.` rejects)
 - `net_udp.c.patch` - Adds `-ip <address>` flag support for binding to specific IP addresses (enables multi-server on same port)
-- `sv_main.c.patch` - Fixes 64-bit `string_t` assignments for worldspawn/map globals (uses `ED_NewString`)
-- `host_cmd.c.patch` - Fixes 64-bit `string_t` assignments for player name globals (uses `ED_NewString`)
-- `pr_cmds.c.patch` - Fixes 64-bit `string_t` return values for `ftos`/`vtos` (prevents disconnect crashes in QuakeC)
+- `common.c.patch` - Fixes `COM_FileBase()` pointer-underflow (armhf crash)
+- `archived/net_dgrm.c.patch` - Archived networking patch (not applied by default builds)
 
 ## Approach
 
@@ -37,18 +35,15 @@ cd Quake/WinQuake
 cp /path/to/src/server/Makefile.dedicated .
 
 # Apply patches
-patch -p0 < /path/to/src/server/net_dgrm.c.patch
 patch -p0 < /path/to/src/server/net_udp.c.patch
-patch -p0 < /path/to/src/server/sv_main.c.patch
-patch -p0 < /path/to/src/server/host_cmd.c.patch
-patch -p0 < /path/to/src/server/pr_cmds.c.patch
+patch -p0 < /path/to/src/server/common.c.patch
 
 # Append stub to sys_linux.c
 cat /path/to/src/server/sys_linux_stub.c >> sys_linux.c
 
 # Build
-make -f Makefile.dedicated           # x86_64
-CC=aarch64-linux-gnu-gcc make -f Makefile.dedicated  # ARM64
+make -f Makefile.dedicated                         # amd64 -> x32 binary (32-bit pointers on x86_64)
+CC=arm-linux-gnueabihf-gcc ARCH=aarch64 make -f Makefile.dedicated  # arm64 -> 32-bit armhf binary
 ```
 
 Output: `build-netquake-{arch}/nqserver`
@@ -69,6 +64,6 @@ This builds **NetQuake** (original protocol):
 
 ## Architecture Support
 
-- x86_64 (Intel/AMD 64-bit)
-- ARM64/aarch64 (Apple Silicon, Raspberry Pi, AWS Graviton)
+- amd64 hosts: outputs an x32 server binary (32-bit pointers on x86_64)
+- arm64 hosts: outputs a 32-bit armhf server binary
 - Any architecture with GCC (pure C, no assembly)

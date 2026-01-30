@@ -1,9 +1,0 @@
---- d_edge.c
-+++ d_edge.c
-@@ -25,7 +25,6 @@
- static int	miplevel;
- 
- float		scale_for_mip;
--int			screenwidth;
- int			ubasestep, errorterm, erroradjustup, erroradjustdown;
- int			vstartscan;
