@@ -240,10 +240,12 @@ EMSCRIPTEN_KEEPALIVE void NexQuake_ExecCommandNow(const char *cmd)
 	Cbuf_Execute();
 }
 
+#ifndef HEADLESS
 EMSCRIPTEN_KEEPALIVE void NexQuake_VFSReady(void)
 {
-	// Optional hook for headless/testing runners; safe no-op for the browser.
+	// No-op for the browser; headless builds define this in sys_node.c.
 }
+#endif
 
 static byte WebSocket_ExtractServerID(struct qsockaddr *addr)
 {
@@ -344,21 +346,17 @@ EM_BOOL _WebSocket_onmessage(int eventType, const EmscriptenWebSocketMessageEven
 
 	// Queue packet (ring buffer).
 	{
-		qboolean is_server_info = false;
+		qboolean is_control = false;
 		if (websocketEvent->numBytes >= WS_ROUTING_HEADER_SIZE + sizeof(int) + 1)
 		{
 			int control;
 			memcpy(&control, (byte *)websocketEvent->data + WS_ROUTING_HEADER_SIZE, sizeof(control));
 			control = BigLong(control);
 			if ((control & (~NETFLAG_LENGTH_MASK)) == NETFLAG_CTL)
-			{
-				byte cmd = ((byte *)websocketEvent->data)[WS_ROUTING_HEADER_SIZE + 4];
-				if (cmd == CCREP_SERVER_INFO || cmd == CCREP_SERVER_LIST)
-					is_server_info = true;
-			}
+				is_control = true;
 		}
 
-		if (is_server_info)
+		if (is_control)
 		{
 			WebSocket_QueueMessage(
 				&wsCtlMessages.read_index,
@@ -502,6 +500,7 @@ int WebSocket_Read(int socket, byte *buf, int len, struct qsockaddr *addr)
 {
 	if (!ws_opened)
 		return -1;
+	// Avoid sending before the websocket is fully opened; the caller will retry via NET_Poll.
 	if (!ws_onopen_handled)
 		return 0;
 
