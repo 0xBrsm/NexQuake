@@ -23,7 +23,7 @@ func main() {
 		case "--version", "version":
 			// Keep this simple so it’s usable inside minimal runtime images.
 			v := currentVersionInfo()
-			fmt.Printf("webquake-nexus git_sha=%s build_time=%s go=%s %s/%s\n",
+			fmt.Printf("nexquake-nexus git_sha=%s build_time=%s go=%s %s/%s\n",
 				v.GitSHA,
 				v.BuildTime,
 				v.GoVersion,
@@ -65,6 +65,13 @@ func main() {
 		log.Println()
 	}
 
+	// Bootstrap game data only when GAMEDATA_PATH is set.
+	if os.Getenv("GAMEDATA_PATH") != "" {
+		if err := bootstrapGameData(runCtx, dataDir); err != nil {
+			log.Fatalf("Game data bootstrap failed: %v", err)
+		}
+	}
+
 	// Start dedicated servers (one per mod directory).
 	serverMgr := NewServerManager(dataDir, logsDir, serverBinary)
 	if err := serverMgr.StartAll(); err != nil {
@@ -86,8 +93,8 @@ func main() {
 	// Health check endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		v := currentVersionInfo()
-		w.Header().Set("X-WebQuake-Nexus-GitSHA", v.GitSHA)
-		w.Header().Set("X-WebQuake-Nexus-BuildTime", v.BuildTime)
+		w.Header().Set("X-NexQuake-Nexus-GitSHA", v.GitSHA)
+		w.Header().Set("X-NexQuake-Nexus-BuildTime", v.BuildTime)
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, "OK")
 	})

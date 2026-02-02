@@ -58,7 +58,7 @@ func debugf(format string, args ...any) { logf(logDebug, format, args...) }
 // These are set at build time via -ldflags.
 // Example:
 //
-//	-X github.com/brstm/WebQuake/nexus.gitSHA=$GITHUB_SHA -X github.com/brstm/WebQuake/nexus.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+//	-X github.com/brstm/NexQuake/nexus.gitSHA=$GITHUB_SHA -X github.com/brstm/NexQuake/nexus.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 var (
 	gitSHA    = "dev"
 	buildTime = ""

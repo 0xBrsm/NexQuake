@@ -8,7 +8,8 @@ services:
     volumes:
       # Application binaries and client files (nqwasm, nexus, nqserver)
       - ./apps:/apps:ro
-      # Game data (id1, mods, mission packs) - read-only
+      # Game data (id1, mods, mission packs) - read-only.
+      # Note: nexus can auto-bootstrap missing game data only when /data is writable.
       - ./data:/data:ro
       # Server logs, demos, temp files - read-write
       - ./logs:/logs:rw

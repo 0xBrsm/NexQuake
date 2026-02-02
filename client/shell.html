@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>WebQuake</title>
+    <title>NexQuake</title>
     <style>
       body {
         background-color: rgb(32, 32, 32);
@@ -73,7 +73,7 @@
     </style>
   </head>
   <body>
-    <figure style="overflow:visible;" id="spinner"><div class="spinner"></div><center style="margin-top:0.5em"><strong>WebQuake</strong></center></figure>
+    <figure style="overflow:visible;" id="spinner"><div class="spinner"></div><center style="margin-top:0.5em"><strong>NexQuake</strong></center></figure>
     <div class="emscripten" id="status">Downloading...</div>
     <div class="emscripten">
       <progress value="0" max="100" id="progress" hidden=1></progress>
@@ -108,16 +108,16 @@
           }
 
           // Emscripten's built-in FS.createLazyFile only supports browser lazy-loading in Web Workers.
-          // WebQuake runs on the main thread, so we implement a tiny "lazy remote file" wrapper:
-        // - Create the file node up-front so Quake can open it.
-        // - On first read/open, download the full file into MEMFS (blocking via ASYNCIFY).
-        // This preserves Quake's synchronous filesystem model while avoiding upfront downloads.
-        function createRemoteFile(parent, name, url, size) {
-          var node = FS.createFile(parent, name, null, true, false);
-          node.url = url;
-          node.usedBytes = Number.isFinite(size) && size > 0 ? size : 0;
-          // Export a handle so we can prefetch into this node later.
-          if (!Module.webquakeRemoteFiles) Module.webquakeRemoteFiles = Object.create(null);
+          // NexQuake runs on the main thread, so we implement a tiny "lazy remote file" wrapper:
+          // - Create the file node up-front so Quake can open it.
+          // - On first read/open, download the full file into MEMFS (blocking via ASYNCIFY).
+          // This preserves Quake's synchronous filesystem model while avoiding upfront downloads.
+          function createRemoteFile(parent, name, url, size) {
+            var node = FS.createFile(parent, name, null, true, false);
+            node.url = url;
+            node.usedBytes = Number.isFinite(size) && size > 0 ? size : 0;
+            // Export a handle so we can prefetch into this node later.
+            if (!Module.nexquakeRemoteFiles) Module.nexquakeRemoteFiles = Object.create(null);
 
           function ensureLoaded() {
             if (node.contents) return;
@@ -181,29 +181,29 @@
             ensureDirForPath(outPath);
             try { FS.unlink(outPath); } catch (e) {}
             var node = createRemoteFile(parent, name, url, size);
-            Module.webquakeRemoteFiles[outPath] = node;
+            Module.nexquakeRemoteFiles[outPath] = node;
           }
 
           // Prefetch support (used by the client after parsing svc_serverinfo).
           // The C code enqueues paths, then waits (with emscripten_sleep) for
-          // Module.webquakePrefetchBusy to become 0.
-          Module.webquakePrefetchQueue = Module.webquakePrefetchQueue || [];
-          Module.webquakePrefetchBusy = 0;
+          // Module.nexquakePrefetchBusy to become 0.
+          Module.nexquakePrefetchQueue = Module.nexquakePrefetchQueue || [];
+          Module.nexquakePrefetchBusy = 0;
 
-          Module.webquakePrefetchReset = function() {
-            Module.webquakePrefetchQueue = [];
+          Module.nexquakePrefetchReset = function() {
+            Module.nexquakePrefetchQueue = [];
           };
 
-          Module.webquakePrefetchEnqueue = function(relPath) {
+          Module.nexquakePrefetchEnqueue = function(relPath) {
             relPath = String(relPath || '').replace(/^\/+/, '').trim();
             if (!relPath) return;
             var lowerRel = relPath.split('/').filter(Boolean).map(function(p) { return p.toLowerCase(); }).join('/');
-            Module.webquakePrefetchQueue.push(lowerRel);
+            Module.nexquakePrefetchQueue.push(lowerRel);
           };
 
           async function prefetchOne(lowerRel) {
             var outPath = '/id1/' + lowerRel;
-            var node = Module.webquakeRemoteFiles && Module.webquakeRemoteFiles[outPath];
+            var node = Module.nexquakeRemoteFiles && Module.nexquakeRemoteFiles[outPath];
             if (!node || node.contents) return;
             var resp = await fetch(node.url, { cache: 'force-cache' });
             if (!resp.ok) throw new Error('prefetch failed: ' + resp.status + ' for ' + node.url);
@@ -241,14 +241,14 @@
             await Promise.all(workers);
           }
 
-          Module.webquakePrefetchStart = function() {
-            if (Module.webquakePrefetchBusy) return;
-            var list = (Module.webquakePrefetchQueue || []).slice();
-            Module.webquakePrefetchQueue = [];
+          Module.nexquakePrefetchStart = function() {
+            if (Module.nexquakePrefetchBusy) return;
+            var list = (Module.nexquakePrefetchQueue || []).slice();
+            Module.nexquakePrefetchQueue = [];
             if (!list.length) return;
-            Module.webquakePrefetchBusy = 1;
+            Module.nexquakePrefetchBusy = 1;
             prefetchMany(list, 6)
-              .finally(function() { Module.webquakePrefetchBusy = 0; });
+              .finally(function() { Module.nexquakePrefetchBusy = 0; });
           };
 
           // Mirror a virtualized manifest into /id1 before starting Quake.
@@ -425,7 +425,7 @@
         function requestDisconnect() {
           try {
             if (typeof Module !== 'undefined' && Module && typeof Module.ccall === 'function') {
-              Module.ccall('WebQuake_OnPageHide', 'void', [], []);
+              Module.ccall('NexQuake_OnPageHide', 'void', [], []);
             }
           } catch (e) {}
         }

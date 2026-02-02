@@ -44,12 +44,12 @@ const (
 
 	ccreqServerInfo byte = 0x02
 	ccrepServerInfo byte = 0x83
-	ccrepServerList byte = 0x86 // WebQuake extension: aggregated server list for slist
+	ccrepServerList byte = 0x86 // NexQuake extension: aggregated server list for slist
 )
 
 // Quake constants (see quakedef.h/net.h):
 // MAX_DATAGRAM=1024 and NET_HEADERSIZE=8 => NET_DATAGRAMSIZE=1032.
-// WebQuake's WS transport enforces this limit for a single tunneled "UDP datagram".
+// NexQuake's WS transport enforces this limit for a single tunneled "UDP datagram".
 const maxNetDatagramSize = 1024 + 8
 
 func buildCCREQServerInfo() []byte {

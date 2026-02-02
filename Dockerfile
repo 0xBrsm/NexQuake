@@ -1,4 +1,4 @@
-# WebQuake Runtime Shell
+# NexQuake Runtime Shell
 # Provides runtime environment for testing artifacts
 #
 # Usage:
@@ -8,20 +8,17 @@
 
 FROM ubuntu:22.04
 
-RUN set -eux; \
-    arch="$(dpkg --print-architecture)"; \
-    if [ "$arch" = "arm64" ]; then \
-      dpkg --add-architecture armhf; \
-    fi; \
-    apt-get update; \
-    pkgs="ca-certificates curl bash"; \
-    if [ "$arch" = "amd64" ]; then \
-      pkgs="$pkgs libc6-x32 libx32gcc-s1"; \
-    elif [ "$arch" = "arm64" ]; then \
-      pkgs="$pkgs libc6:armhf libgcc-s1:armhf"; \
-    fi; \
-    apt-get install -y --no-install-recommends $pkgs; \
-    rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && arch="$(dpkg --print-architecture)" \
+    && if [ "${arch}" = "amd64" ]; then \
+         apt-get install -y --no-install-recommends libc6-x32; \
+       elif [ "${arch}" = "arm64" ]; then \
+         dpkg --add-architecture armhf; \
+         apt-get update; \
+         apt-get install -y --no-install-recommends libc6:armhf; \
+       fi \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

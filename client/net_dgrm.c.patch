@@ -78,7 +78,7 @@
  			continue;
  
 -		if (MSG_ReadByte() != CCREP_SERVER_INFO)
-+		// WebQuake extension: aggregated server list for reliable discovery.
++		// NexQuake extension: aggregated server list for reliable discovery.
 +		{
 +			int response = MSG_ReadByte();
 +			if (response == CCREP_SERVER_LIST)

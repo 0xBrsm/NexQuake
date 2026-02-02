@@ -1,4 +1,4 @@
-# WebQuake (nqwasm) Makefile for Emscripten / WebAssembly
+# NexQuake (nqwasm) Makefile for Emscripten / WebAssembly
 # Written by Gregory Maynard-Hoare
 
 ifeq ($(WEBSOCKET_URL),)

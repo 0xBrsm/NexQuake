@@ -286,7 +286,7 @@ func prepareRuntimeBasedir(sourceDataDir string, mods []string) (string, error) 
 	// containing per-mod directories; create an ephemeral overlay basedir and
 	// populate it with symlinks into QUAKE_DATA_DIR (and allow the server to write
 	// transient files alongside).
-	runtimeRoot, err := os.MkdirTemp("", "webquake-nexus-basedir-")
+	runtimeRoot, err := os.MkdirTemp("", "nexquake-nexus-basedir-")
 	if err != nil {
 		return "", fmt.Errorf("create runtime basedir: %w", err)
 	}

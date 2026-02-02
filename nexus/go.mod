@@ -1,4 +1,4 @@
-module github.com/brstm/WebQuake/nexus
+module github.com/brstm/NexQuake/nexus
 
 go 1.21
 

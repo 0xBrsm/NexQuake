@@ -2,7 +2,7 @@
 Added by initialed85
 */
 // net_websocket.c
-// Modified by WebQuake:
+// Modified by NexQuake:
 // - Dynamic WebSocket URL (derived from window.location, with optional override)
 // - No UUID hello frame (nexus is a simple datagram tunnel)
 // - Avoid <netinet/in.h> prototype conflicts under Emscripten
@@ -38,12 +38,12 @@ Added by initialed85
 #define MAX_WS_MESSAGE_SIZE (NET_DATAGRAMSIZE + WS_ROUTING_HEADER_SIZE)
 
 // Servers listen on the standard NetQuake port (no -port).
-#define WEBQUAKE_SERVER_LISTEN_PORT 26000
+#define NEXQUAKE_SERVER_LISTEN_PORT 26000
 
 // Nexus uses a "virtual addressing" scheme on loopback:
 // - server selection is encoded via 127.255.255.<server_id>
 // - nexus assigns each WS client a unique UDP source IP in 127.1.1.<octet> (server-side only)
-#define WEBQUAKE_SERVER_PREFIX24 (((uint32_t)127 << 16) | ((uint32_t)255 << 8) | (uint32_t)255)
+#define NEXQUAKE_SERVER_PREFIX24 (((uint32_t)127 << 16) | ((uint32_t)255 << 8) | (uint32_t)255)
 
 static uint32_t WebSocket_GetAddrPrefix24(struct qsockaddr *addr)
 {
@@ -210,22 +210,22 @@ static void WebSocket_FillAddrWithServerID(struct qsockaddr *addr, byte server_i
 	addr->sa_data[0] = (byte)((port >> 8) & 0xff);
 	addr->sa_data[1] = (byte)(port & 0xff);
 	// IP: 127.255.255.server_id
-	addr->sa_data[2] = (byte)((WEBQUAKE_SERVER_PREFIX24 >> 16) & 0xff);
-	addr->sa_data[3] = (byte)((WEBQUAKE_SERVER_PREFIX24 >> 8) & 0xff);
-	addr->sa_data[4] = (byte)(WEBQUAKE_SERVER_PREFIX24 & 0xff);
+	addr->sa_data[2] = (byte)((NEXQUAKE_SERVER_PREFIX24 >> 16) & 0xff);
+	addr->sa_data[3] = (byte)((NEXQUAKE_SERVER_PREFIX24 >> 8) & 0xff);
+	addr->sa_data[4] = (byte)(NEXQUAKE_SERVER_PREFIX24 & 0xff);
 	addr->sa_data[5] = server_id;
 }
 
 // Called from shell.html on pagehide/beforeunload to give the client a chance
 // to send a proper NetQuake disconnect before the browser tears down the tab.
-EMSCRIPTEN_KEEPALIVE void WebQuake_OnPageHide(void)
+EMSCRIPTEN_KEEPALIVE void NexQuake_OnPageHide(void)
 {
 	CL_Disconnect();
 }
 
 // Deterministic command injection for automation and debugging.
 // Queues a console command as if typed, with a trailing newline.
-EMSCRIPTEN_KEEPALIVE void WebQuake_ExecCommand(const char *cmd)
+EMSCRIPTEN_KEEPALIVE void NexQuake_ExecCommand(const char *cmd)
 {
 	if (!cmd || !cmd[0])
 		return;
@@ -234,10 +234,15 @@ EMSCRIPTEN_KEEPALIVE void WebQuake_ExecCommand(const char *cmd)
 }
 
 // Executes the command buffer immediately after queueing the provided command.
-EMSCRIPTEN_KEEPALIVE void WebQuake_ExecCommandNow(const char *cmd)
+EMSCRIPTEN_KEEPALIVE void NexQuake_ExecCommandNow(const char *cmd)
 {
-	WebQuake_ExecCommand(cmd);
+	NexQuake_ExecCommand(cmd);
 	Cbuf_Execute();
+}
+
+EMSCRIPTEN_KEEPALIVE void NexQuake_VFSReady(void)
+{
+	// Optional hook for headless/testing runners; safe no-op for the browser.
 }
 
 static byte WebSocket_ExtractServerID(struct qsockaddr *addr)
@@ -246,7 +251,7 @@ static byte WebSocket_ExtractServerID(struct qsockaddr *addr)
 		return 0;
 
 	// Extract server ID from last octet of IP address (127.255.255.x)
-	if (WebSocket_GetAddrPrefix24(addr) == WEBQUAKE_SERVER_PREFIX24)
+	if (WebSocket_GetAddrPrefix24(addr) == NEXQUAKE_SERVER_PREFIX24)
 		return (byte)addr->sa_data[5];
 
 	// Not an encoded server address.
@@ -402,7 +407,7 @@ int WebSocket_Init(void)
 
 	if (Q_strcmp(hostname.string, "UNNAMED") == 0)
 	{
-		Cvar_Set("hostname", "webquake");
+		Cvar_Set("hostname", "nexquake");
 	}
 
 	if ((net_controlsocket = WebSocket_OpenSocket(0)) == -1)
@@ -647,14 +652,14 @@ char *WebSocket_AddrToString(struct qsockaddr *addr)
 	static char buffer[22];
 	if (!addr)
 	{
-		sprintf(buffer, "%d.%d.%d.%d:%d",
-			(int)((WEBQUAKE_SERVER_PREFIX24 >> 16) & 0xff),
-			(int)((WEBQUAKE_SERVER_PREFIX24 >> 8) & 0xff),
-			(int)(WEBQUAKE_SERVER_PREFIX24 & 0xff),
-			1,
-			WEBQUAKE_SERVER_LISTEN_PORT);
-		return buffer;
-	}
+			sprintf(buffer, "%d.%d.%d.%d:%d",
+				(int)((NEXQUAKE_SERVER_PREFIX24 >> 16) & 0xff),
+				(int)((NEXQUAKE_SERVER_PREFIX24 >> 8) & 0xff),
+				(int)(NEXQUAKE_SERVER_PREFIX24 & 0xff),
+				1,
+				NEXQUAKE_SERVER_LISTEN_PORT);
+			return buffer;
+		}
 
 	int a = (byte)addr->sa_data[2];
 	int b = (byte)addr->sa_data[3];
@@ -684,13 +689,13 @@ int WebSocket_StringToAddr(char *string, struct qsockaddr *addr)
 		// The server may still switch to an accepted port during the handshake
 		// (CCREP_ACCEPT); that port change happens internally and does not go
 		// through this parser.
-		if ((((uint32_t)a << 16) | ((uint32_t)b << 8) | (uint32_t)c) == WEBQUAKE_SERVER_PREFIX24 &&
-			d >= 1 && d <= 254 &&
-			port == WEBQUAKE_SERVER_LISTEN_PORT)
-		{
-			WebSocket_FillAddrWithServerID(addr, (byte)d, port);
-			return 0;
-		}
+			if ((((uint32_t)a << 16) | ((uint32_t)b << 8) | (uint32_t)c) == NEXQUAKE_SERVER_PREFIX24 &&
+				d >= 1 && d <= 254 &&
+				port == NEXQUAKE_SERVER_LISTEN_PORT)
+			{
+				WebSocket_FillAddrWithServerID(addr, (byte)d, port);
+				return 0;
+			}
 		return -1;
 	}
 
@@ -704,12 +709,12 @@ int WebSocket_StringToAddr(char *string, struct qsockaddr *addr)
 		if (string[consumed] != '\0')
 			return -1;
 
-		if ((((uint32_t)a << 16) | ((uint32_t)b << 8) | (uint32_t)c) == WEBQUAKE_SERVER_PREFIX24 &&
-			d >= 1 && d <= 254)
-		{
-			WebSocket_FillAddrWithServerID(addr, (byte)d, WEBQUAKE_SERVER_LISTEN_PORT);
-			return 0;
-		}
+			if ((((uint32_t)a << 16) | ((uint32_t)b << 8) | (uint32_t)c) == NEXQUAKE_SERVER_PREFIX24 &&
+				d >= 1 && d <= 254)
+			{
+				WebSocket_FillAddrWithServerID(addr, (byte)d, NEXQUAKE_SERVER_LISTEN_PORT);
+				return 0;
+			}
 	}
 
 	return -1;

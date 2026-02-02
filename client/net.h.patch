@@ -4,7 +4,7 @@
  #define CCREP_SERVER_INFO	0x83
  #define CCREP_PLAYER_INFO	0x84
  #define CCREP_RULE_INFO		0x85
-+#define CCREP_SERVER_LIST	0x86	// WebQuake extension: aggregated server list for slist
++#define CCREP_SERVER_LIST	0x86	// NexQuake extension: aggregated server list for slist
  
 @@ -314,6 +315,6 @@
  {

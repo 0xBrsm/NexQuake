@@ -2,7 +2,7 @@
 +++ sv_main.c
 @@ -1176,3 +1176,18 @@
 -	ED_LoadFromFile (sv.worldmodel->entities);
-+	// WebQuake QoL: support classic .ent entity-lump overrides.
++	// NexQuake QoL: support classic .ent entity-lump overrides.
 +	// Some mods ship maps/<map>.ent instead of modified BSPs; historically users
 +	// rebuilt BSPs offline. If a .ent exists, prefer it for server entity spawn.
 +	{

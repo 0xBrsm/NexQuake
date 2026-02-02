@@ -16,36 +16,36 @@
  	}
  
 +#ifdef __EMSCRIPTEN__
-+	// WebQuake: Prefetch server-provided precache assets in parallel (JS fetch),
++	// NexQuake: Prefetch server-provided precache assets in parallel (JS fetch),
 +	// then continue with Quake's normal synchronous load path.
 +	//
 +	// This reduces map-join stalls when caching is absent/weak by avoiding
 +	// "death by latency" from many sequential per-file fetches.
 +	EM_ASM({
 +		if (typeof Module === 'undefined') return;
-+		if (typeof Module.webquakePrefetchReset === 'function')
-+			Module.webquakePrefetchReset();
++		if (typeof Module.nexquakePrefetchReset === 'function')
++			Module.nexquakePrefetchReset();
 +	});
 +	for (i = 1; i < nummodels; i++)
 +	{
 +		EM_ASM({
 +			if (typeof Module === 'undefined') return;
-+			if (typeof Module.webquakePrefetchEnqueue === 'function')
-+				Module.webquakePrefetchEnqueue(UTF8ToString($0));
++			if (typeof Module.nexquakePrefetchEnqueue === 'function')
++				Module.nexquakePrefetchEnqueue(UTF8ToString($0));
 +		}, model_precache[i]);
 +	}
 +	for (i = 1; i < numsounds; i++)
 +	{
 +		EM_ASM({
 +			if (typeof Module === 'undefined') return;
-+			if (typeof Module.webquakePrefetchEnqueue === 'function')
-+				Module.webquakePrefetchEnqueue('sound/' + UTF8ToString($0));
++			if (typeof Module.nexquakePrefetchEnqueue === 'function')
++				Module.nexquakePrefetchEnqueue('sound/' + UTF8ToString($0));
 +		}, sound_precache[i]);
 +	}
 +	EM_ASM({
 +		if (typeof Module === 'undefined') return;
-+		if (typeof Module.webquakePrefetchStart === 'function')
-+			Module.webquakePrefetchStart();
++		if (typeof Module.nexquakePrefetchStart === 'function')
++			Module.nexquakePrefetchStart();
 +	});
 +
 +	{
@@ -54,7 +54,7 @@
 +		{
 +			int busy = EM_ASM_INT({
 +				if (typeof Module === 'undefined') return 0;
-+				return Module.webquakePrefetchBusy ? 1 : 0;
++				return Module.nexquakePrefetchBusy ? 1 : 0;
 +			});
 +			if (!busy)
 +				break;

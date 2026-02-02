@@ -1,6 +1,6 @@
-# WebQuake
+# NexQuake
 
-WebAssembly port of Quake (1996) with WebSocket multiplayer. Play the classic FPS in your browser with a minimal, tunnel-style multiplayer setup (software renderer only).
+NexQuake is a WebAssembly port of Quake (1996) with WebSocket multiplayer. Play the classic FPS in your browser with a minimal, tunnel-style multiplayer setup (software renderer only).
 
 ## Quick Start
 
@@ -19,8 +19,8 @@ tar -xzf nqserver-x86_64.tar.gz -C apps/    # or nqserver-aarch64.tar.gz
 tar -xzf nexus-amd64.tar.gz -C apps/        # or nexus-arm64.tar.gz
 
 # 3. Create game data directory and add your PAK files
-mkdir -p data/id1
-cp /path/to/your/PAK0.PAK data/id1/
+mkdir -p data/id1/common
+cp /path/to/your/PAK0.PAK data/id1/common/
 
 # 4. Create logs directory (will be auto-populated by servers)
 mkdir -p logs
@@ -37,8 +37,11 @@ docker compose up
   - `nqwasm/` - WebAssembly client files
   - `nexus` - Go HTTP/WebSocket relay + server orchestrator binary
   - `nqserver` - NetQuake server binary
-- `data/` - Game data (read-only)
-  - `id1/` - Base Quake game files (PAK0.PAK, PAK1.PAK) plus optional loose files (e.g. `autoexec.cfg`)
+- `data/` - Game data (often mounted read-only; must be writable for auto-bootstrap)
+  - `id1/`
+    - `common/` - Shared game files (PAK0/PAK1 + optional loose files like `autoexec.cfg`)
+    - `client/` - Optional client-only overrides
+    - `server/` - Optional server-only overrides
 - `logs/` - Server logs and runtime state (read-write)
   - `id1/` - Vanilla Quake server logs (auto-created)
 
@@ -51,6 +54,12 @@ You need Quake's PAK files to play:
 - **PAK1.PAK**: Full version (purchase required)
 
 PAK files can be either uppercase (PAK0.PAK) or lowercase (pak0.pak).
+
+**Container auto-bootstrap (optional)**:
+- On nexus startup, if `${QUAKE_DATA_DIR}` (default `/data`) is **writable**, it can bootstrap missing game data into `/data/<game>/<layer>/` based on `gamedata.json`.
+  - Config is loaded only when `GAMEDATA_PATH` is set (path to a JSON file).
+  - Schema: array of entries, each `{ "game": "id1", "common": ["..."], "client": ["..."], "server": ["..."], "force": false }`. At least one of `common|client|server` must be present and non-empty. `force:true` overrides the “skip if directory already populated” guard.
+  - Example manifests: `src/assets/minimal.json` and `src/assets/full.json`.
 
 ### How PAK Files Work
 
