@@ -16,92 +16,38 @@ import (
 func main() {
 	initLogging()
 
+	if handled, exitCode := handleCLI(os.Args[1:]); handled {
+		os.Exit(exitCode)
+	}
+
+	// Initialize authentication (admin privilege system).
+	if err := initAuth(); err != nil {
+		log.Fatalf("Failed to initialize auth: %v", err)
+	}
+
 	runCtx, runCancel := context.WithCancel(context.Background())
 	defer runCancel()
 
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "--version", "version":
-			// Keep this simple so it’s usable inside minimal runtime images.
-			v := currentVersionInfo()
-			fmt.Printf("nexquake-nexus git_sha=%s build_time=%s go=%s %s/%s\n",
-				v.GitSHA,
-				v.BuildTime,
-				v.GoVersion,
-				v.GOOS,
-				v.GOARCH,
-			)
-			return
-		case "--healthcheck", "healthcheck":
-			// Used by Docker/compose healthchecks. Do not require curl/wget/bash in the image.
-			httpPort := getEnv("HTTP_PORT", "7071")
-			url := fmt.Sprintf("http://127.0.0.1:%s/health", httpPort)
-
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "healthcheck: %v\n", err)
-				os.Exit(1)
-			}
-
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "healthcheck: %v\n", err)
-				os.Exit(1)
-			}
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-
-			if resp.StatusCode != http.StatusOK {
-				fmt.Fprintf(os.Stderr, "healthcheck: %s\n", resp.Status)
-				os.Exit(1)
-			}
-			return
-		}
-	}
-
-	// Get configuration from environment.
-	httpPort := getEnv("HTTP_PORT", "7071")
-	dataDir := getEnv("QUAKE_DATA_DIR", "/data")
-	logsDir := getEnv("LOGS_DIR", "/logs")
-	serverBinary := getEnv("SERVER_BINARY", "/apps/nqserver")
-	clientDir := getEnv("CLIENT_DIR", "/apps/nqwasm")
-	corsOrigin := getEnv("CORS_ALLOWED_ORIGIN", "*")
-	debugStartup := getEnv("DEBUG_STARTUP", "") == "1"
+	cfg := loadRuntimeConfig()
 
 	// Validate runtime artifacts early; avoids confusing partial startup.
-	if !fileExists(filepath.Join(clientDir, "index.html")) {
-		log.Fatalf("WASM client not found: %s", clientDir)
+	if !fileExists(filepath.Join(cfg.clientDir, "index.html")) {
+		log.Fatalf("WASM client not found: %s", cfg.clientDir)
 	}
 
-	if debugStartup {
-		log.Println("Artifact fingerprints:")
-		if exe, err := os.Executable(); err == nil {
-			if sum, err := sha256File(exe); err == nil {
-				log.Printf("  nexus   %s  %s", sum, exe)
-			}
-		}
-		if sum, err := sha256File(serverBinary); err == nil {
-			log.Printf("  nqserver %s  %s", sum, serverBinary)
-		}
-		wasmPath := filepath.Join(clientDir, "index.wasm")
-		if sum, err := sha256File(wasmPath); err == nil {
-			log.Printf("  wasm    %s  %s", sum, wasmPath)
-		}
-		log.Println()
+	if cfg.debugStartup {
+		logArtifactFingerprints(cfg)
 	}
 
 	// Bootstrap game data only when GAMEDATA_PATH is set.
 	if os.Getenv("GAMEDATA_PATH") != "" {
-		if err := bootstrapGameData(runCtx, dataDir); err != nil {
+		if err := bootstrapGameData(runCtx, cfg.dataDir); err != nil {
 			log.Fatalf("Game data bootstrap failed: %v", err)
 		}
 	}
 
 	// Start dedicated servers (one per mod directory).
-	serverMgr := NewServerManager(dataDir, logsDir, serverBinary)
+	serverMgr := NewServerManager(cfg.dataDir, cfg.logsDir, cfg.serverBinary)
 	if err := serverMgr.StartAll(); err != nil {
 		log.Fatalf("Failed to start servers: %v", err)
 	}
@@ -113,40 +59,11 @@ func main() {
 		globalServerInfoCache = nil
 	}
 
-	// Create HTTP server with handlers
-	mux := http.NewServeMux()
-
 	pakCache := newPakIndexCache()
+	mux := newMux(cfg, pakCache)
 
-	// Health check endpoint
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		v := currentVersionInfo()
-		w.Header().Set("X-NexQuake-Nexus-GitSHA", v.GitSHA)
-		w.Header().Set("X-NexQuake-Nexus-BuildTime", v.BuildTime)
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, "OK")
-	})
-
-	// WebSocket endpoint for game connections
-	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		handleWebSocket(w, r)
-	})
-
-	// Serve game data files - shared between WASM client and servers.
-	// /data-manifest/<mod> returns a virtualized manifest from common+client layers (with PAK exploding).
-	mux.Handle("/data-manifest/", addCORSHeaders(http.HandlerFunc(newDataManifestHandler(dataDir, pakCache)), corsOrigin))
-	mux.Handle("/pak-extract/", addCORSHeaders(http.HandlerFunc(newPakExtractHandler(dataDir, pakCache)), corsOrigin))
-
-	dataFS := http.FileServer(http.Dir(dataDir))
-	mux.Handle("/data/", addCORSHeaders(contentTypeOverride(http.StripPrefix("/data/", dataFS)), corsOrigin))
-
-	// Serve client files (WASM, HTML, JS, CSS)
-	clientFS := http.FileServer(http.Dir(clientDir))
-	mux.Handle("/", addCORSHeaders(contentTypeOverride(cacheControlClient(clientFS)), corsOrigin))
-
-	// Create server
 	server := &http.Server{
-		Addr:              ":" + httpPort,
+		Addr:              ":" + cfg.httpPort,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -154,7 +71,7 @@ func main() {
 
 	// Start server in goroutine
 	go func() {
-		infof("Nexus listening on port %s", httpPort)
+		infof("Nexus listening on port %s", cfg.httpPort)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
 		}
@@ -180,4 +97,127 @@ func main() {
 
 	_ = serverMgr.StopAll(ctx, 2*time.Second)
 	log.Println("Nexus stopped")
+}
+
+type runtimeConfig struct {
+	httpPort     string
+	dataDir      string
+	logsDir      string
+	serverBinary string
+	clientDir    string
+	corsOrigin   string
+	debugStartup bool
+}
+
+func loadRuntimeConfig() runtimeConfig {
+	return runtimeConfig{
+		httpPort:     getEnv("HTTP_PORT", "7071"),
+		dataDir:      getEnv("QUAKE_DATA_DIR", "/data"),
+		logsDir:      getEnv("LOGS_DIR", "/logs"),
+		serverBinary: getEnv("SERVER_BINARY", "/apps/nqserver"),
+		clientDir:    getEnv("CLIENT_DIR", "/apps/nqwasm"),
+		corsOrigin:   getEnv("CORS_ALLOWED_ORIGIN", "*"),
+		debugStartup: getEnv("DEBUG_STARTUP", "") == "1",
+	}
+}
+
+func handleCLI(args []string) (handled bool, exitCode int) {
+	if len(args) == 0 {
+		return false, 0
+	}
+
+	switch args[0] {
+	case "--version", "version":
+		// Keep this simple so it’s usable inside minimal runtime images.
+		v := currentVersionInfo()
+		fmt.Printf("nexquake-nexus git_sha=%s build_time=%s go=%s %s/%s\n",
+			v.GitSHA,
+			v.BuildTime,
+			v.GoVersion,
+			v.GOOS,
+			v.GOARCH,
+		)
+		return true, 0
+	case "--healthcheck", "healthcheck":
+		// Used by Docker/compose healthchecks. Do not require curl/wget/bash in the image.
+		httpPort := getEnv("HTTP_PORT", "7071")
+		if err := runHealthcheck(httpPort); err != nil {
+			fmt.Fprintf(os.Stderr, "healthcheck: %v\n", err)
+			return true, 1
+		}
+		return true, 0
+	default:
+		return false, 0
+	}
+}
+
+func runHealthcheck(httpPort string) error {
+	url := fmt.Sprintf("http://127.0.0.1:%s/health", httpPort)
+
+	client := http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// Drain response body to allow connection reuse, though not critical for a single-shot command.
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf(resp.Status)
+	}
+
+	return nil
+}
+
+func logArtifactFingerprints(cfg runtimeConfig) {
+	log.Println("Artifact fingerprints:")
+	if exe, err := os.Executable(); err == nil {
+		if sum, err := sha256File(exe); err == nil {
+			log.Printf("  nexus   %s  %s", sum, exe)
+		}
+	}
+	if sum, err := sha256File(cfg.serverBinary); err == nil {
+		log.Printf("  nqserver %s  %s", sum, cfg.serverBinary)
+	}
+	wasmPath := filepath.Join(cfg.clientDir, "index.wasm")
+	if sum, err := sha256File(wasmPath); err == nil {
+		log.Printf("  wasm    %s  %s", sum, wasmPath)
+	}
+	log.Println()
+}
+
+func newMux(cfg runtimeConfig, pakCache *pakIndexCache) *http.ServeMux {
+	mux := http.NewServeMux()
+
+	// Health check endpoint
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		v := currentVersionInfo()
+		w.Header().Set("X-NexQuake-Nexus-GitSHA", v.GitSHA)
+		w.Header().Set("X-NexQuake-Nexus-BuildTime", v.BuildTime)
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "OK")
+	})
+
+	// WebSocket endpoint for game connections
+	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		handleWebSocket(w, r)
+	})
+
+	// Serve game data files - shared between WASM client and servers.
+	// /data-manifest/<mod> returns a virtualized manifest from common+client layers (with PAK exploding).
+	mux.Handle("/data-manifest/", addCORSHeaders(http.HandlerFunc(newDataManifestHandler(cfg.dataDir, pakCache)), cfg.corsOrigin))
+	mux.Handle("/pak-extract/", addCORSHeaders(http.HandlerFunc(newPakExtractHandler(cfg.dataDir, pakCache)), cfg.corsOrigin))
+
+	dataFS := http.FileServer(http.Dir(cfg.dataDir))
+	mux.Handle("/data/", addCORSHeaders(contentTypeOverride(http.StripPrefix("/data/", dataFS)), cfg.corsOrigin))
+
+	// Serve client files (WASM, HTML, JS, CSS)
+	clientFS := http.FileServer(http.Dir(cfg.clientDir))
+	mux.Handle("/", addCORSHeaders(contentTypeOverride(cacheControlClient(clientFS)), cfg.corsOrigin))
+
+	return mux
 }

@@ -53,6 +53,7 @@ func (a *clientIPAllocator) release(oct byte) {
 }
 
 var globalClientIPs = newClientIPAllocator()
+var globalAdminIPs = newClientIPAllocator()
 
 // UDPRelay handles bidirectional relay between WebSocket client and UDP server
 type UDPRelay struct {
@@ -63,26 +64,42 @@ type UDPRelay struct {
 	serverToClient chan []byte
 	clientToServer chan []byte
 	clientIPOctet  byte
+	isAdmin        bool // true if using admin subnet (127.13.37.x)
 }
 
-// NewUDPRelay creates a new UDP relay for a client connection
-func NewUDPRelay(client *ClientConnection) (*UDPRelay, error) {
+// NewUDPRelay creates a new UDP relay for a client connection.
+// If isAdmin is true, uses admin subnet (127.13.37.x) for server-side privilege.
+func NewUDPRelay(client *ClientConnection, isAdmin bool) (*UDPRelay, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Create UDP connection with unique source IP for this client.
-	oct, ok := globalClientIPs.alloc()
+	// Select allocator and subnet based on admin status.
+	var allocator *clientIPAllocator
+	var subnetA, subnetB, subnetC byte
+	if isAdmin {
+		allocator = globalAdminIPs
+		subnetA, subnetB, subnetC = subnetAdminsA, subnetAdminsB, subnetAdminsC
+	} else {
+		allocator = globalClientIPs
+		subnetA, subnetB, subnetC = subnetClientsA, subnetClientsB, subnetClientsC
+	}
+
+	oct, ok := allocator.alloc()
 	if !ok {
 		cancel()
-		return nil, fmt.Errorf("failed to allocate unique client loopback IP")
+		if isAdmin {
+			return nil, fmt.Errorf("failed to allocate admin IP (max 254 concurrent admins)")
+		}
+		return nil, fmt.Errorf("failed to allocate client IP (max 254 concurrent clients)")
 	}
+
 	listenAddr := &net.UDPAddr{
-		IP:   net.IPv4(subnetClientsA, subnetClientsB, subnetClientsC, oct).To4(),
+		IP:   net.IPv4(subnetA, subnetB, subnetC, oct).To4(),
 		Port: 0,
 	}
 
 	udpConn, err := net.ListenUDP("udp4", listenAddr)
 	if err != nil {
-		globalClientIPs.release(oct)
+		allocator.release(oct)
 		cancel()
 		return nil, fmt.Errorf("failed to create UDP connection: %w", err)
 	}
@@ -95,6 +112,7 @@ func NewUDPRelay(client *ClientConnection) (*UDPRelay, error) {
 		serverToClient: make(chan []byte, 1024),
 		clientToServer: make(chan []byte, 1024),
 		clientIPOctet:  oct,
+		isAdmin:        isAdmin,
 	}
 
 	return relay, nil
@@ -112,7 +130,11 @@ func (r *UDPRelay) Stop() {
 	r.cancel()
 	_ = r.udpConn.Close()
 	if r.clientIPOctet != 0 {
-		globalClientIPs.release(r.clientIPOctet)
+		if r.isAdmin {
+			globalAdminIPs.release(r.clientIPOctet)
+		} else {
+			globalClientIPs.release(r.clientIPOctet)
+		}
 		r.clientIPOctet = 0
 	}
 }

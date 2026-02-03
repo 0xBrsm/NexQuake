@@ -27,6 +27,9 @@ type ClientConnection struct {
 
 // handleWebSocket upgrades HTTP to WebSocket and manages the connection
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	// Check admin status before upgrading (auth headers are available here)
+	isAdmin := IsAdmin(r)
+
 	// Upgrade connection to WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -39,12 +42,17 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		done: make(chan struct{}),
 	}
 
-	debugf("Client connected: %s (subprotocol=%q)", conn.RemoteAddr(), conn.Subprotocol())
+	if isAdmin {
+		infof("Admin connected: %s (subprotocol=%q)", conn.RemoteAddr(), conn.Subprotocol())
+	} else {
+		debugf("Client connected: %s (subprotocol=%q)", conn.RemoteAddr(), conn.Subprotocol())
+	}
 
 	// Create a UDP relay immediately. Nexus intentionally does not parse
 	// NetQuake datagrams. It reads a small routing header from each WebSocket
 	// frame and forwards the datagram to 127.255.255.<server_id>:<udp_port>.
-	relay, err := NewUDPRelay(client)
+	// Admin connections use 127.13.37.x subnet for server-side privilege.
+	relay, err := NewUDPRelay(client, isAdmin)
 	if err != nil {
 		errorf("Failed to create UDP relay: %v", err)
 		conn.Close()
@@ -56,14 +64,22 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	client.mu.Unlock()
 
 	relay.Start()
-	debugf("UDP relay started for client")
+	if isAdmin {
+		infof("UDP relay started for admin (subnet 127.13.37.x)")
+	} else {
+		debugf("UDP relay started for client")
+	}
 
 	// Handle client messages (client -> server)
 	go client.readLoop()
 
 	// Wait for connection to close
 	<-client.done
-	debugf("Client disconnected: %s", conn.RemoteAddr())
+	if isAdmin {
+		infof("Admin disconnected: %s", conn.RemoteAddr())
+	} else {
+		debugf("Client disconnected: %s", conn.RemoteAddr())
+	}
 }
 
 // readLoop reads messages from the WebSocket client

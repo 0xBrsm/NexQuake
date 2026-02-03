@@ -135,6 +135,7 @@ func (m *ServerManager) startOne(runtimeBasedir string, spec serverSpec) (*manag
 		"-game", spec.ModName,
 		"-ip", spec.BindAddr,
 		"+hostname", spec.Hostname,
+		"+idgods", "1",
 	}
 
 	cmd := exec.Command(m.serverBinary, args...)

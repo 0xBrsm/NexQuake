@@ -1,0 +1,11 @@
+--- net_main.c
++++ net_main.c
+@@ -982,6 +982,7 @@
+ 
+ #ifdef IDGODS
+-#define IDNET	0xc0f62800
++// Set admin subnet to 127.13.37.0/24
++#define IDNET	0x7f0d2500
+ 
+ qboolean IsID(struct qsockaddr *addr)
+ {
