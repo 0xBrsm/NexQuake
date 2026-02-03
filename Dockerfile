@@ -1,24 +1,9 @@
 # NexQuake Runtime Shell
-# Provides runtime environment for testing artifacts
+# Provides runtime environment for running bind-mounted artifacts.
 #
-# Usage:
-#   1. Download PR artifacts from GitHub Actions
-#   2. Extract to ./apps/ directory
-#   3. docker compose up
+# Goal: keep the image lightweight. We use wolfi-base and keep runtime deps minimal.
 
-FROM ubuntu:22.04
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && arch="$(dpkg --print-architecture)" \
-    && if [ "${arch}" = "amd64" ]; then \
-         apt-get install -y --no-install-recommends libc6-x32; \
-       elif [ "${arch}" = "arm64" ]; then \
-         dpkg --add-architecture armhf; \
-         apt-get update; \
-         apt-get install -y --no-install-recommends libc6:armhf; \
-       fi \
-    && rm -rf /var/lib/apt/lists/*
+FROM cgr.dev/chainguard/wolfi-base:latest
 
 WORKDIR /app
 

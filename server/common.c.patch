@@ -1,6 +1,6 @@
 --- common.c
 +++ common.c
-@@ -855,23 +855,30 @@
+@@ -855,22 +855,29 @@
  */
  void COM_FileBase (char *in, char *out)
  {

@@ -11,7 +11,7 @@
  char *svc_strings[] =
  {
  	"svc_bad",
-@@ -284,6 +288,54 @@
+@@ -284,7 +288,55 @@
  		S_TouchSound (str);
  	}
  

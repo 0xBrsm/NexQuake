@@ -9,7 +9,7 @@ Build configuration for a NetQuake dedicated server from id Software's WinQuake 
 - `net_udp.c.patch` - Adds `-ip <address>` flag support for binding to specific IP addresses (enables multi-server on same port)
 - `common.c.patch` - Fixes `COM_FileBase()` pointer-underflow (armhf crash)
 - `sv_main.c.patch` - Optional QoL: supports `maps/<map>.ent` entity overrides on the server
-- `archived/net_dgrm.c.patch` - Archived networking patch (not applied by default builds)
+- `64bit/*.64bit.patch` - Optional patch set for 64-bit server builds
 
 ## Approach
 
@@ -43,8 +43,15 @@ patch -p0 < /path/to/src/server/common.c.patch
 cat /path/to/src/server/sys_linux_stub.c >> sys_linux.c
 
 # Build
-make -f Makefile.dedicated                         # amd64 -> x32 binary (32-bit pointers on x86_64)
-CC=arm-linux-gnueabihf-gcc ARCH=aarch64 make -f Makefile.dedicated  # arm64 -> 32-bit armhf binary
+make -f Makefile.dedicated BITS=32                         # amd64 -> x32 binary (32-bit pointers on x86_64)
+CC=arm-linux-gnueabihf-gcc ARCH=aarch64 make -f Makefile.dedicated BITS=32  # arm64 -> 32-bit armhf binary
+
+# Optional: 64-bit build (requires extra patches)
+patch -p0 < /path/to/src/server/64bit/net_dgrm.c.64bit.patch
+patch -p0 < /path/to/src/server/64bit/pr_cmds.c.64bit.patch
+patch -p0 < /path/to/src/server/64bit/host_cmd.c.64bit.patch
+patch -p0 < /path/to/src/server/64bit/sv_main.c.64bit.patch
+make -f Makefile.dedicated BITS=64
 ```
 
 Output: `build-netquake-{arch}/nqserver`

@@ -20,6 +20,11 @@ BASE_CFLAGS = -Dstricmp=strcasecmp -fcommon -no-pie -DNO_X86_ASM=1 -Did386=0 -fn
 RELEASE_CFLAGS = $(BASE_CFLAGS) -O3 -Wall
 DEBUG_CFLAGS = $(BASE_CFLAGS) -g -Wall
 LDFLAGS = -lm -rdynamic
+STATIC ?=
+
+ifneq ($(strip $(STATIC)),)
+  LDFLAGS += -static
+endif
 
 ifeq ($(BITS),32)
   ifeq ($(strip $(TARGET)),)

@@ -504,13 +504,18 @@ int WebSocket_Read(int socket, byte *buf, int len, struct qsockaddr *addr)
 	if (!ws_onopen_handled)
 		return 0;
 
-	qboolean want_ctl = (socket == net_controlsocket);
-	if (want_ctl)
-	{
-		uint16_t read_index = wsCtlMessages.read_index;
-		if (read_index == wsCtlMessages.write_index)
-			return 0;
+	(void)socket;
 
+	// NetQuake's UDP landriver reads both control (NETFLAG_CTL) and data packets
+	// from whatever socket is used during the current phase (connect uses a
+	// freshly opened socket; slist uses the control socket). Since the WebSocket
+	// tunnel is a single underlying transport, allow any socket to drain control
+	// packets; otherwise CCREP_ACCEPT/REJECT can be stranded on net_controlsocket.
+	//
+	// Prefer control packets first so the connect handshake sees ACCEPT promptly.
+	uint16_t read_index = wsCtlMessages.read_index;
+	if (read_index != wsCtlMessages.write_index)
+	{
 		unsigned int length = wsCtlMessages.messages[read_index].length;
 
 		if (length < WS_ROUTING_HEADER_SIZE)
@@ -541,7 +546,7 @@ int WebSocket_Read(int socket, byte *buf, int len, struct qsockaddr *addr)
 		return (int)payload_length;
 	}
 
-	uint16_t read_index = wsDataMessages.read_index;
+	read_index = wsDataMessages.read_index;
 	if (read_index == wsDataMessages.write_index)
 		return 0;
 

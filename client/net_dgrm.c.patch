@@ -117,7 +117,7 @@
 +					hostbuf[15] = 0;
 +					Q_strncpy(mapbuf, MSG_ReadString(), 15);
 +					mapbuf[15] = 0;
-+ 
++
 +					Q_strcpy(hostcache[n].name, hostbuf);
 +					Q_strcpy(hostcache[n].map, mapbuf);
 +					hostcache[n].users = MSG_ReadByte();

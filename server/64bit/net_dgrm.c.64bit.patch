@@ -1,12 +1,6 @@
-### ARCHIVED (not applied by default builds)
-#
-# This patch is kept around in case we later need to support topologies where
-# multiple clients appear from the same IP (different source ports), or where
-# BAN_TEST's POSIX fallback struct definitions cause trouble on some platforms.
-#
 --- net_dgrm.c
 +++ net_dgrm.c
-@@ -29,26 +29,9 @@
+@@ -29,25 +29,8 @@
  #include <sys/socket.h>
  #include <arpa/inet.h>
  #else
@@ -35,14 +29,3 @@
 +#include <arpa/inet.h>
  #endif
  #endif	// BAN_TEST
-
-@@ -994,7 +977,7 @@
- 		if (s->driver != net_driverlevel)
- 			continue;
- 		ret = dfunc.AddrCompare(&clientaddr, &s->addr);
--		if (ret >= 0)
-+		if (ret == 0)
- 		{
- 			// is this a duplicate connection reqeust?
- 			if (ret == 0 && net_time - s->connecttime < 2.0)
- 			{

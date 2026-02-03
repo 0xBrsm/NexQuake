@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -30,6 +31,33 @@ func main() {
 				v.GOOS,
 				v.GOARCH,
 			)
+			return
+		case "--healthcheck", "healthcheck":
+			// Used by Docker/compose healthchecks. Do not require curl/wget/bash in the image.
+			httpPort := getEnv("HTTP_PORT", "7071")
+			url := fmt.Sprintf("http://127.0.0.1:%s/health", httpPort)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "healthcheck: %v\n", err)
+				os.Exit(1)
+			}
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "healthcheck: %v\n", err)
+				os.Exit(1)
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				fmt.Fprintf(os.Stderr, "healthcheck: %s\n", resp.Status)
+				os.Exit(1)
+			}
 			return
 		}
 	}
