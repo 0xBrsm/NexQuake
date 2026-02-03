@@ -1,4 +1,4 @@
-package main
+package quake106
 
 import (
 	"archive/zip"
@@ -12,7 +12,7 @@ func TestQuake106Extract(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer zr.Close()
-	if err := extractCanonicalQuake106Pak0(&zr.Reader, t.TempDir()); err != nil {
+	if err := ExtractPak0(&zr.Reader, t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 }

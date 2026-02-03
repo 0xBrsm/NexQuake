@@ -26,7 +26,7 @@
  * THE SOFTWARE.
  */
 
-package main
+package quake106
 
 import (
 	"archive/zip"
@@ -39,13 +39,12 @@ import (
 	"strings"
 )
 
-// SHA256 of the canonical quake106.zip used by this installer (checked in assets.go).
-const quake106ZipSHA256 = "ec6c9d34b1ae0252ac0066045b6611a7919c2a0d78a3a66d9387a8f597553239"
-
+// SHA256 of the canonical quake106.zip files.
 const (
-	quake106Resource1SHA256 = "c192c9c71bee41750dd7d14c99378766d61e077977b9d13d1a457b8d9eabe34a"
-	quake106Pak0SHA256      = "35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af"
-	quake106SlicnseSHA256   = "070cdf6a6410adef8fb5f83a4e5ccdb9e2301d2e48d460bb3a67a0f5ba9d70a8"
+	ZipSHA256 = "ec6c9d34b1ae0252ac0066045b6611a7919c2a0d78a3a66d9387a8f597553239"
+	Resource1SHA256 = "c192c9c71bee41750dd7d14c99378766d61e077977b9d13d1a457b8d9eabe34a"
+	Pak0SHA256      = "35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af"
+	SlicnseSHA256   = "070cdf6a6410adef8fb5f83a4e5ccdb9e2301d2e48d460bb3a67a0f5ba9d70a8"
 )
 
 const (
@@ -57,7 +56,7 @@ const (
 	segLicOut  = 10036
 )
 
-func extractCanonicalQuake106Pak0(zr *zip.Reader, destRoot string) error {
+func ExtractPak0(zr *zip.Reader, destRoot string) error {
 	var zf *zip.File
 	for _, f := range zr.File {
 		if strings.EqualFold(filepath.Base(strings.ReplaceAll(f.Name, `\`, `/`)), "resource.1") {
@@ -77,17 +76,17 @@ func extractCanonicalQuake106Pak0(zr *zip.Reader, destRoot string) error {
 	if err != nil {
 		return err
 	}
-	if sha256Hex(resource) != quake106Resource1SHA256 {
+	if sha256Hex(resource) != Resource1SHA256 {
 		return fmt.Errorf("resource.1 hash mismatch")
 	}
 
 	if err := os.MkdirAll(destRoot, 0o755); err != nil {
 		return err
 	}
-	if err := writeSeg(resource, segPak0Off, segPak0Len, segPak0Out, filepath.Join(destRoot, "pak0.pak"), quake106Pak0SHA256); err != nil {
+	if err := writeSeg(resource, segPak0Off, segPak0Len, segPak0Out, filepath.Join(destRoot, "pak0.pak"), Pak0SHA256); err != nil {
 		return err
 	}
-	return writeSeg(resource, segLicOff, segLicLen, segLicOut, filepath.Join(destRoot, "SLICNSE.TXT"), quake106SlicnseSHA256)
+	return writeSeg(resource, segLicOff, segLicLen, segLicOut, filepath.Join(destRoot, "SLICNSE.TXT"), SlicnseSHA256)
 }
 
 func sha256Hex(b []byte) string {

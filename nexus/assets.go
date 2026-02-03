@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/brstm/NexQuake/nexus/quake106"
 )
 
 type gameDataEntry struct {
@@ -101,8 +103,8 @@ func installFromSource(ctx context.Context, urlStr, destRoot string) error {
 	if err != nil {
 		return err
 	}
-	if sum == quake106ZipSHA256 {
-		return extractCanonicalQuake106Pak0(&zr.Reader, destRoot)
+	if sum == quake106.ZipSHA256 {
+		return quake106.ExtractPak0(&zr.Reader, destRoot)
 	}
 
 	return extractZipGeneric(&zr.Reader, destRoot)
