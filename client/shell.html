@@ -93,7 +93,7 @@
       var Module = {
         preRun: [function() {
           // Create the virtual folder for game data
-          FS.mkdir('/id1');
+          try { FS.mkdir('/id1'); } catch (e) {}
 
           function urlJoinDataId1(relPath) {
             var parts = String(relPath).split('/').filter(Boolean).map(encodeURIComponent);
@@ -104,7 +104,41 @@
             var parts = String(path).split('/').filter(Boolean);
             if (parts.length <= 1) return;
             parts.pop(); // filename
-            FS.mkdirTree('/' + parts.join('/'));
+            try { FS.mkdirTree('/' + parts.join('/')); } catch (e) {}
+          }
+
+          // Remote assets act like pack files: they are readable, but "loose" user files
+          // should take precedence. To achieve this we:
+          // - avoid overwriting existing local files when installing remote nodes
+          // - promote a remote node to a real writable file on first write attempt
+          // - recreate a remote node on-demand when a read fails with ENOENT
+          try {
+            if (!Module.nexquakeRemoteFiles) Module.nexquakeRemoteFiles = Object.create(null);
+            if (!Module.nexquakeRemoteURLs) Module.nexquakeRemoteURLs = Object.create(null);
+          } catch (e) {}
+
+          function resolveVFSPath(p) {
+            p = String(p || '');
+            if (!p) return p;
+            try {
+              if (p[0] === '/') return PATH.normalize(p);
+              return PATH.normalize(FS.cwd() + '/' + p);
+            } catch (e) {
+              if (p[0] === '/') return p;
+              var cwd = (typeof FS !== 'undefined' && FS && typeof FS.cwd === 'function') ? FS.cwd() : '/';
+              if (!cwd.endsWith('/')) cwd += '/';
+              return cwd + p;
+            }
+          }
+
+          function isWriteOpenFlags(flags) {
+            if (typeof flags === 'string') {
+              // "w", "a", and "+" imply write intent.
+              return flags.indexOf('w') !== -1 || flags.indexOf('a') !== -1 || flags.indexOf('+') !== -1;
+            }
+            // Numeric flags: POSIX open() uses O_RDONLY=0, O_WRONLY=1, O_RDWR=2.
+            // (flags & 3) != 0 indicates a write-capable open.
+            return (flags & 3) !== 0;
           }
 
           // Emscripten's built-in FS.createLazyFile only supports browser lazy-loading in Web Workers.
@@ -167,6 +201,48 @@
             return node;
           }
 
+          (function installUnionOpenShim() {
+            if (!FS || !FS.open) return;
+            if (FS._nexquake_union_open_shim) return;
+            FS._nexquake_union_open_shim = true;
+
+            var origOpen = FS.open;
+            FS.open = function(path, flags, mode) {
+              try {
+                return origOpen.call(FS, path, flags, mode);
+              } catch (e) {
+                var absPath = resolveVFSPath(path);
+
+                if (isWriteOpenFlags(flags)) {
+                  // If a remote (read-only) node exists at this path, replace it with a real
+                  // local file so Quake can write (and we can persist) user-owned content.
+                  try {
+                    var node = FS.lookupPath(absPath).node;
+                    if (node && node.url) {
+                      try { FS.unlink(absPath); } catch (e2) {}
+                      try { if (Module.nexquakeRemoteFiles) delete Module.nexquakeRemoteFiles[absPath]; } catch (e3) {}
+                      return origOpen.call(FS, path, flags, mode);
+                    }
+                  } catch (e4) {}
+                } else if (e && e.errno === 2) { // ENOENT
+                  // If a remote mapping exists for this path, recreate the remote stub and retry.
+                  try {
+                    var ent = Module.nexquakeRemoteURLs && Module.nexquakeRemoteURLs[absPath];
+                    if (ent && ent.url) {
+                      ensureDirForPath(absPath);
+                      var parent = absPath.substring(0, absPath.lastIndexOf('/')) || '/';
+                      var name = absPath.substring(absPath.lastIndexOf('/') + 1);
+                      var node = createRemoteFile(parent, name, ent.url, Number(ent.size || 0));
+                      try { if (Module.nexquakeRemoteFiles) Module.nexquakeRemoteFiles[absPath] = node; } catch (e2) {}
+                      return origOpen.call(FS, path, flags, mode);
+                    }
+                  } catch (e5) {}
+                }
+                throw e;
+              }
+            };
+          })();
+
           function installLazyFile(vfsRelPath, url, size) {
             vfsRelPath = String(vfsRelPath || '').replace(/^\/+/, '');
             url = String(url || '').trim();
@@ -178,10 +254,33 @@
             var parent = outPath.substring(0, outPath.lastIndexOf('/')) || '/';
             var name = outPath.substring(outPath.lastIndexOf('/') + 1);
 
+            try {
+              if (!Module.nexquakeRemoteURLs) Module.nexquakeRemoteURLs = Object.create(null);
+              Module.nexquakeRemoteURLs[outPath] = { url: url, size: Number(size || 0) };
+            } catch (e) {}
+
             ensureDirForPath(outPath);
-            try { FS.unlink(outPath); } catch (e) {}
-            var node = createRemoteFile(parent, name, url, size);
-            Module.nexquakeRemoteFiles[outPath] = node;
+
+            // Do not replace existing local files. Loose files should override "pak-like"
+            // remote assets, matching vanilla Quake precedence.
+            try {
+              var existing = FS.lookupPath(outPath).node;
+              if (existing) {
+                if (existing.url) {
+                  existing.url = url;
+                  existing.usedBytes = Number.isFinite(size) && size > 0 ? size : existing.usedBytes;
+                  try { if (Module.nexquakeRemoteFiles) Module.nexquakeRemoteFiles[outPath] = existing; } catch (e2) {}
+                }
+                return;
+              }
+            } catch (e) {}
+
+            try {
+              var node = createRemoteFile(parent, name, url, size);
+              try { if (Module.nexquakeRemoteFiles) Module.nexquakeRemoteFiles[outPath] = node; } catch (e2) {}
+            } catch (e) {
+              console.error('Failed to install remote file:', outPath, e);
+            }
           }
 
           // Prefetch support (used by the client after parsing svc_serverinfo).
@@ -279,6 +378,7 @@
                 .forEach(function(relPath) {
                   installLazyFile(relPath, urlJoinDataId1(relPath));
                 });
+              try { if (typeof Module.nqOverlayUpdateDirs === 'function') Module.nqOverlayUpdateDirs(); } catch (e) {}
               return;
             }
 
@@ -287,6 +387,7 @@
               if (typeof ent.path !== 'string' || typeof ent.url !== 'string') return;
               installLazyFile(ent.path, ent.url, Number(ent.size || 0));
             });
+            try { if (typeof Module.nqOverlayUpdateDirs === 'function') Module.nqOverlayUpdateDirs(); } catch (e) {}
           }
 
           fetchManifest()
@@ -419,20 +520,209 @@
         Module['arguments'] = args;
       })();
 
-      // Best-effort graceful disconnect when the tab/window is closed.
-      // Without this, the server may keep the player slot until timeout.
+      // Best-effort user file persistence when the tab/window is closed.
+      //
+      // Goal:
+      // - Persist *only* client-owned files (configs, saves, demos, screenshots) across reloads.
+      // - Do not persist server-provided game data (even if cached by the browser HTTP cache).
+      //
+      // Notes:
+      // - NetQuake writes config.cfg in Host_Shutdown(), not on every change.
+      // - We trigger a graceful shutdown on pagehide/beforeunload to flush config.cfg, then
+      //   copy eligible files into an IDBFS-backed folder and run syncfs().
       (function() {
-        function requestDisconnect() {
+        var USERFS_ROOT = '/nexquake';
+        var USER_EXTS = ['cfg', 'sav', 'dem', 'pcx'];
+        var shutdownRequested = false;
+
+        function stripTrailingSlash(path) {
+          path = String(path || '');
+          if (path.length > 1 && path.endsWith('/')) return path.slice(0, -1);
+          return path;
+        }
+
+        function ensureDir(path) {
+          try { FS.mkdirTree(path); } catch (e) {}
+        }
+
+        function isAllowedUserFile(fullPath) {
+          fullPath = String(fullPath || '').toLowerCase();
+          var dot = fullPath.lastIndexOf('.');
+          if (dot < 0) return false;
+          var ext = fullPath.slice(dot + 1);
+          return USER_EXTS.indexOf(ext) >= 0;
+        }
+
+        function isRemoteNode(path) {
           try {
-            if (typeof Module !== 'undefined' && Module && typeof Module.ccall === 'function') {
-              Module.ccall('NexQuake_OnPageHide', 'void', [], []);
+            // Our lazy remote VFS nodes are tagged with `.url` in shell.html.
+            var node = FS.lookupPath(path).node;
+            return !!(node && node.url);
+          } catch (e) {
+            return false;
+          }
+        }
+
+        function listCandidateGameDirs() {
+          var dirs = Object.create(null);
+          dirs['/id1'] = true;
+
+          // Include any backed-up dirs that already exist on disk.
+          try {
+            if (typeof FS !== 'undefined') {
+              ensureDir(USERFS_ROOT);
+              var entries = FS.readdir(USERFS_ROOT);
+              entries.forEach(function(name) {
+                if (name === '.' || name === '..') return;
+                var p = '/' + name;
+                try {
+                  var st = FS.stat(USERFS_ROOT + p);
+                  if (FS.isDir(st.mode)) dirs[p] = true;
+                } catch (e) {}
+              });
+
+              // If we've previously persisted per-mod dirs under /id1/<mod>/..., include them too.
+              try {
+                FS.readdir(USERFS_ROOT + '/id1').forEach(function(name) {
+                  if (name === '.' || name === '..') return;
+                  try {
+                    var st = FS.stat(USERFS_ROOT + '/id1/' + name);
+                    if (FS.isDir(st.mode)) dirs['/id1/' + name] = true;
+                  } catch (e) {}
+                });
+              } catch (e) {}
             }
           } catch (e) {}
+
+          // Derive from server-provided remote files (supports /id1 and top-level mod dirs).
+          var remotes = (typeof Module !== 'undefined' && Module && Module.nexquakeRemoteFiles) ? Module.nexquakeRemoteFiles : {};
+          Object.keys(remotes || {}).forEach(function(path) {
+            path = String(path || '');
+            var m = path.match(/^\/([^\/]+)\//);
+            if (m && m[1] && m[1] !== 'nexquake') {
+              dirs['/' + m[1]] = true;
+            }
+
+            // Back-compat: remote assets may be installed under /id1/<mod>/...
+            // Only include subdirs that look like actual mod roots.
+            var m2 = path.match(/^\/id1\/([^\/]+)\/(pak[0-9]+\.pak|progs\.dat)$/i);
+            if (m2 && m2[1]) dirs['/id1/' + m2[1]] = true;
+          });
+
+          var out = Object.keys(dirs);
+          out.sort();
+          return out;
         }
-        window.addEventListener('pagehide', requestDisconnect);
-        window.addEventListener('beforeunload', requestDisconnect);
+
+        function collectUserFilesInDir(dir) {
+          var results = [];
+          var entries;
+          try { entries = FS.readdir(dir); } catch (e) { return results; }
+          entries.forEach(function(name) {
+            if (name === '.' || name === '..') return;
+            var fullPath = dir + (dir === '/' ? '' : '/') + name;
+            try {
+              var stat = FS.stat(fullPath);
+              if (FS.isFile(stat.mode) && isAllowedUserFile(fullPath) && !isRemoteNode(fullPath)) {
+                results.push(fullPath);
+              }
+            } catch (e) {}
+          });
+          return results;
+        }
+
+        function collectPersistedUserFiles(dir) {
+          var results = [];
+          var entries;
+          try { entries = FS.readdir(dir); } catch (e) { return results; }
+          entries.forEach(function(name) {
+            if (name === '.' || name === '..') return;
+            var fullPath = dir + (dir === '/' ? '' : '/') + name;
+            try {
+              var stat = FS.stat(fullPath);
+              if (FS.isDir(stat.mode)) {
+                results = results.concat(collectPersistedUserFiles(fullPath));
+              } else if (FS.isFile(stat.mode) && isAllowedUserFile(fullPath)) {
+                results.push(fullPath);
+              }
+            } catch (e) {}
+          });
+          return results;
+        }
+
+        function restoreUserFiles() {
+          if (typeof FS === 'undefined') return;
+          var backups = collectPersistedUserFiles(USERFS_ROOT).sort();
+          backups.forEach(function(backupPath) {
+            backupPath = String(backupPath || '');
+            if (backupPath.indexOf(USERFS_ROOT + '/') !== 0) return;
+            var destPath = backupPath.substring(USERFS_ROOT.length);
+            if (!destPath || destPath === backupPath) return;
+            var destDir = destPath.substring(0, destPath.lastIndexOf('/'));
+            try { if (destDir) FS.mkdirTree(destDir); } catch (e) {}
+            try {
+              var data = FS.readFile(backupPath);
+              try { FS.unlink(destPath); } catch (e) {}
+              FS.writeFile(destPath, data);
+            } catch (e) {}
+          });
+        }
+
+        function persistUserFiles() {
+          if (typeof FS === 'undefined') return;
+          try {
+            ensureDir(USERFS_ROOT);
+            var dirs = listCandidateGameDirs();
+            dirs.forEach(function(d) {
+              d = stripTrailingSlash(d);
+              if (!d || d === '/' || d === USERFS_ROOT) return;
+              var backupDir = USERFS_ROOT + d;
+              ensureDir(backupDir);
+              collectUserFilesInDir(d).forEach(function(fullPath) {
+                var name = fullPath.substring(fullPath.lastIndexOf('/') + 1);
+                if (!name) return;
+                try {
+                  var data = FS.readFile(fullPath);
+                  try { FS.unlink(backupDir + '/' + name); } catch (e) {}
+                  FS.writeFile(backupDir + '/' + name, data);
+                } catch (e) {}
+              });
+            });
+            // Sync to IndexedDB (fire and forget)
+            FS.syncfs(false, function(err) {
+              if (err) console.warn('User file syncfs error:', err);
+            });
+          } catch (e) {
+            console.warn('User file persist failed:', e);
+          }
+        }
+
+        try {
+          Module.nqPersistUserFiles = persistUserFiles;
+          Module.nqRestoreUserFiles = restoreUserFiles;
+          Module.nqUserFSRoot = USERFS_ROOT;
+          Module.nqUserFileExts = USER_EXTS.slice();
+        } catch (e) {}
+
+        function requestShutdown() {
+          try {
+            if (shutdownRequested) return;
+            shutdownRequested = true;
+            if (typeof Module !== 'undefined' && Module && typeof Module.ccall === 'function') {
+              // Writes config.cfg and shuts down subsystems (best-effort).
+              Module.ccall('NexQuake_OnPageHide', 'void', [], []);
+            }
+            persistUserFiles();
+          } catch (e) {}
+        }
+        window.addEventListener('pagehide', requestShutdown);
+        window.addEventListener('beforeunload', requestShutdown);
+
+        // Restoring user files must happen before Quake executes quake.rc/config.cfg at startup.
+        // sys_sdl.c waits for IDBFS sync to complete, then calls Module.nqRestoreUserFiles().
       })();
       Module.setStatus('Downloading...');
+
       window.onerror = function() {
         Module.setStatus('Exception thrown, see JavaScript console');
         spinnerElement.style.display = 'none';

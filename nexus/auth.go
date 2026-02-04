@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"net/http"
 	"os"
 	"strings"
@@ -9,8 +12,12 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 )
 
-// Global singleton to match the original usage pattern.
-var globalValidator *OIDCValidator
+const rconTokenPrefix = "NexQuake:rcon:v1:"
+
+var (
+	globalValidator *OIDCValidator
+	rconToken       string // derived from AUTH_RCON_PASSWORD (base64url(sha256(prefix + password)))
+)
 
 type OIDCValidator struct {
 	verifier    *oidc.IDTokenVerifier
@@ -20,8 +27,12 @@ type OIDCValidator struct {
 	adminEmails map[string]struct{}
 }
 
-// initAuth initializes the validator and is called from main.go at startup.
 func initAuth() error {
+	rconPassword := strings.TrimSpace(os.Getenv("AUTH_RCON_PASSWORD"))
+	if rconPassword != "" {
+		rconToken = deriveRconToken(rconPassword)
+	}
+
 	issuer := strings.TrimSpace(os.Getenv("AUTH_ISSUER"))
 	audience := strings.TrimSpace(os.Getenv("AUTH_AUDIENCE"))
 	headerName := strings.TrimSpace(os.Getenv("AUTH_JWT_HEADER"))
@@ -36,59 +47,97 @@ func initAuth() error {
 		}
 	}
 
-	if issuer == "" && audience == "" {
-		infof("Auth disabled (no issuer/audience configured)")
-		return nil
+	// Set up OIDC if configured.
+	if issuer != "" && audience != "" {
+		if headerName == "" {
+			headerName = "Authorization"
+		}
+		provider, err := oidc.NewProvider(context.Background(), issuer)
+		if err != nil {
+			return err
+		}
+		globalValidator = &OIDCValidator{
+			verifier:    provider.Verifier(&oidc.Config{ClientID: audience}),
+			headerName:  headerName,
+			groupsClaim: groupsClaim,
+			adminGroup:  adminGroup,
+			adminEmails: emailMap,
+		}
 	}
 
-	// Default to Authorization header if not specified
-	if headerName == "" {
-		headerName = "Authorization"
+	// Single summary line.
+	var methods []string
+	if rconToken != "" {
+		methods = append(methods, "rcon_password")
 	}
-
-	provider, err := oidc.NewProvider(context.Background(), issuer)
-	if err != nil {
-		return err
+	if globalValidator != nil {
+		var idpParts []string
+		if len(emailMap) > 0 {
+			idpParts = append(idpParts, "email")
+		}
+		if groupsClaim != "" && adminGroup != "" {
+			idpParts = append(idpParts, "group")
+		}
+		methods = append(methods, "IdP("+strings.Join(idpParts, ", ")+")")
 	}
-
-	infof("Auth enabled: oidc_issuer=%q jwt_header=%q admins=%d", issuer, headerName, len(emailMap))
-
-	globalValidator = &OIDCValidator{
-		verifier:    provider.Verifier(&oidc.Config{ClientID: audience}),
-		headerName:  headerName,
-		groupsClaim: groupsClaim,
-		adminGroup:  adminGroup,
-		adminEmails: emailMap,
+	if len(methods) == 0 {
+		infof("Admin access disabled")
+	} else {
+		infof("Admin access enabled via: %s", strings.Join(methods, ", "))
 	}
 
 	return nil
 }
 
-// IsAdmin checks if the request is authorized.
-func IsAdmin(r *http.Request) bool {
-	if globalValidator == nil {
-		return false
+// requestKey extracts a credential from ?token= query param or Authorization header.
+func requestKey(r *http.Request) string {
+	if k := strings.TrimSpace(r.URL.Query().Get("token")); k != "" {
+		return k
 	}
-	return globalValidator.check(r)
+	h := r.Header.Get("Authorization")
+	if len(h) > 7 && strings.EqualFold(h[:7], "Bearer ") {
+		return strings.TrimSpace(h[7:])
+	}
+	return strings.TrimSpace(h)
 }
 
-func (v *OIDCValidator) check(r *http.Request) bool {
-	rawToken := r.Header.Get(v.headerName)
+func IsAdmin(r *http.Request) bool {
+	k := requestKey(r)
 
-	// Handle standard Bearer casing if using standard header
-	if strings.EqualFold(v.headerName, "Authorization") {
-		if len(rawToken) > 7 && strings.EqualFold(rawToken[:7], "Bearer ") {
-			rawToken = strings.TrimSpace(rawToken[7:])
+	// Static shared secret token.
+	if rconToken != "" && k != "" {
+		if subtle.ConstantTimeCompare([]byte(k), []byte(rconToken)) == 1 {
+			return true
 		}
 	}
 
-	if rawToken == "" {
+	// OIDC JWT.
+	if globalValidator != nil {
+		return globalValidator.check(r)
+	}
+	return false
+}
+
+func deriveRconToken(password string) string {
+	sum := sha256.Sum256([]byte(rconTokenPrefix + password))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func (v *OIDCValidator) check(r *http.Request) bool {
+	raw := r.Header.Get(v.headerName)
+	if strings.EqualFold(v.headerName, "Authorization") && len(raw) > 7 && strings.EqualFold(raw[:7], "Bearer ") {
+		raw = strings.TrimSpace(raw[7:])
+	}
+	if raw == "" {
+		raw = strings.TrimSpace(r.URL.Query().Get("token"))
+	}
+	if raw == "" {
 		return false
 	}
 
-	token, err := v.verifier.Verify(r.Context(), rawToken)
+	token, err := v.verifier.Verify(r.Context(), raw)
 	if err != nil {
-		debugf("JWT Verification Error: %v", err)
+		debugf("JWT verification failed: %v", err)
 		return false
 	}
 
@@ -98,7 +147,6 @@ func (v *OIDCValidator) check(r *http.Request) bool {
 		return false
 	}
 
-	// Strategy 1: Email allowlist
 	if len(v.adminEmails) > 0 {
 		if email, ok := claims["email"].(string); ok {
 			if _, allowed := v.adminEmails[strings.ToLower(email)]; allowed {
@@ -107,7 +155,6 @@ func (v *OIDCValidator) check(r *http.Request) bool {
 		}
 	}
 
-	// Strategy 2: Group membership (if configured)
 	if v.groupsClaim != "" && v.adminGroup != "" {
 		return containsGroup(claims[v.groupsClaim], v.adminGroup)
 	}
@@ -115,25 +162,25 @@ func (v *OIDCValidator) check(r *http.Request) bool {
 	return false
 }
 
-func containsGroup(claimValue any, targetGroup string) bool {
-	if claimValue == nil || targetGroup == "" {
+func containsGroup(val any, target string) bool {
+	if val == nil || target == "" {
 		return false
 	}
-	switch val := claimValue.(type) {
+	switch v := val.(type) {
 	case []interface{}:
-		for _, item := range val {
-			if s, ok := item.(string); ok && s == targetGroup {
+		for _, item := range v {
+			if s, ok := item.(string); ok && s == target {
 				return true
 			}
 		}
 	case []string:
-		for _, s := range val {
-			if s == targetGroup {
+		for _, s := range v {
+			if s == target {
 				return true
 			}
 		}
 	case string:
-		return val == targetGroup
+		return v == target
 	}
 	return false
 }

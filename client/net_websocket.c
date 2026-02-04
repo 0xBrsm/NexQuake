@@ -60,6 +60,17 @@ EM_JS(char *, WebSocket_GetUrl, (), {
 			? globalThis
 			: ((typeof self !== "undefined") ? self : window);
 
+		function appendRconToken(url) {
+			try {
+				var tok = g.localStorage && g.localStorage.getItem("nq_rcon_token");
+				if (tok) {
+					var sep = (url.indexOf("?") === -1) ? "?" : "&";
+					return url + sep + "token=" + encodeURIComponent(tok);
+				}
+			} catch (e) {}
+			return url;
+		}
+
 		// Optional overrides:
 		// - ?ws=ws(s)://host:port/ws
 		// - window.WEBSOCKET_URL
@@ -76,7 +87,7 @@ EM_JS(char *, WebSocket_GetUrl, (), {
 			module.websocketUrl ||
 			module.WEBSOCKET_URL;
 		if (override) {
-			return stringToNewUTF8(override);
+			return stringToNewUTF8(appendRconToken(override));
 		}
 
 		var loc = g.location;
@@ -85,11 +96,178 @@ EM_JS(char *, WebSocket_GetUrl, (), {
 		}
 
 		var wsProto = (loc.protocol === "https:") ? "wss:" : "ws:";
-		return stringToNewUTF8(wsProto + "//" + loc.host + "/ws");
+		var wsUrl = wsProto + "//" + loc.host + "/ws";
+		wsUrl = appendRconToken(wsUrl);
+
+		return stringToNewUTF8(wsUrl);
 	} catch (e) {
 		return stringToNewUTF8(DEFAULT_WEBSOCKET_URL);
 	}
 });
+
+EM_JS(void, WebSocket_SetRconTokenFromPassword, (const char *password), {
+	try {
+		var pw = UTF8ToString(password);
+		if (!pw) return;
+
+		var prefix = "NexQuake:rcon:v1:";
+		var input = prefix + pw;
+
+		var data;
+		if (typeof TextEncoder !== "undefined") {
+			data = new TextEncoder().encode(input);
+		} else {
+			// Minimal UTF-8 encoder fallback.
+			var out = [];
+			for (var i = 0; i < input.length; i++) {
+				var c = input.charCodeAt(i);
+				if (c < 0x80) {
+					out.push(c);
+				} else if (c < 0x800) {
+					out.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f));
+				} else if (c >= 0xd800 && c <= 0xdbff && i + 1 < input.length) {
+					var c2 = input.charCodeAt(++i);
+					var u = 0x10000 + ((c - 0xd800) << 10) + (c2 - 0xdc00);
+					out.push(
+						0xf0 | (u >> 18),
+						0x80 | ((u >> 12) & 0x3f),
+						0x80 | ((u >> 6) & 0x3f),
+						0x80 | (u & 0x3f)
+					);
+				} else {
+					out.push(
+						0xe0 | (c >> 12),
+						0x80 | ((c >> 6) & 0x3f),
+						0x80 | (c & 0x3f)
+					);
+				}
+			}
+			data = new Uint8Array(out);
+		}
+
+		function rotr(x, n) {
+			return (x >>> n) | (x << (32 - n));
+		}
+
+		var K = [
+			0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+			0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+			0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+			0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+			0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+			0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+			0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+			0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+		];
+
+		var H0 = 0x6a09e667 | 0;
+		var H1 = 0xbb67ae85 | 0;
+		var H2 = 0x3c6ef372 | 0;
+		var H3 = 0xa54ff53a | 0;
+		var H4 = 0x510e527f | 0;
+		var H5 = 0x9b05688c | 0;
+		var H6 = 0x1f83d9ab | 0;
+		var H7 = 0x5be0cd19 | 0;
+
+		var l = data.length;
+		var withOne = l + 1;
+		var rem = withOne % 64;
+		var pad = rem <= 56 ? (56 - rem) : (56 + 64 - rem);
+		var total = withOne + pad + 8;
+		var buf = new Uint8Array(total);
+		buf.set(data, 0);
+		buf[l] = 0x80;
+
+		// 64-bit big-endian bit length.
+		var bitLenHi = Math.floor(l / 536870912); // l * 8 / 2^32
+		var bitLenLo = ((l << 3) >>> 0);
+		var o = total - 8;
+		buf[o + 0] = (bitLenHi >>> 24) & 0xff;
+		buf[o + 1] = (bitLenHi >>> 16) & 0xff;
+		buf[o + 2] = (bitLenHi >>> 8) & 0xff;
+		buf[o + 3] = bitLenHi & 0xff;
+		buf[o + 4] = (bitLenLo >>> 24) & 0xff;
+		buf[o + 5] = (bitLenLo >>> 16) & 0xff;
+		buf[o + 6] = (bitLenLo >>> 8) & 0xff;
+		buf[o + 7] = bitLenLo & 0xff;
+
+		var w = new Int32Array(64);
+		for (var i = 0; i < total; i += 64) {
+			for (var t = 0; t < 16; t++) {
+				var p = i + (t * 4);
+				w[t] = ((buf[p] << 24) | (buf[p + 1] << 16) | (buf[p + 2] << 8) | (buf[p + 3])) | 0;
+			}
+			for (t = 16; t < 64; t++) {
+				var x = w[t - 15];
+				var y = w[t - 2];
+				var s0 = (rotr(x, 7) ^ rotr(x, 18) ^ (x >>> 3)) | 0;
+				var s1 = (rotr(y, 17) ^ rotr(y, 19) ^ (y >>> 10)) | 0;
+				w[t] = (w[t - 16] + s0 + w[t - 7] + s1) | 0;
+			}
+
+			var a = H0, b = H1, c = H2, d = H3, e = H4, f = H5, g = H6, h = H7;
+			for (t = 0; t < 64; t++) {
+				var S1 = (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) | 0;
+				var ch = ((e & f) ^ (~e & g)) | 0;
+				var t1 = (h + S1 + ch + K[t] + w[t]) | 0;
+				var S0 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) | 0;
+				var maj = ((a & b) ^ (a & c) ^ (b & c)) | 0;
+				var t2 = (S0 + maj) | 0;
+				h = g;
+				g = f;
+				f = e;
+				e = (d + t1) | 0;
+				d = c;
+				c = b;
+				b = a;
+				a = (t1 + t2) | 0;
+			}
+
+			H0 = (H0 + a) | 0;
+			H1 = (H1 + b) | 0;
+			H2 = (H2 + c) | 0;
+			H3 = (H3 + d) | 0;
+			H4 = (H4 + e) | 0;
+			H5 = (H5 + f) | 0;
+			H6 = (H6 + g) | 0;
+			H7 = (H7 + h) | 0;
+		}
+
+		var hash = new Uint8Array(32);
+		var hs = [H0, H1, H2, H3, H4, H5, H6, H7];
+		for (var j = 0; j < 8; j++) {
+			var v = hs[j] >>> 0;
+			hash[j * 4 + 0] = (v >>> 24) & 0xff;
+			hash[j * 4 + 1] = (v >>> 16) & 0xff;
+			hash[j * 4 + 2] = (v >>> 8) & 0xff;
+			hash[j * 4 + 3] = v & 0xff;
+		}
+
+		var b64 = "";
+		if (typeof Buffer !== "undefined" && Buffer.from) {
+			b64 = Buffer.from(hash).toString("base64");
+		} else if (typeof btoa !== "undefined") {
+			var bin = "";
+			for (j = 0; j < hash.length; j++) bin += String.fromCharCode(hash[j]);
+			b64 = btoa(bin);
+		} else {
+			return;
+		}
+
+		var tok = b64.split("+").join("-").split("/").join("_");
+		while (tok.length > 0 && tok.charCodeAt(tok.length - 1) === 61) tok = tok.slice(0, -1);
+		var g = (typeof globalThis !== "undefined")
+			? globalThis
+			: ((typeof self !== "undefined") ? self : window);
+		try {
+			if (g.localStorage) g.localStorage.setItem("nq_rcon_token", tok);
+		} catch (e) {}
+	} catch (e) {}
+});
+
+static void WebSocket_RconPassword_f(void);
+static void WebSocket_Rcon_f(void);
+static void WebSocket_RegisterCommands(void);
 
 typedef struct
 {
@@ -107,6 +285,7 @@ static qboolean ws_close_requested = false;
 static EMSCRIPTEN_WEBSOCKET_T ws;
 static int ws_next_socket_id = 1;
 static int ws_open_socket_count = 0;
+static qboolean ws_commands_registered = false;
 
 struct
 {
@@ -217,10 +396,10 @@ static void WebSocket_FillAddrWithServerID(struct qsockaddr *addr, byte server_i
 }
 
 // Called from shell.html on pagehide/beforeunload to give the client a chance
-// to send a proper NetQuake disconnect before the browser tears down the tab.
+// to gracefully shut down (writes config.cfg) before the browser tears down the tab.
 EMSCRIPTEN_KEEPALIVE void NexQuake_OnPageHide(void)
 {
-	CL_Disconnect();
+	Host_Shutdown();
 }
 
 // Deterministic command injection for automation and debugging.
@@ -418,7 +597,56 @@ int WebSocket_Init(void)
 		*colon = 0;
 
 	tcpipAvailable = true;
+	WebSocket_RegisterCommands();
 	return net_controlsocket;
+}
+
+static void WebSocket_RegisterCommands(void)
+{
+	if (ws_commands_registered)
+		return;
+	ws_commands_registered = true;
+
+	Cmd_AddCommand("rcon_password", WebSocket_RconPassword_f);
+	Cmd_AddCommand("rcon", WebSocket_Rcon_f);
+}
+
+static void WebSocket_RconPassword_f(void)
+{
+	if (Cmd_Argc() != 2)
+	{
+		Con_Printf("usage: rcon_password <password>\n");
+		return;
+	}
+
+	const char *pw = Cmd_Argv(1);
+	if (!pw || !pw[0])
+	{
+		Con_Printf("usage: rcon_password <password>\n");
+		return;
+	}
+
+	WebSocket_SetRconTokenFromPassword(pw);
+	Con_Printf("Password set. You must reload the client for it to take effect.\n");
+}
+
+static void WebSocket_Rcon_f(void)
+{
+	// Mirror Cmd_ForwardToServer behavior, but always omit the command name (like `cmd`).
+	if (cls.state != ca_connected)
+	{
+		Con_Printf("Can't \"%s\", not connected\n", Cmd_Argv(0));
+		return;
+	}
+
+	if (cls.demoplayback)
+		return; // not really connected
+
+	MSG_WriteByte(&cls.message, clc_stringcmd);
+	if (Cmd_Argc() > 1)
+		SZ_Print(&cls.message, Cmd_Args());
+	else
+		SZ_Print(&cls.message, "\n");
 }
 
 void WebSocket_Shutdown(void)

@@ -45,6 +45,7 @@ static int frame;
 void main_loop(void);
 #ifdef __EMSCRIPTEN__
 static qboolean restore_busy;
+static qboolean quit_requested;
 #endif
 
 // =======================================================================
@@ -70,8 +71,16 @@ void Sys_Printf (char *fmt, ...)
 
 void Sys_Quit (void)
 {
-    Host_Shutdown();
-    exit(0);
+#ifdef __EMSCRIPTEN__
+	// In the browser, quitting from the console/menu happens mid-frame. If we tear down
+	// video immediately (Host_Shutdown -> VID_Shutdown), the current frame can still
+	// attempt to render and spam errors. Defer shutdown/persist until the next tick.
+	quit_requested = true;
+	return;
+#else
+	Host_Shutdown();
+	exit(0);
+#endif
 }
 
 void Sys_Init(void)
@@ -404,21 +413,26 @@ void wasm_init_fs(void)
 	// Sync from IDBFS in the background
 	EM_ASM(
 		Module.restore_busy = 1;
+		try {
 #ifdef WASM_SAVE_PAKS
-		FS.mkdir("/id1");
-		FS.mount(IDBFS, {}, "/id1");
+			try { FS.mkdir("/id1"); } catch (e) {}
+			try { FS.mount(IDBFS, {}, "/id1"); } catch (e) { console.warn("IDBFS mount /id1 failed:", e); }
 #endif
-		FS.mkdir("/nqwasm");
-		FS.mount(IDBFS, {}, "/nqwasm");
-		console.info("Loading data...");
-		FS.syncfs(true, function (err) {
-			if (err)
-				console.warn("Failed to load data: " + err);
-			else
-				console.info("Data loaded.");
+			try { FS.mkdir("/nexquake"); } catch (e) {}
+			try { FS.mount(IDBFS, {}, "/nexquake"); } catch (e) { console.warn("IDBFS mount /nexquake failed:", e); }
+			console.info("Loading data...");
+			FS.syncfs(true, function (err) {
+				if (err)
+					console.warn("Failed to load data: " + err);
+				else
+					console.info("Data loaded.");
 
+				Module.restore_busy = 0;
+			});
+		} catch (e) {
+			console.warn("wasm_init_fs failed:", e);
 			Module.restore_busy = 0;
-		});
+		}
 	);
 }
 
@@ -451,11 +465,26 @@ int main (int c, char **v)
 	quakeparms_t parms;
 	int pnum;
 
-#ifdef __EMSCRIPTEN__
-	wasm_init_fs();
-#endif
+	#ifdef __EMSCRIPTEN__
+		wasm_init_fs();
 
-	moncontrol(0);
+		// IDBFS restore is async. Wait here so that persisted user files (config.cfg,
+		// saves, demos, etc.) are restored before Host_Init() executes quake.rc/config.cfg.
+		while (wasm_restore_busy())
+			emscripten_sleep(10);
+
+		// Restore persisted user files from /nexquake/* into the active game dirs.
+		EM_ASM({
+			try {
+				if (typeof Module !== 'undefined' && Module && typeof Module.nqRestoreUserFiles === 'function')
+					Module.nqRestoreUserFiles();
+			} catch (e) {
+				console.warn('nqRestoreUserFiles failed:', e);
+			}
+		});
+	#endif
+
+		moncontrol(0);
 
 //	signal(SIGFPE, floating_point_exception_handler);
 	signal(SIGFPE, SIG_IGN);
@@ -514,6 +543,29 @@ int main (int c, char **v)
 void main_loop(void)
 {
 #ifdef __EMSCRIPTEN__
+		if (quit_requested)
+		{
+			quit_requested = false;
+			Host_Shutdown();
+
+			// Persist client-owned files (config.cfg, saves, demos, screenshots) into the
+			// IDBFS-backed folder so they survive reloads. Then refresh the overlay list.
+			EM_ASM({
+				try {
+					if (typeof Module !== 'undefined' && Module && typeof Module.nqPersistUserFiles === 'function')
+						Module.nqPersistUserFiles();
+					if (typeof Module !== 'undefined' && Module && typeof Module.nqOverlayRefreshVFS === 'function')
+						Module.nqOverlayRefreshVFS();
+				} catch (e) {
+					console.warn('nqPersistUserFiles on quit failed:', e);
+				}
+			});
+
+			// Stop the main loop but keep the JS runtime alive so the overlay remains usable.
+			emscripten_cancel_main_loop();
+			return;
+		}
+
         if (restore_busy) {
             // Call JavaScript code to check restore status
             if (wasm_restore_busy())
