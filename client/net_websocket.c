@@ -19,7 +19,7 @@ Added by initialed85
 
 #include "net_websocket.h"
 
-#define DEFAULT_WEBSOCKET_URL "ws://localhost:7071/ws"
+#define DEFAULT_WEBSOCKET_URL "ws://localhost:1337/ws"
 // Incoming WebSocket frames are queued here until the Quake net loop drains them.
 // In browsers, the main loop can be throttled (background tabs, long frames),
 // while WebSocket events may still deliver bursts of packets. A small ring buffer

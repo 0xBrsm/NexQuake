@@ -4,28 +4,22 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "${HTTP_PORT:-7071}:${HTTP_PORT:-7071}"
+      - "${HTTP_PORT:-1337}:${HTTP_PORT:-1337}"
     volumes:
-      # Application binaries and client files (nqwasm, nexus, nqserver)
-      - ./apps:/apps:ro
       # Game data (id1, mods, mission packs) - read-only.
-      # Note: nexus can auto-bootstrap missing game data only when /data is writable.
-      - ./data:/data:ro
+      # Note: nexus can auto-bootstrap missing game data only when /app/data is writable.
+      - ./data:/app/data:ro
       # Server logs, demos, temp files - read-write
-      - ./logs:/logs:rw
+      - ./logs:/app/logs:rw
     environment:
-      - QUAKE_DATA_DIR=/data
-      - LOGS_DIR=/logs
-      - CLIENT_DIR=/apps/nqwasm
-      - SERVER_BINARY=/apps/nqserver
-      - HTTP_PORT=${HTTP_PORT:-7071}
+      - HTTP_PORT=${HTTP_PORT:-1337}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "/apps/nexus", "healthcheck"]
+      test: ["CMD", "/app/bin/nexus", "healthcheck"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
 
-# For production: Configure your own reverse proxy to forward to nexus:7071
+# For production: Configure your own reverse proxy to forward to nexus:1337
 # Examples: Nginx, Traefik, Caddy, HAProxy, or cloud load balancer

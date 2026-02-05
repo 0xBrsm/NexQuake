@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,7 +27,7 @@ type gameDataEntry struct {
 }
 
 func bootstrapGameData(ctx context.Context, dataDir string) error {
-	entries, src, err := loadGameDataEntries()
+	entries, src, err := loadGameDataEntries(dataDir)
 	if err != nil {
 		return err
 	}
@@ -35,7 +36,9 @@ func bootstrapGameData(ctx context.Context, dataDir string) error {
 	}
 
 	if !dirWritable(dataDir) {
-		infof("Game data bootstrap skipped (not writable): %s", dataDir)
+		if strings.TrimSpace(os.Getenv("QUICKSTART")) != "" {
+			infof("Game data bootstrap skipped (not writable): %s", dataDir)
+		}
 		return nil
 	}
 
@@ -157,13 +160,23 @@ func copyToFile(path string, r io.Reader) error {
 	return err
 }
 
-func loadGameDataEntries() ([]gameDataEntry, string, error) {
-	path := strings.TrimSpace(os.Getenv("GAMEDATA_PATH"))
-	if path == "" {
-		return nil, "env:GAMEDATA_PATH", nil
+func loadGameDataEntries(dataDir string) ([]gameDataEntry, string, error) {
+	quickstart := strings.TrimSpace(os.Getenv("QUICKSTART"))
+	if quickstart == "" {
+		quickstart = "minimal"
 	}
+	if strings.Contains(quickstart, "..") || strings.ContainsAny(quickstart, `/\`) {
+		return nil, "env:QUICKSTART", fmt.Errorf("invalid QUICKSTART: %q", quickstart)
+	}
+
+	path := filepath.Join(dataDir, quickstart+".json")
 	b, err := os.ReadFile(path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// Default QUICKSTART is "minimal". If the user bind-mounts a data dir or
+			// otherwise doesn't have the stock manifests present, treat as disabled.
+			return nil, path, nil
+		}
 		return nil, path, fmt.Errorf("read config: %w", err)
 	}
 	var entries []gameDataEntry

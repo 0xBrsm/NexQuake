@@ -39,11 +39,9 @@ func main() {
 		logArtifactFingerprints(cfg)
 	}
 
-	// Bootstrap game data only when GAMEDATA_PATH is set.
-	if os.Getenv("GAMEDATA_PATH") != "" {
-		if err := bootstrapGameData(runCtx, cfg.dataDir); err != nil {
-			log.Fatalf("Game data bootstrap failed: %v", err)
-		}
+	// Default QUICKSTART is "minimal"; missing manifest is a no-op.
+	if err := bootstrapGameData(runCtx, cfg.dataDir); err != nil {
+		log.Fatalf("Game data bootstrap failed: %v", err)
 	}
 
 	// Start dedicated servers (one per mod directory).
@@ -110,13 +108,14 @@ type runtimeConfig struct {
 }
 
 func loadRuntimeConfig() runtimeConfig {
+	binDir := getEnv("BIN_DIR", "/app/bin")
 	return runtimeConfig{
-		httpPort:     getEnv("HTTP_PORT", "7071"),
-		dataDir:      getEnv("QUAKE_DATA_DIR", "/data"),
-		logsDir:      getEnv("LOGS_DIR", "/logs"),
-		serverBinary: getEnv("SERVER_BINARY", "/apps/nqserver"),
-		clientDir:    getEnv("CLIENT_DIR", "/apps/nqwasm"),
-		corsOrigin:   getEnv("CORS_ALLOWED_ORIGIN", "*"),
+		httpPort:     getEnv("HTTP_PORT", "1337"),
+		dataDir:      getEnv("DATA_DIR", "/app/data"),
+		logsDir:      getEnv("LOGS_DIR", "/app/logs"),
+		serverBinary: getEnv("SERVER_BIN", filepath.Join(binDir, "nqserver")),
+		clientDir:    getEnv("CLIENT_DIR", "/app/bin/nqwasm"),
+		corsOrigin:   getEnv("CORS_ALLOWED_ORIGIN", ""),
 		debugStartup: getEnv("DEBUG_STARTUP", "") == "1",
 	}
 }
@@ -140,7 +139,7 @@ func handleCLI(args []string) (handled bool, exitCode int) {
 		return true, 0
 	case "--healthcheck", "healthcheck":
 		// Used by Docker/compose healthchecks. Do not require curl/wget/bash in the image.
-		httpPort := getEnv("HTTP_PORT", "7071")
+		httpPort := getEnv("HTTP_PORT", "1337")
 		if err := runHealthcheck(httpPort); err != nil {
 			fmt.Fprintf(os.Stderr, "healthcheck: %v\n", err)
 			return true, 1

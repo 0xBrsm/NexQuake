@@ -53,16 +53,16 @@ func (m *ServerManager) ServerCount() int { return len(m.servers) }
 
 func (m *ServerManager) StartAll() error {
 	if m.serverBinary == "" {
-		return fmt.Errorf("SERVER_BINARY is empty")
+		return fmt.Errorf("SERVER_BIN is empty")
 	}
 	if _, err := os.Stat(m.serverBinary); err != nil {
-		return fmt.Errorf("SERVER_BINARY not found: %s", m.serverBinary)
+		return fmt.Errorf("SERVER_BIN not found: %s", m.serverBinary)
 	}
 	if m.dataDir == "" {
-		return fmt.Errorf("QUAKE_DATA_DIR is empty")
+		return fmt.Errorf("DATA_DIR is empty")
 	}
 	if st, err := os.Stat(m.dataDir); err != nil || !st.IsDir() {
-		return fmt.Errorf("QUAKE_DATA_DIR is not a directory: %s", m.dataDir)
+		return fmt.Errorf("DATA_DIR is not a directory: %s", m.dataDir)
 	}
 	if m.logsDir == "" {
 		return fmt.Errorf("LOGS_DIR is empty")

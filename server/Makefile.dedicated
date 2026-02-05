@@ -1,21 +1,51 @@
 #
 # NetQuake Server Makefile (Full build, can run as dedicated server with -dedicated flag)
 #
-# Default build is 32-bit to avoid 64-bit-only engine quirks (and the extra patching those require).
+# Prefer "native" builds for the target container/userland.
+#
+# Notes:
+# - In containers, `uname -m` reports the host kernel arch (often aarch64 on Pi),
+#   which is NOT what you want to key compilation decisions off of.
+# - Use the compiler target triple when available to infer the userland/toolchain.
 #
 
-# Target architecture label (used for output directory naming and CI artifact naming).
-ARCH ?= $(shell uname -m)
+# Toolchain (can be native in a container, or a cross-compiler).
+CC ?= cc
 
-# Target bitness: 32 or 64.
-BITS ?= 32
+# Toolchain identity (more reliable than uname -m in containers).
+CC_MACHINE := $(shell $(CC) -dumpmachine 2>/dev/null || echo unknown)
+
+# Target container/userland platform (optional; Docker-style).
+# Examples: linux/arm/v7, linux/arm64, linux/386, linux/amd64
+PLATFORM ?=
+
+# Toolchain family hints.
+IS_ARMHF_TOOLCHAIN := $(findstring gnueabihf,$(CC_MACHINE))
+IS_I386_TOOLCHAIN := $(shell echo "$(CC_MACHINE)" | grep -E '(^|-)i[3-6]86(-|$$)' >/dev/null 2>&1 && echo yes)
+IS_X86_64_TOOLCHAIN := $(findstring x86_64,$(CC_MACHINE))
+
+# Target architecture label (used for output directory naming and artifact naming).
+ifeq ($(origin ARCH), undefined)
+  ifneq (,$(findstring aarch64,$(CC_MACHINE)))
+    ARCH := aarch64
+  else ifneq (,$(IS_ARMHF_TOOLCHAIN))
+    ARCH := armv7
+  else ifneq (,$(IS_X86_64_TOOLCHAIN))
+    ARCH := x86_64
+  else ifneq (,$(IS_I386_TOOLCHAIN))
+    ARCH := i386
+  else
+    ARCH := $(shell uname -m)
+  endif
+endif
+
+# Target bitness: 32, 64, or "auto".
+BITS ?= auto
 
 # Target ABI for 32-bit builds:
-# - x32   (runs on amd64; 32-bit pointers on x86_64)
-# - armhf (runs on arm64 with armhf compatibility)
+# - armhf (linux/arm/v7)
+# - i386  (linux/386)
 TARGET ?=
-
-CC ?=
 # IDGODS enables the privilege system (please command, IsID() check)
 BASE_CFLAGS = -Dstricmp=strcasecmp -fcommon -no-pie -DNO_X86_ASM=1 -Did386=0 -fno-strict-aliasing -DIDGODS
 RELEASE_CFLAGS = $(BASE_CFLAGS) -O3 -Wall
@@ -27,38 +57,78 @@ ifneq ($(strip $(STATIC)),)
   LDFLAGS += -static
 endif
 
+# If PLATFORM is set, use it to infer defaults (unless explicitly overridden).
+ifneq ($(strip $(PLATFORM)),)
+  ifeq ($(BITS),auto)
+    ifeq ($(PLATFORM),linux/arm/v7)
+      override BITS := 32
+      override TARGET := armhf
+    else ifeq ($(PLATFORM),linux/386)
+      override BITS := 32
+      override TARGET := i386
+    else ifeq ($(PLATFORM),linux/arm64)
+      override BITS := 64
+    else ifeq ($(PLATFORM),linux/amd64)
+      override BITS := 64
+    else
+      $(error Unsupported PLATFORM: $(PLATFORM). Use linux/arm/v7|linux/arm64|linux/386|linux/amd64)
+    endif
+  endif
+endif
+
+ifeq ($(BITS),auto)
+  # If TARGET is specified, treat that as an explicit hint.
+  ifeq ($(TARGET),armhf)
+    override BITS := 32
+  else ifeq ($(TARGET),i386)
+    override BITS := 32
+  # Otherwise infer from the toolchain.
+  else ifneq (,$(IS_ARMHF_TOOLCHAIN))
+    override BITS := 32
+    override TARGET := armhf
+  else ifneq (,$(IS_I386_TOOLCHAIN))
+    override BITS := 32
+    override TARGET := i386
+  else
+    override BITS := 64
+  endif
+endif
+
 ifeq ($(BITS),32)
   ifeq ($(strip $(TARGET)),)
-    ifeq ($(ARCH),x86_64)
-      TARGET := x32
-    else ifeq ($(ARCH),aarch64)
+    ifneq (,$(IS_ARMHF_TOOLCHAIN))
       TARGET := armhf
+    else ifneq (,$(IS_I386_TOOLCHAIN))
+      TARGET := i386
     else
-      $(error Unsupported ARCH for BITS=32: $(ARCH). Set TARGET=x32 or TARGET=armhf explicitly.)
+      $(error BITS=32 requires TARGET=armhf or TARGET=i386)
     endif
   endif
 
-  ifeq ($(TARGET),x32)
-    ifeq ($(strip $(CC)),)
-      CC := gcc
+  ifeq ($(TARGET),armhf)
+    # armhf build:
+    # - native (recommended): run `make` inside a linux/arm/v7 container or armhf OS
+    #   (CC_MACHINE contains gnueabihf, CC=gcc works)
+    # - cross: set CC=arm-linux-gnueabihf-gcc
+    ifeq (,$(IS_ARMHF_TOOLCHAIN))
+      $(error TARGET=armhf requires an armhf toolchain (CC_MACHINE=$(CC_MACHINE)). Run inside a linux/arm/v7 container or set CC=arm-linux-gnueabihf-gcc.)
     endif
-    BASE_CFLAGS += -mx32
-    LDFLAGS += -mx32
-  else ifeq ($(TARGET),armhf)
-    ifeq ($(strip $(CC)),)
-      CC := arm-linux-gnueabihf-gcc
-    endif
+
     BASE_CFLAGS += -march=armv7-a -mfloat-abi=hard -mfpu=vfpv3-d16
+  else ifeq ($(TARGET),i386)
+    # i386 build:
+    # - native (recommended): run `make` inside a linux/386 container or i386 OS
+    # - multilib: on x86_64 hosts, gcc -m32 works when 32-bit libs are installed
+    ifneq (,$(IS_X86_64_TOOLCHAIN))
+      BASE_CFLAGS += -m32
+      LDFLAGS += -m32
+    endif
   else
-    $(error Unsupported TARGET for BITS=32: $(TARGET). Use TARGET=x32 or TARGET=armhf.)
+    $(error Unsupported TARGET for BITS=32: $(TARGET). Use TARGET=armhf or TARGET=i386, or set BITS=64.)
   endif
 endif
 
-ifeq ($(strip $(CC)),)
-  CC := gcc
-endif
-
-BUILD_DIR = build-netquake-$(ARCH)
+BUILD_DIR = build-netquake-$(ARCH)-$(BITS)$(if $(strip $(TARGET)),-$(TARGET),)
 
 # Use release flags by default
 CFLAGS=$(RELEASE_CFLAGS)
@@ -164,4 +234,9 @@ info:
 	@echo "Architecture: $(ARCH)"
 	@echo "Build directory: $(BUILD_DIR)"
 	@echo "Compiler: $(CC)"
+	@echo "CC machine: $(CC_MACHINE)"
+	@echo "PLATFORM: $(PLATFORM)"
+	@echo "BITS: $(BITS)"
+	@echo "TARGET: $(TARGET)"
 	@echo "Flags: $(CFLAGS)"
+	@echo "LDFlags: $(LDFLAGS)"

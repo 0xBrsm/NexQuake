@@ -22,7 +22,7 @@ func TestBootstrapGameData_Smoke(t *testing.T) {
 	}
 
 	dataDir := t.TempDir()
-	cfgPath := filepath.Join(t.TempDir(), "gamedata.json")
+	cfgPath := filepath.Join(dataDir, "minimal.json")
 
 	if err := os.WriteFile(cfgPath, []byte(`[
   {
@@ -36,7 +36,7 @@ func TestBootstrapGameData_Smoke(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("GAMEDATA_PATH", cfgPath)
+	t.Setenv("QUICKSTART", "minimal")
 
 	if err := bootstrapGameData(context.Background(), dataDir); err != nil {
 		t.Fatalf("bootstrapGameData: %v", err)

@@ -33,13 +33,16 @@
  
  	if (! slistSilent)
  	{
-@@ -312,7 +317,7 @@
+@@ -312,7 +317,10 @@
  }
  
  
 -static void Slist_Send(void)
 +static void Slist_Send(void *unused)
  {
++	if (!slistInProgress || slist_agg_done)
++		return;
++
  	for (net_driverlevel=0; net_driverlevel < net_numdrivers; net_driverlevel++)
  	{
 @@ -323,12 +328,12 @@

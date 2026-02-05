@@ -141,16 +141,19 @@ func TestBuildVFSManifest_PakOrderWithinLayer(t *testing.T) {
 	}
 }
 
-func TestListMods_AllDirectoriesAreMods(t *testing.T) {
+func TestListMods_RequiresLayerDirectories(t *testing.T) {
 	dataDir := t.TempDir()
 
-	if err := os.MkdirAll(filepath.Join(dataDir, "id1"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dataDir, "id1", "common"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(dataDir, "mod2"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dataDir, "mod2", "server"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(dataDir, ".hidden"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dataDir, "junk"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dataDir, ".hidden", "common"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 
@@ -161,6 +164,9 @@ func TestListMods_AllDirectoriesAreMods(t *testing.T) {
 
 	if !slices.Contains(mods, "id1") || !slices.Contains(mods, "mod2") {
 		t.Fatalf("expected id1 and mod2, got %v", mods)
+	}
+	if slices.Contains(mods, "junk") {
+		t.Fatalf("did not expect junk dir, got %v", mods)
 	}
 	if slices.Contains(mods, ".hidden") {
 		t.Fatalf("did not expect hidden dir, got %v", mods)

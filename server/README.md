@@ -33,24 +33,36 @@ git clone --depth 1 https://github.com/id-Software/Quake.git
 cd Quake/WinQuake
 
 # Copy overlay
-cp /path/to/src/server/Makefile.dedicated .
+cp /path/to/server/Makefile.dedicated .
 
 # Apply patches
-patch -p0 < /path/to/src/server/net_udp.c.patch
-patch -p0 < /path/to/src/server/common.c.patch
+patch -p0 < /path/to/server/net_udp.c.patch
+patch -p0 < /path/to/server/common.c.patch
 
 # Append stub to sys_linux.c
-cat /path/to/src/server/sys_linux_stub.c >> sys_linux.c
+cat /path/to/server/sys_linux_stub.c >> sys_linux.c
 
 # Build
-make -f Makefile.dedicated BITS=32                         # amd64 -> x32 binary (32-bit pointers on x86_64)
-CC=arm-linux-gnueabihf-gcc ARCH=aarch64 make -f Makefile.dedicated BITS=32  # arm64 -> 32-bit armhf binary
+make -f Makefile.dedicated                                 # defaults to BITS=64 on typical toolchains
+
+# Optional: drive the defaults via Docker-style platform strings
+# (requires a matching toolchain/container)
+PLATFORM=linux/arm/v7 make -f Makefile.dedicated            # implies BITS=32 TARGET=armhf
+PLATFORM=linux/386 make -f Makefile.dedicated               # implies BITS=32 TARGET=i386
+PLATFORM=linux/arm64 make -f Makefile.dedicated             # implies BITS=64
+PLATFORM=linux/amd64 make -f Makefile.dedicated             # implies BITS=64
+
+# Native 32-bit armhf build (recommended: run in a linux/arm/v7 container or armhf OS)
+make -f Makefile.dedicated BITS=32 TARGET=armhf
+
+# Native 32-bit i386 build (recommended: run in a linux/386 container or i386 OS)
+make -f Makefile.dedicated BITS=32 TARGET=i386
 
 # Optional: 64-bit build (requires extra patches)
-patch -p0 < /path/to/src/server/64bit/net_dgrm.c.64bit.patch
-patch -p0 < /path/to/src/server/64bit/pr_cmds.c.64bit.patch
-patch -p0 < /path/to/src/server/64bit/host_cmd.c.64bit.patch
-patch -p0 < /path/to/src/server/64bit/sv_main.c.64bit.patch
+patch -p0 < /path/to/server/64bit/net_dgrm.c.64bit.patch
+patch -p0 < /path/to/server/64bit/pr_cmds.c.64bit.patch
+patch -p0 < /path/to/server/64bit/host_cmd.c.64bit.patch
+patch -p0 < /path/to/server/64bit/sv_main.c.64bit.patch
 make -f Makefile.dedicated BITS=64
 ```
 
@@ -72,6 +84,6 @@ This builds **NetQuake** (original protocol):
 
 ## Architecture Support
 
-- amd64 hosts: outputs an x32 server binary (32-bit pointers on x86_64)
-- arm64 hosts: outputs a 32-bit armhf server binary
-- Any architecture with GCC (pure C, no assembly)
+- arm/v7: supports native 32-bit armhf builds (`BITS=32 TARGET=armhf`)
+- linux/386: supports native 32-bit i386 builds (`BITS=32 TARGET=i386`)
+- amd64/arm64: defaults to 64-bit builds; use 32-bit only in a matching 32-bit userland/container

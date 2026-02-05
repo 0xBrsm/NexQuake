@@ -158,15 +158,17 @@ func addCORSHeaders(h http.Handler, allowedOrigin string) http.Handler {
 		w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
 		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 
-		// Standard CORS headers (configurable via environment)
-		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		// Standard CORS headers (optional; only needed for cross-origin deployments).
+		if allowedOrigin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
-		// Handle preflight
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
+			// Handle preflight
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
 		}
 
 		h.ServeHTTP(w, r)

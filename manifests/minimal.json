@@ -1,0 +1,7 @@
+[
+  {
+    "game": "id1",
+    "common": ["https://github.com/brstm/QuakeMods/raw/refs/heads/main/NetQuake/quake106.zip",
+                "https://github.com/brstm/QuakeMods/raw/refs/heads/main/NetQuake/lq-pak1.zip"]
+  }
+]

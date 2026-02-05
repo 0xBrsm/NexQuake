@@ -264,7 +264,7 @@ func escapeURLPathPreserveSlashes(p string) string {
 func listMods(dataDir string) ([]string, error) {
 	ents, err := os.ReadDir(dataDir)
 	if err != nil {
-		return nil, fmt.Errorf("read QUAKE_DATA_DIR: %w", err)
+		return nil, fmt.Errorf("read DATA_DIR: %w", err)
 	}
 
 	var mods []string
@@ -276,15 +276,31 @@ func listMods(dataDir string) ([]string, error) {
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
+		// Only treat directories as "mods" if they have at least one layer directory.
+		// This avoids starting bogus servers for junk directories (or for a user who
+		// accidentally bind-mounted a single mod dir as DATA_DIR).
+		if !dirHasAnyLayer(filepath.Join(dataDir, name)) {
+			continue
+		}
 		mods = append(mods, name)
 	}
 	return mods, nil
 }
 
+func dirHasAnyLayer(modDir string) bool {
+	for _, layer := range []string{"common", "client", "server"} {
+		st, err := os.Stat(filepath.Join(modDir, layer))
+		if err == nil && st.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
 func prepareRuntimeBasedir(sourceDataDir string, mods []string) (string, error) {
-	// /data is typically bind-mounted read-only. nqserver expects a writable basedir
+	// The data dir is typically bind-mounted read-only. nqserver expects a writable basedir
 	// containing per-mod directories; create an ephemeral overlay basedir and
-	// populate it with symlinks into QUAKE_DATA_DIR (and allow the server to write
+	// populate it with symlinks into DATA_DIR (and allow the server to write
 	// transient files alongside).
 	runtimeRoot, err := os.MkdirTemp("", "nexquake-nexus-basedir-")
 	if err != nil {

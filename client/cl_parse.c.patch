@@ -11,6 +11,20 @@
  char *svc_strings[] =
  {
  	"svc_bad",
+@@ -172,8 +176,11 @@
+ 		case 1:
+ 			Host_Error ("CL_KeepaliveMessage: received a message");
+ 			break;
+ 		case 2:
+-			if (MSG_ReadByte() != svc_nop)
++			// Use direct indexing instead of MSG_ReadByte(). CL_KeepaliveMessage()
++			// is called while parsing other messages (e.g., serverinfo precache),
++			// so msg_readcount may not be zero.
++			if (net_message.cursize > 0 && net_message.data[0] != svc_nop)
+-				Host_Error ("CL_KeepaliveMessage: datagram wasn't a nop");
++				Con_DPrintf ("CL_KeepaliveMessage: ignoring datagram type %d (%d bytes)\n", net_message.data[0], net_message.cursize);
+ 			break;
+ 		}
 @@ -284,7 +288,55 @@
  		S_TouchSound (str);
  	}
