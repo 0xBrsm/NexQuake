@@ -6,54 +6,10 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"sync"
 	"syscall"
 
 	"github.com/gorilla/websocket"
 )
-
-type clientIPAllocator struct {
-	mu   sync.Mutex
-	next byte
-	used [256]bool
-}
-
-func newClientIPAllocator() *clientIPAllocator {
-	a := &clientIPAllocator{next: firstClientHostOct}
-	// Reserve 0 (network).
-	a.used[0] = true
-	return a
-}
-
-func (a *clientIPAllocator) alloc() (byte, bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	for i := 0; i < int(lastClientHostOct-firstClientHostOct+1); i++ {
-		if a.next < firstClientHostOct || a.next > lastClientHostOct {
-			a.next = firstClientHostOct
-		}
-		oct := a.next
-		a.next++
-		if !a.used[oct] {
-			a.used[oct] = true
-			return oct, true
-		}
-	}
-	return 0, false
-}
-
-func (a *clientIPAllocator) release(oct byte) {
-	if oct == 0 {
-		return
-	}
-	a.mu.Lock()
-	a.used[oct] = false
-	a.mu.Unlock()
-}
-
-var globalClientIPs = newClientIPAllocator()
-var globalAdminIPs = newClientIPAllocator()
 
 // UDPRelay handles bidirectional relay between WebSocket client and UDP server
 type UDPRelay struct {
@@ -63,7 +19,8 @@ type UDPRelay struct {
 	cancel         context.CancelFunc
 	serverToClient chan []byte
 	clientToServer chan []byte
-	clientIPOctet  byte
+	clientIPv4     [4]byte
+	adminOctet     byte
 	isAdmin        bool // true if using admin subnet (127.13.37.x)
 }
 
@@ -72,34 +29,17 @@ type UDPRelay struct {
 func NewUDPRelay(client *ClientConnection, isAdmin bool) (*UDPRelay, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Select allocator and subnet based on admin status.
-	var allocator *clientIPAllocator
-	var subnetA, subnetB, subnetC byte
-	if isAdmin {
-		allocator = globalAdminIPs
-		subnetA, subnetB, subnetC = subnetAdminsA, subnetAdminsB, subnetAdminsC
-	} else {
-		allocator = globalClientIPs
-		subnetA, subnetB, subnetC = subnetClientsA, subnetClientsB, subnetClientsC
-	}
-
-	oct, ok := allocator.alloc()
-	if !ok {
+	clientIPv4, adminOctet, err := allocateRelaySourceIPv4(client, isAdmin)
+	if err != nil {
 		cancel()
-		if isAdmin {
-			return nil, fmt.Errorf("failed to allocate admin IP (max 254 concurrent admins)")
-		}
-		return nil, fmt.Errorf("failed to allocate client IP (max 254 concurrent clients)")
+		return nil, err
 	}
 
-	listenAddr := &net.UDPAddr{
-		IP:   net.IPv4(subnetA, subnetB, subnetC, oct).To4(),
-		Port: 0,
-	}
+	listenAddr := relayListenAddr(clientIPv4)
 
 	udpConn, err := net.ListenUDP("udp4", listenAddr)
 	if err != nil {
-		allocator.release(oct)
+		releaseRelaySourceIPv4(isAdmin, clientIPv4, adminOctet)
 		cancel()
 		return nil, fmt.Errorf("failed to create UDP connection: %w", err)
 	}
@@ -111,7 +51,8 @@ func NewUDPRelay(client *ClientConnection, isAdmin bool) (*UDPRelay, error) {
 		cancel:         cancel,
 		serverToClient: make(chan []byte, 1024),
 		clientToServer: make(chan []byte, 1024),
-		clientIPOctet:  oct,
+		clientIPv4:     clientIPv4,
+		adminOctet:     adminOctet,
 		isAdmin:        isAdmin,
 	}
 
@@ -129,14 +70,9 @@ func (r *UDPRelay) Start() {
 func (r *UDPRelay) Stop() {
 	r.cancel()
 	_ = r.udpConn.Close()
-	if r.clientIPOctet != 0 {
-		if r.isAdmin {
-			globalAdminIPs.release(r.clientIPOctet)
-		} else {
-			globalClientIPs.release(r.clientIPOctet)
-		}
-		r.clientIPOctet = 0
-	}
+	releaseRelaySourceIPv4(r.isAdmin, r.clientIPv4, r.adminOctet)
+	r.clientIPv4 = [4]byte{}
+	r.adminOctet = 0
 }
 
 // SendToServer queues a packet to be sent to the UDP server
@@ -187,19 +123,9 @@ func (r *UDPRelay) udpReader() {
 
 		packet := buffer[:n]
 
-		// Extract server ID from source IP (127.255.255.x).
-		serverID := byte(0)
-		srcPort := 0
-		if udpAddr, ok := remoteSrcAddr.(*net.UDPAddr); ok && udpAddr.IP != nil {
-			if ip4 := udpAddr.IP.To4(); ip4 != nil && ip4[0] == subnetServersA && ip4[1] == subnetServersB && ip4[2] == subnetServersC {
-				serverID = ip4[3]
-			}
-			srcPort = udpAddr.Port
-		}
-		if serverID == 0 {
-			continue
-		}
-		if srcPort <= 0 || srcPort > 65535 {
+		// Extract server route from source address.
+		serverID, srcPort, ok := serverRouteFromAddr(remoteSrcAddr)
+		if !ok || serverID == 0 {
 			continue
 		}
 
@@ -264,9 +190,9 @@ func (r *UDPRelay) udpWriter() {
 			}
 
 			// Control-plane handling for Quake's LAN server discovery.
-			// `slist` broadcasts a connectionless CCREQ_SERVER_INFO. Reply
-			// immediately from the nexus polled cache, as a single aggregated
-			// packet to avoid timing/polling flakiness in the client.
+				// `slist` broadcasts a connectionless CCREQ_SERVER_INFO. Reply
+				// immediately from the nexus polled cache as a single aggregated
+				// packet (encoded under CCREP_SERVER_INFO).
 			if routingByte == 0xFF {
 				if globalServerInfoCache != nil && isCCREQServerInfo(payload) {
 					listPayload, _ := buildCCREPServerList(globalServerInfoCache.SnapshotForSlist())
@@ -288,10 +214,7 @@ func (r *UDPRelay) udpWriter() {
 			}
 
 			writeTo := func(serverID byte) {
-				dst := &net.UDPAddr{
-					IP:   net.IPv4(subnetServersA, subnetServersB, subnetServersC, serverID).To4(),
-					Port: dstPort,
-				}
+				dst := serverUDPAddr(serverID, dstPort)
 
 				if debugRelay && debugSeen < 25 {
 					debugf("DEBUG_RELAY\tudp->server\tdst=%s\tserver_id=%d\tlen=%d\tbytes=% x",

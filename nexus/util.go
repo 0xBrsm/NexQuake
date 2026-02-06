@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -95,6 +96,19 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
+func getEnvIntMin(key string, defaultValue, minValue int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return defaultValue
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < minValue {
+		log.Printf("Invalid %s=%q (expected integer >= %d); using %d", key, raw, minValue, defaultValue)
+		return defaultValue
+	}
+	return value
+}
+
 func fileExists(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && !st.IsDir()
@@ -163,6 +177,7 @@ func addCORSHeaders(h http.Handler, allowedOrigin string) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Access-Control-Expose-Headers", "X-NQ-VFS-Prefetch-Concurrency")
 
 			// Handle preflight
 			if r.Method == "OPTIONS" {

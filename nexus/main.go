@@ -49,6 +49,9 @@ func main() {
 	if err := serverMgr.StartAll(); err != nil {
 		log.Fatalf("Failed to start servers: %v", err)
 	}
+	ConfigureInfraSubnet(serverMgr.ServerCount())
+	infof("Infra subnet configured: %d.%d.%d.0/24 (nexus=.0 servers=1..%d admins descending from .255)",
+		subnetNexusA, subnetNexusB, subnetNexusC, serverMgr.ServerCount())
 
 	// Start the nexus-managed server info cache (used for Quake's `slist`).
 	globalServerInfoCache = NewServerInfoCache(serverMgr.ServerCount())
@@ -98,25 +101,27 @@ func main() {
 }
 
 type runtimeConfig struct {
-	httpPort     string
-	dataDir      string
-	logsDir      string
-	serverBinary string
-	clientDir    string
-	corsOrigin   string
-	debugStartup bool
+	httpPort               string
+	dataDir                string
+	logsDir                string
+	serverBinary           string
+	clientDir              string
+	corsOrigin             string
+	debugStartup           bool
+	vfsPrefetchConcurrency int
 }
 
 func loadRuntimeConfig() runtimeConfig {
 	binDir := getEnv("BIN_DIR", "/app/bin")
 	return runtimeConfig{
-		httpPort:     getEnv("HTTP_PORT", "1337"),
-		dataDir:      getEnv("DATA_DIR", "/app/data"),
-		logsDir:      getEnv("LOGS_DIR", "/app/logs"),
-		serverBinary: getEnv("SERVER_BIN", filepath.Join(binDir, "nqserver")),
-		clientDir:    getEnv("CLIENT_DIR", "/app/bin/nqwasm"),
-		corsOrigin:   getEnv("CORS_ALLOWED_ORIGIN", ""),
-		debugStartup: getEnv("DEBUG_STARTUP", "") == "1",
+		httpPort:               getEnv("HTTP_PORT", "1337"),
+		dataDir:                getEnv("DATA_DIR", "/app/data"),
+		logsDir:                getEnv("LOGS_DIR", "/app/logs"),
+		serverBinary:           getEnv("SERVER_BIN", filepath.Join(binDir, "nqserver")),
+		clientDir:              getEnv("CLIENT_DIR", "/app/bin/nqwasm"),
+		corsOrigin:             getEnv("CORS_ALLOWED_ORIGIN", ""),
+		debugStartup:           getEnv("DEBUG_STARTUP", "") == "1",
+		vfsPrefetchConcurrency: getEnvIntMin("CLIENT_BATCH_SIZE", 16, 1),
 	}
 }
 
@@ -208,7 +213,7 @@ func newMux(cfg runtimeConfig, pakCache *pakIndexCache) *http.ServeMux {
 
 	// Serve game data files - shared between WASM client and servers.
 	// /data-manifest/<mod> returns a virtualized manifest from common+client layers (with PAK exploding).
-	mux.Handle("/data-manifest/", addCORSHeaders(http.HandlerFunc(newDataManifestHandler(cfg.dataDir, pakCache)), cfg.corsOrigin))
+	mux.Handle("/data-manifest/", addCORSHeaders(http.HandlerFunc(newDataManifestHandler(cfg.dataDir, pakCache, cfg.vfsPrefetchConcurrency)), cfg.corsOrigin))
 	mux.Handle("/pak-extract/", addCORSHeaders(http.HandlerFunc(newPakExtractHandler(cfg.dataDir, pakCache)), cfg.corsOrigin))
 
 	dataFS := http.FileServerFS(os.DirFS(cfg.dataDir))

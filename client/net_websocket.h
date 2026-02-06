@@ -1,7 +1,11 @@
 /*
-Added by initialed85
-*/
-// net_websocket.h
+ * net_websocket.h
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
+ * This module includes derivative work from
+ * upstream websocket networking implementations by initialed85.
+ * See ../ATTRIBUTIONS.md for upstream repositories, paths, and pinned commits.
+ */
 
 int  WebSocket_Init (void);
 void WebSocket_Shutdown (void);

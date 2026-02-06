@@ -23,7 +23,9 @@ type VFSManifestEntry struct {
 	Size int64  `json:"size,omitempty"`
 }
 
-func newDataManifestHandler(dataDir string, pakCache *pakIndexCache) http.HandlerFunc {
+const headerVFSPrefetchConcurrency = "X-NQ-VFS-Prefetch-Concurrency"
+
+func newDataManifestHandler(dataDir string, pakCache *pakIndexCache, prefetchConcurrency int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -52,6 +54,7 @@ func newDataManifestHandler(dataDir string, pakCache *pakIndexCache) http.Handle
 		}
 
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerVFSPrefetchConcurrency, strconv.Itoa(prefetchConcurrency))
 		_ = json.NewEncoder(w).Encode(manifest)
 	}
 }

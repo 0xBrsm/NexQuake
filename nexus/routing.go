@@ -7,30 +7,26 @@ import (
 )
 
 const (
-	subnetClientsA = 127
-	subnetClientsB = 1
-	subnetClientsC = 1
-
 	defaultServerPort = 26000
 
-	// Reserved for future "admin" control plane.
+	// Reserved infra subnet:
+	// - nexus uses .0
+	// - dedicated servers use .1..N
+	// - admin relays are allocated from .255 downward
 	subnetAdminsA = 127
 	subnetAdminsB = 13
 	subnetAdminsC = 37
 
-	// Dedicated servers (one per mod dir).
+	// Dedicated servers share the same infra subnet.
 	subnetServersA = 127
-	subnetServersB = 255
-	subnetServersC = 255
+	subnetServersB = 13
+	subnetServersC = 37
 
-	// Nexus/orchestration entities (pollers, future agents).
+	// Nexus/orchestration entities live in the same infra subnet.
 	subnetNexusA       = 127
-	subnetNexusB       = 127
-	subnetNexusC       = 127
-	nexusPollerHostOct = 127
-
-	firstClientHostOct = 1
-	lastClientHostOct  = 254
+	subnetNexusB       = 13
+	subnetNexusC       = 37
+	nexusPollerHostOct = 0
 
 	wsRoutingHeaderSize  = 3
 	wsRoutingBroadcastID = 0xFF
@@ -44,7 +40,6 @@ const (
 
 	ccreqServerInfo byte = 0x02
 	ccrepServerInfo byte = 0x83
-	ccrepServerList byte = 0x86 // NexQuake extension: aggregated server list for slist
 )
 
 // Quake constants (see quakedef.h/net.h):
@@ -92,16 +87,16 @@ func buildCCREPServerList(entries []struct {
 }) ([]byte, int) {
 	// Format:
 	//   u32 control header (NETFLAG_CTL | length)
-	//   u8  CCREP_SERVER_LIST (0x86)
+	//   u8  CCREP_SERVER_INFO (0x83) - overloaded for nexus aggregated list mode
 	//   u8  count
 	//   repeated entries:
-	//     cstring server_address (e.g. "127.255.255.1:26000")
+	//     cstring server_address (e.g. "127.13.37.1:26000")
 	//     cstring host_name (<= 15 chars recommended)
 	//     cstring level_name (<= 15 chars recommended)
 	//     u8 players, u8 maxPlayers, u8 protocol_version
 	buf := make([]byte, 0, 512)
 	buf = append(buf, 0, 0, 0, 0) // placeholder header
-	buf = append(buf, ccrepServerList)
+	buf = append(buf, ccrepServerInfo)
 	countIndex := len(buf)
 	buf = append(buf, 0) // count placeholder
 

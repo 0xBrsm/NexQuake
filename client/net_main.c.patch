@@ -92,3 +92,24 @@
  
  	if (host == NULL)
  	{
+@@ -958,7 +980,20 @@
+ void SchedulePollProcedure(PollProcedure *proc, double timeOffset)
+ {
+ 	PollProcedure *pp, *prev;
+ 
++	// Ensure a poll procedure is scheduled at most once at a time.
++	// Re-scheduling an existing node can corrupt the linked list.
++	for (pp = pollProcedureList, prev = NULL; pp; prev = pp, pp = pp->next)
++	{
++		if (pp != proc)
++			continue;
++		if (prev == NULL)
++			pollProcedureList = pp->next;
++		else
++			prev->next = pp->next;
++		break;
++	}
++
+ 	proc->nextTime = Sys_FloatTime() + timeOffset;
+ 	for (pp = pollProcedureList, prev = NULL; pp; pp = pp->next)
+ 	{

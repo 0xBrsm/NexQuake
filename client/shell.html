@@ -288,6 +288,14 @@
           // Module.nexquakePrefetchBusy to become 0.
           Module.nexquakePrefetchQueue = Module.nexquakePrefetchQueue || [];
           Module.nexquakePrefetchBusy = 0;
+          Module.nexquakePrefetchConcurrency = Module.nexquakePrefetchConcurrency || 16;
+
+          function parsePositiveInt(value, fallback) {
+            var n = Number(value);
+            if (!Number.isFinite(n)) return fallback;
+            n = Math.floor(n);
+            return n >= 1 ? n : fallback;
+          }
 
           Module.nexquakePrefetchReset = function() {
             Module.nexquakePrefetchQueue = [];
@@ -312,7 +320,7 @@
           }
 
           async function prefetchMany(paths, concurrency) {
-            concurrency = Math.max(1, Math.min(16, Number(concurrency || 6)));
+            concurrency = parsePositiveInt(concurrency, Module.nexquakePrefetchConcurrency);
             var uniq = Object.create(null);
             var queue = [];
             for (var i = 0; i < paths.length; i++) {
@@ -346,7 +354,7 @@
             Module.nexquakePrefetchQueue = [];
             if (!list.length) return;
             Module.nexquakePrefetchBusy = 1;
-            prefetchMany(list, 6)
+            prefetchMany(list, Module.nexquakePrefetchConcurrency)
               .finally(function() { Module.nexquakePrefetchBusy = 0; });
           };
 
@@ -357,6 +365,10 @@
           function fetchManifest() {
             return fetch('/data-manifest/id1').then(function(response) {
               if (!response.ok) throw new Error('manifest fetch failed: ' + response.status);
+              var prefetch = response.headers.get('X-NQ-VFS-Prefetch-Concurrency');
+              if (prefetch !== null) {
+                Module.nexquakePrefetchConcurrency = parsePositiveInt(prefetch, Module.nexquakePrefetchConcurrency);
+              }
               return response.json();
             });
           }

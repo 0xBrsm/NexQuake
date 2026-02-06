@@ -19,16 +19,18 @@ var upgrader = websocket.Upgrader{
 
 // ClientConnection represents a browser WebSocket connection.
 type ClientConnection struct {
-	conn     *websocket.Conn
-	udpRelay *UDPRelay
-	mu       sync.Mutex
-	done     chan struct{}
+	conn      *websocket.Conn
+	udpRelay  *UDPRelay
+	sourceKey string
+	mu        sync.Mutex
+	done      chan struct{}
 }
 
 // handleWebSocket upgrades HTTP to WebSocket and manages the connection
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Check admin status before upgrading (auth headers are available here)
 	isAdmin := IsAdmin(r)
+	sourceKey := resolveClientSourceKey(r)
 
 	// Upgrade connection to WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -38,19 +40,20 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := &ClientConnection{
-		conn: conn,
-		done: make(chan struct{}),
+		conn:      conn,
+		sourceKey: sourceKey,
+		done:      make(chan struct{}),
 	}
 
 	if isAdmin {
-		infof("Admin connected: %s (subprotocol=%q)", conn.RemoteAddr(), conn.Subprotocol())
+		infof("Admin connected: %s (subprotocol=%q source=%q)", conn.RemoteAddr(), conn.Subprotocol(), sourceKey)
 	} else {
-		debugf("Client connected: %s (subprotocol=%q)", conn.RemoteAddr(), conn.Subprotocol())
+		debugf("Client connected: %s (subprotocol=%q source=%q)", conn.RemoteAddr(), conn.Subprotocol(), sourceKey)
 	}
 
 	// Create a UDP relay immediately. Nexus intentionally does not parse
 	// NetQuake datagrams. It reads a small routing header from each WebSocket
-	// frame and forwards the datagram to 127.255.255.<server_id>:<udp_port>.
+	// frame and forwards the datagram to 127.13.37.<server_id>:<udp_port>.
 	// Admin connections use 127.13.37.x subnet for server-side privilege.
 	relay, err := NewUDPRelay(client, isAdmin)
 	if err != nil {

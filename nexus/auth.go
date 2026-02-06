@@ -7,48 +7,36 @@ import (
 	"encoding/base64"
 	"net/http"
 	"os"
-	"slices"
 	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 )
 
-const rconTokenPrefix = "NexQuake:rcon:v1:"
+const rconTokenPrefix = "NQ:rcon:v2|"
+
+const (
+	adminMatchEmail = "email"
+)
 
 var (
 	globalValidator *OIDCValidator
-	rconToken       string // derived from AUTH_RCON_PASSWORD (base64url(sha256(prefix + password)))
+	rconPassword    string // AUTH_RCON_PASSWORD, host-bound token derived per request
 )
 
 type OIDCValidator struct {
-	verifier    *oidc.IDTokenVerifier
-	headerName  string
-	groupsClaim string
-	adminGroup  string
-	adminEmails map[string]struct{}
+	verifier      *oidc.IDTokenVerifier
+	headerName    string
+	adminMatchers map[string][]string
 }
 
 func initAuth() error {
-	rconPassword := strings.TrimSpace(os.Getenv("AUTH_RCON_PASSWORD"))
-	if rconPassword != "" {
-		rconToken = deriveRconToken(rconPassword)
-	}
+	rconPassword = strings.TrimSpace(os.Getenv("AUTH_RCON_PASSWORD"))
 
 	issuer := strings.TrimSpace(os.Getenv("AUTH_ISSUER"))
 	audience := strings.TrimSpace(os.Getenv("AUTH_AUDIENCE"))
 	headerName := strings.TrimSpace(os.Getenv("AUTH_JWT_HEADER"))
-	groupsClaim := strings.TrimSpace(os.Getenv("AUTH_GROUPS_CLAIM"))
-	adminGroup := strings.TrimSpace(os.Getenv("AUTH_ADMIN_GROUP"))
-	emailMap := make(map[string]struct{})
-	if raw := os.Getenv("AUTH_ADMIN_EMAIL"); raw != "" {
-		for _, e := range strings.Split(raw, ",") {
-			if val := strings.TrimSpace(strings.ToLower(e)); val != "" {
-				emailMap[val] = struct{}{}
-			}
-		}
-	}
+	adminMatchers := parseAdminMatchers(os.Getenv("AUTH_ADMIN_ID"))
 
-	// Set up OIDC if configured.
 	if issuer != "" && audience != "" {
 		if headerName == "" {
 			headerName = "Authorization"
@@ -58,28 +46,22 @@ func initAuth() error {
 			return err
 		}
 		globalValidator = &OIDCValidator{
-			verifier:    provider.Verifier(&oidc.Config{ClientID: audience}),
-			headerName:  headerName,
-			groupsClaim: groupsClaim,
-			adminGroup:  adminGroup,
-			adminEmails: emailMap,
+			verifier:      provider.Verifier(&oidc.Config{ClientID: audience}),
+			headerName:    headerName,
+			adminMatchers: adminMatchers,
 		}
 	}
 
-	// Single summary line.
 	var methods []string
-	if rconToken != "" {
+	if rconPassword != "" {
 		methods = append(methods, "rcon_password")
 	}
 	if globalValidator != nil {
-		var idpParts []string
-		if len(emailMap) > 0 {
-			idpParts = append(idpParts, "email")
+		if len(adminMatchers) > 0 {
+			methods = append(methods, "IdP (admin_id)")
+		} else {
+			methods = append(methods, "IdP")
 		}
-		if groupsClaim != "" && adminGroup != "" {
-			idpParts = append(idpParts, "group")
-		}
-		methods = append(methods, "IdP("+strings.Join(idpParts, ", ")+")")
 	}
 	if len(methods) == 0 {
 		infof("Admin access disabled")
@@ -106,8 +88,9 @@ func IsAdmin(r *http.Request) bool {
 	k := requestKey(r)
 
 	// Static shared secret token.
-	if rconToken != "" && k != "" {
-		if subtle.ConstantTimeCompare([]byte(k), []byte(rconToken)) == 1 {
+	if rconPassword != "" && k != "" {
+		expected := deriveRconTokenForHost(rconPassword, canonicalRequestHost(r))
+		if subtle.ConstantTimeCompare([]byte(k), []byte(expected)) == 1 {
 			return true
 		}
 	}
@@ -119,8 +102,19 @@ func IsAdmin(r *http.Request) bool {
 	return false
 }
 
-func deriveRconToken(password string) string {
-	sum := sha256.Sum256([]byte(rconTokenPrefix + password))
+func canonicalRequestHost(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	host := strings.TrimSpace(strings.ToLower(r.Host))
+	if host != "" {
+		return host
+	}
+	return strings.TrimSpace(strings.ToLower(r.URL.Host))
+}
+
+func deriveRconTokenForHost(password, host string) string {
+	sum := sha256.Sum256([]byte(rconTokenPrefix + host + "|" + password))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
@@ -148,34 +142,84 @@ func (v *OIDCValidator) check(r *http.Request) bool {
 		return false
 	}
 
-	if len(v.adminEmails) > 0 {
-		if email, ok := claims["email"].(string); ok {
-			if _, allowed := v.adminEmails[strings.ToLower(email)]; allowed {
+	return matchesAdminMatchers(claims, v.adminMatchers)
+}
+
+func parseAdminMatchers(raw string) map[string][]string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+
+	out := make(map[string][]string)
+	for _, token := range strings.Split(raw, ",") {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			continue
+		}
+
+		key, value, ok := strings.Cut(token, ":")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			continue
+		}
+
+		if strings.EqualFold(key, adminMatchEmail) {
+			key = adminMatchEmail
+			value = strings.ToLower(value)
+		}
+		out[key] = append(out[key], value)
+	}
+	return out
+}
+
+func matchesAdminMatchers(claims map[string]any, matchers map[string][]string) bool {
+	for key, values := range matchers {
+		if strings.EqualFold(key, adminMatchEmail) {
+			email, ok := claims["email"].(string)
+			if ok {
+				email = strings.ToLower(strings.TrimSpace(email))
+				for _, value := range values {
+					if email == strings.ToLower(strings.TrimSpace(value)) {
+						return true
+					}
+				}
+			}
+			continue
+		}
+
+		claimVal := claims[key]
+		for _, value := range values {
+			if containsClaimValue(claimVal, value) {
 				return true
 			}
 		}
 	}
-
-	if v.groupsClaim != "" && v.adminGroup != "" {
-		return containsGroup(claims[v.groupsClaim], v.adminGroup)
-	}
-
 	return false
 }
 
-func containsGroup(val any, target string) bool {
+func containsClaimValue(val any, target string) bool {
 	if val == nil || target == "" {
 		return false
 	}
 	switch v := val.(type) {
 	case []interface{}:
 		for _, item := range v {
-			if s, ok := item.(string); ok && s == target {
+			s, ok := item.(string)
+			if ok && s == target {
 				return true
 			}
 		}
 	case []string:
-		return slices.Contains(v, target)
+		for _, s := range v {
+			if s == target {
+				return true
+			}
+		}
 	case string:
 		return v == target
 	}

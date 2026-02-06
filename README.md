@@ -93,7 +93,7 @@ Nexus (Go HTTP server) serves client files and relays WebSocket connections to U
 
 ## Documentation
 
-- **upstream-ref.txt** - Source provenance and GPL licensing
+- **ATTRIBUTIONS.md** - Source provenance and GPL licensing lineage
 - **AGENTS.md** and `.agents/*` - Deeper implementation notes (architecture, protocol, decisions)
 
 ## Credits
