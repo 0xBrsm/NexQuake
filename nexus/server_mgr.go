@@ -8,7 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"syscall"
 	"time"
@@ -80,7 +80,7 @@ func (m *ServerManager) StartAll() error {
 	}
 
 	// Deterministic ordering makes debugging and server-id assignment stable.
-	sort.Strings(mods)
+	slices.Sort(mods)
 
 	runtimeBasedir, err := prepareRuntimeBasedir(m.dataDir, mods)
 	if err != nil {

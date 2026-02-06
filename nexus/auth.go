@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -174,11 +175,7 @@ func containsGroup(val any, target string) bool {
 			}
 		}
 	case []string:
-		for _, s := range v {
-			if s == target {
-				return true
-			}
-		}
+		return slices.Contains(v, target)
 	case string:
 		return v == target
 	}

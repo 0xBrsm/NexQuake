@@ -166,7 +166,7 @@ func runHealthcheck(httpPort string) error {
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf(resp.Status)
+		return fmt.Errorf("%s", resp.Status)
 	}
 
 	return nil
@@ -192,8 +192,8 @@ func logArtifactFingerprints(cfg runtimeConfig) {
 func newMux(cfg runtimeConfig, pakCache *pakIndexCache) *http.ServeMux {
 	mux := http.NewServeMux()
 
-	// Health check endpoint
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	// Health check endpoint (Go 1.22+ method-based routing)
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		v := currentVersionInfo()
 		w.Header().Set("X-NexQuake-Nexus-GitSHA", v.GitSHA)
 		w.Header().Set("X-NexQuake-Nexus-BuildTime", v.BuildTime)
@@ -202,7 +202,7 @@ func newMux(cfg runtimeConfig, pakCache *pakIndexCache) *http.ServeMux {
 	})
 
 	// WebSocket endpoint for game connections
-	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
 		handleWebSocket(w, r)
 	})
 
@@ -211,11 +211,11 @@ func newMux(cfg runtimeConfig, pakCache *pakIndexCache) *http.ServeMux {
 	mux.Handle("/data-manifest/", addCORSHeaders(http.HandlerFunc(newDataManifestHandler(cfg.dataDir, pakCache)), cfg.corsOrigin))
 	mux.Handle("/pak-extract/", addCORSHeaders(http.HandlerFunc(newPakExtractHandler(cfg.dataDir, pakCache)), cfg.corsOrigin))
 
-	dataFS := http.FileServer(http.Dir(cfg.dataDir))
+	dataFS := http.FileServerFS(os.DirFS(cfg.dataDir))
 	mux.Handle("/data/", addCORSHeaders(contentTypeOverride(http.StripPrefix("/data/", dataFS)), cfg.corsOrigin))
 
 	// Serve client files (WASM, HTML, JS, CSS)
-	clientFS := http.FileServer(http.Dir(cfg.clientDir))
+	clientFS := http.FileServerFS(os.DirFS(cfg.clientDir))
 	mux.Handle("/", addCORSHeaders(contentTypeOverride(cacheControlClient(clientFS)), cfg.corsOrigin))
 
 	return mux

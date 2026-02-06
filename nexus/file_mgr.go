@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -71,7 +72,7 @@ func buildVFSManifest(dataDir, mod string, pakCache *pakIndexCache) ([]VFSManife
 	for _, v := range byKey {
 		out = append(out, v)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	slices.SortFunc(out, func(a, b VFSManifestEntry) int { return cmp.Compare(a.Path, b.Path) })
 	return out, nil
 }
 
@@ -167,16 +168,18 @@ func listLayerPakFiles(root string) ([]string, error) {
 		paks = append(paks, name)
 	}
 
-	sort.Slice(paks, func(i, j int) bool {
-		ai := pakSortKey(paks[i])
-		aj := pakSortKey(paks[j])
-		if ai.group != aj.group {
-			return ai.group < aj.group
+	slices.SortFunc(paks, func(a, b string) int {
+		ak := pakSortKey(a)
+		bk := pakSortKey(b)
+		if c := cmp.Compare(ak.group, bk.group); c != 0 {
+			return c
 		}
-		if ai.group == 0 && ai.num != aj.num {
-			return ai.num < aj.num
+		if ak.group == 0 {
+			if c := cmp.Compare(ak.num, bk.num); c != 0 {
+				return c
+			}
 		}
-		return ai.name < aj.name
+		return cmp.Compare(ak.name, bk.name)
 	})
 
 	return paks, nil

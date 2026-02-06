@@ -4,7 +4,7 @@
 # Builds nexus + dedicated server + WASM client from source (no bind-mounted artifacts).
 
 ARG WOLFI_BASE_IMAGE=cgr.dev/chainguard/wolfi-base:latest
-ARG GOLANG_IMAGE=golang:1.21-alpine
+ARG GOLANG_IMAGE=golang:1.25-alpine
 ARG EMSDK_IMAGE=emscripten/emsdk:5.0.0
 
 FROM ${GOLANG_IMAGE} AS nexus-builder

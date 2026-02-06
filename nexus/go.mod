@@ -1,6 +1,6 @@
 module github.com/brstm/NexQuake/nexus
 
-go 1.21
+go 1.25
 
 require (
 	github.com/coreos/go-oidc/v3 v3.12.0
