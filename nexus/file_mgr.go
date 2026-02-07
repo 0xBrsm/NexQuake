@@ -282,6 +282,9 @@ func listMods(dataDir string) ([]string, error) {
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
+		if !isValidQuakeGameDirName(name) {
+			continue
+		}
 		// Only treat directories as "mods" if they have at least one layer directory.
 		// This avoids starting bogus servers for junk directories (or for a user who
 		// accidentally bind-mounted a single mod dir as DATA_DIR).
@@ -291,6 +294,22 @@ func listMods(dataDir string) ([]string, error) {
 		mods = append(mods, name)
 	}
 	return mods, nil
+}
+
+func isValidQuakeGameDirName(name string) bool {
+	// Quake wire/UI gamedir fields are 15-byte C strings.
+	if len(name) == 0 || len(name) > 15 {
+		return false
+	}
+	// Keep Linux filename semantics from os.ReadDir; only reject control bytes
+	// that can break protocol/logging.
+	for i := 0; i < len(name); i++ {
+		b := name[i]
+		if b < 0x20 || b == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func dirHasAnyLayer(modDir string) bool {

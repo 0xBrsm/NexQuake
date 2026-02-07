@@ -89,6 +89,9 @@ if [[ "${kind}" == "client" ]]; then
   cp "${ROOT}/client/Makefile.emscripten" "${ROOT}/client/shell.html" "${OUT_DIR}/"
 
   apply_patch "${ROOT}/client/net.h.patch"
+  apply_patch "${ROOT}/client/common.h.patch"
+  apply_patch "${ROOT}/client/common.c.patch"
+  apply_patch "${ROOT}/client/host.c.patch"
   apply_patch "${ROOT}/client/net_main.c.patch"
   apply_patch "${ROOT}/client/net_dgrm.c.patch"
   apply_patch "${ROOT}/client/chase.c.patch"

@@ -54,7 +54,7 @@ func main() {
 		subnetNexusA, subnetNexusB, subnetNexusC, serverMgr.ServerCount())
 
 	// Start the nexus-managed server info cache (used for Quake's `slist`).
-	globalServerInfoCache = NewServerInfoCache(serverMgr.ServerCount())
+	globalServerInfoCache = NewServerInfoCache(serverMgr.ServerCount(), serverMgr.GameDirByServerID())
 	if err := globalServerInfoCache.Start(runCtx); err != nil {
 		warnf("Server info cache disabled: %v", err)
 		globalServerInfoCache = nil

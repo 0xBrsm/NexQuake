@@ -156,6 +156,12 @@ func TestListMods_RequiresLayerDirectories(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dataDir, ".hidden", "common"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "thismodnameistoolong", "common"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "bad\tname", "common"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
 
 	mods, err := listMods(dataDir)
 	if err != nil {
@@ -170,6 +176,12 @@ func TestListMods_RequiresLayerDirectories(t *testing.T) {
 	}
 	if slices.Contains(mods, ".hidden") {
 		t.Fatalf("did not expect hidden dir, got %v", mods)
+	}
+	if slices.Contains(mods, "thismodnameistoolong") {
+		t.Fatalf("did not expect >15-byte mod name, got %v", mods)
+	}
+	if slices.Contains(mods, "bad\tname") {
+		t.Fatalf("did not expect control-char mod name, got %v", mods)
 	}
 }
 

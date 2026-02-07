@@ -92,12 +92,35 @@
 
       var Module = {
         preRun: [function() {
-          // Create the virtual folder for game data
-          try { FS.mkdir('/id1'); } catch (e) {}
+          function normalizeGameName(name) {
+            name = String(name || '').trim().toLowerCase();
+            if (!name) return 'id1';
+            var out = '';
+            for (var i = 0; i < name.length && out.length < 15; i++) {
+              var c = name[i];
+              if (c === '/' || c === '\\' || c === ':' || c === '.') break;
+              if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c === '_' || c === '-') {
+                out += c;
+              } else {
+                break;
+              }
+            }
+            return out || 'id1';
+          }
 
-          function urlJoinDataId1(relPath) {
+          function ensureGameDir(mod) {
+            mod = normalizeGameName(mod);
+            try { FS.mkdir('/' + mod); } catch (e) {}
+            return mod;
+          }
+
+          // Create the baseline id1 mount root.
+          ensureGameDir('id1');
+
+          function urlJoinDataMod(mod, relPath) {
+            mod = normalizeGameName(mod);
             var parts = String(relPath).split('/').filter(Boolean).map(encodeURIComponent);
-            return '/data/id1/' + parts.join('/');
+            return '/data/' + encodeURIComponent(mod) + '/' + parts.join('/');
           }
 
           function ensureDirForPath(path) {
@@ -115,6 +138,8 @@
           try {
             if (!Module.nexquakeRemoteFiles) Module.nexquakeRemoteFiles = Object.create(null);
             if (!Module.nexquakeRemoteURLs) Module.nexquakeRemoteURLs = Object.create(null);
+            if (!Module.nexquakeInstalledManifests) Module.nexquakeInstalledManifests = Object.create(null);
+            Module.nexquakeActiveGame = normalizeGameName(Module.nexquakeActiveGame || 'id1');
           } catch (e) {}
 
           function resolveVFSPath(p) {
@@ -243,14 +268,15 @@
             };
           })();
 
-          function installLazyFile(vfsRelPath, url, size) {
+          function installLazyFile(mod, vfsRelPath, url, size) {
+            mod = normalizeGameName(mod);
             vfsRelPath = String(vfsRelPath || '').replace(/^\/+/, '');
             url = String(url || '').trim();
             if (!vfsRelPath || !url) return;
 
             // Store everything as lowercase in the VFS (Quake expects lowercase paths).
             var lowerRel = vfsRelPath.split('/').filter(Boolean).map(function(p) { return p.toLowerCase(); }).join('/');
-            var outPath = '/id1/' + lowerRel;
+            var outPath = '/' + mod + '/' + lowerRel;
             var parent = outPath.substring(0, outPath.lastIndexOf('/')) || '/';
             var name = outPath.substring(outPath.lastIndexOf('/') + 1);
 
@@ -309,8 +335,12 @@
           };
 
           async function prefetchOne(lowerRel) {
-            var outPath = '/id1/' + lowerRel;
+            var activeGame = normalizeGameName(Module.nexquakeActiveGame || 'id1');
+            var outPath = '/' + activeGame + '/' + lowerRel;
             var node = Module.nexquakeRemoteFiles && Module.nexquakeRemoteFiles[outPath];
+            if (!node && activeGame !== 'id1') {
+              node = Module.nexquakeRemoteFiles && Module.nexquakeRemoteFiles['/id1/' + lowerRel];
+            }
             if (!node || node.contents) return;
             var resp = await fetch(node.url, { cache: 'force-cache' });
             if (!resp.ok) throw new Error('prefetch failed: ' + resp.status + ' for ' + node.url);
@@ -358,28 +388,46 @@
               .finally(function() { Module.nexquakePrefetchBusy = 0; });
           };
 
-          // Mirror a virtualized manifest into /id1 before starting Quake.
+          // Mirror virtualized manifests into /<mod> roots.
           // Files are installed as lazy-backed VFS entries (download on first read).
           Module.addRunDependency('manifest:id1');
 
-          function fetchManifest() {
-            return fetch('/data-manifest/id1').then(function(response) {
-              if (!response.ok) throw new Error('manifest fetch failed: ' + response.status);
-              var prefetch = response.headers.get('X-NQ-VFS-Prefetch-Concurrency');
-              if (prefetch !== null) {
-                Module.nexquakePrefetchConcurrency = parsePositiveInt(prefetch, Module.nexquakePrefetchConcurrency);
-              }
+          function applyPrefetchConcurrency(value) {
+            if (value !== null && value !== undefined && value !== '') {
+              Module.nexquakePrefetchConcurrency = parsePositiveInt(value, Module.nexquakePrefetchConcurrency);
+            }
+          }
+
+          function fetchManifest(mod) {
+            mod = normalizeGameName(mod);
+            return fetch('/data-manifest/' + encodeURIComponent(mod)).then(function(response) {
+              if (!response.ok) throw new Error('manifest fetch failed for ' + mod + ': ' + response.status);
+              applyPrefetchConcurrency(response.headers.get('X-NQ-VFS-Prefetch-Concurrency'));
               return response.json();
             });
           }
 
-          function installManifest(entries) {
+          function fetchManifestSync(mod) {
+            mod = normalizeGameName(mod);
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', '/data-manifest/' + encodeURIComponent(mod), false);
+            xhr.send(null);
+            if (xhr.status !== 200 && xhr.status !== 0) {
+              throw new Error('manifest fetch failed for ' + mod + ': ' + xhr.status);
+            }
+            applyPrefetchConcurrency(xhr.getResponseHeader('X-NQ-VFS-Prefetch-Concurrency'));
+            var text = xhr.responseText || '';
+            return JSON.parse(text);
+          }
+
+          function installManifest(mod, entries) {
+            mod = normalizeGameName(mod);
             if (!Array.isArray(entries) || entries.length === 0) {
-              throw new Error('manifest empty');
+              throw new Error('manifest empty for ' + mod);
             }
 
             // Ensure the mount root exists.
-            try { FS.mkdir('/id1'); } catch (e) {}
+            ensureGameDir(mod);
 
             // Backwards compatibility: old manifests were arrays of relative paths.
             if (typeof entries[0] === 'string') {
@@ -388,8 +436,10 @@
                 .map(function(p) { return p.trim().replace(/^\/+/, ''); })
                 .filter(Boolean)
                 .forEach(function(relPath) {
-                  installLazyFile(relPath, urlJoinDataId1(relPath));
+                  installLazyFile(mod, relPath, urlJoinDataMod(mod, relPath));
                 });
+              Module.nexquakeInstalledManifests[mod] = true;
+              Module.nexquakeActiveGame = mod;
               try { if (typeof Module.nqOverlayUpdateDirs === 'function') Module.nqOverlayUpdateDirs(); } catch (e) {}
               return;
             }
@@ -397,13 +447,33 @@
             entries.forEach(function(ent) {
               if (!ent || typeof ent !== 'object') return;
               if (typeof ent.path !== 'string' || typeof ent.url !== 'string') return;
-              installLazyFile(ent.path, ent.url, Number(ent.size || 0));
+              installLazyFile(mod, ent.path, ent.url, Number(ent.size || 0));
             });
+            Module.nexquakeInstalledManifests[mod] = true;
+            Module.nexquakeActiveGame = mod;
             try { if (typeof Module.nqOverlayUpdateDirs === 'function') Module.nqOverlayUpdateDirs(); } catch (e) {}
           }
 
-          fetchManifest()
-            .then(installManifest)
+          function ensureManifestSync(mod) {
+            mod = normalizeGameName(mod);
+            if (Module.nexquakeInstalledManifests && Module.nexquakeInstalledManifests[mod]) {
+              Module.nexquakeActiveGame = mod;
+              return;
+            }
+            installManifest(mod, fetchManifestSync(mod));
+          }
+
+          Module.nexquakeSwitchGameData = function(mod) {
+            mod = normalizeGameName(mod);
+            try {
+              ensureManifestSync(mod);
+            } catch (err) {
+              console.error('Failed to install /' + mod + ' manifest:', err);
+            }
+          };
+
+          fetchManifest('id1')
+            .then(function(entries) { installManifest('id1', entries); })
             .then(function() {
               Module.removeRunDependency('manifest:id1');
             })

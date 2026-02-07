@@ -1,0 +1,19 @@
+--- host.c
++++ host.c
+@@ -46,1 +46,2 @@
+ int			host_hunklevel;
++int			fs_hunklevel;
+@@ -482,2 +482,7 @@
+-	if (host_hunklevel)
+-		Hunk_FreeToLowMark (host_hunklevel);
++	{
++		int lowmark = host_hunklevel;
++		if (fs_hunklevel > lowmark)
++			lowmark = fs_hunklevel;
++		if (lowmark)
++			Hunk_FreeToLowMark (lowmark);
++	}
+@@ -915,2 +915,3 @@
+ 	Hunk_AllocName (0, "-HOST_HUNKLEVEL-");
+ 	host_hunklevel = Hunk_LowMark ();
++	fs_hunklevel = host_hunklevel;

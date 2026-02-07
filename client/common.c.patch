@@ -1,0 +1,130 @@
+--- common.c
++++ common.c
+@@ -21,3 +21,6 @@
+ 
+ #include "quakedef.h"
++#ifdef __EMSCRIPTEN__
++#include <emscripten/emscripten.h>
++#endif
+ 
+@@ -1239,6 +1239,7 @@
+ 
+ char    com_cachedir[MAX_OSPATH];
+ char    com_gamedir[MAX_OSPATH];
++static char com_basedir[MAX_OSPATH];
+ 
+ typedef struct searchpath_s
+ {
+@@ -1249,6 +1250,17 @@
+ 
+ searchpath_t    *com_searchpaths;
+ 
++#define MAX_GAMECACHE 64
++static struct {
++	char mod[16];
++	searchpath_t *paths;
++	char gamedir[MAX_OSPATH];
++} com_gamecache[MAX_GAMECACHE];
++static int com_gamecache_count;
++static int com_gamecache_next_replace = 1;
++static char com_active_game[16] = "id1";
++extern int fs_hunklevel;
++
+ /*
+ ============
+ COM_Path_f
+@@ -1753,6 +1762,9 @@
+ 			basedir[j-1] = 0;
+ 	}
+ 
++	Q_strncpy(com_basedir, basedir, sizeof(com_basedir) - 1);
++	com_basedir[sizeof(com_basedir) - 1] = 0;
++
+ //
+ // -cachedir <path>
+ // Overrides the system supplied cache directory (NULL or /qcache)
+@@ -1822,5 +1834,84 @@
+ 
+ 	if (COM_CheckParm ("-proghack"))
+ 		proghack = true;
++
++	Q_strcpy(com_gamecache[0].mod, "id1");
++	com_gamecache[0].paths = com_searchpaths;
++	Q_strncpy(com_gamecache[0].gamedir, com_gamedir, MAX_OSPATH - 1);
++	com_gamecache[0].gamedir[MAX_OSPATH - 1] = 0;
++	com_gamecache_count = 1;
++	com_gamecache_next_replace = 1;
++	fs_hunklevel = Hunk_LowMark();
++}
++
++void COM_SwitchGame(const char *gamedir)
++{
++	char mod[16];
++	int i;
++
++	if (!gamedir || !gamedir[0])
++		Q_strcpy(mod, "id1");
++	else
++	{
++		Q_strncpy(mod, gamedir, sizeof(mod) - 1);
++		mod[sizeof(mod) - 1] = 0;
++	}
++	if (Q_strcasecmp(mod, com_active_game) == 0)
++		return;
++
++#ifdef __EMSCRIPTEN__
++	EM_ASM({
++		if (typeof Module === 'undefined') return;
++		if (typeof Module.nexquakeSwitchGameData !== 'function') return;
++		try {
++			Module.nexquakeSwitchGameData(UTF8ToString($0));
++		} catch (e) {
++			if (typeof console !== 'undefined' && console.error)
++				console.error('nexquakeSwitchGameData failed:', e);
++		}
++	}, mod);
++#endif
++
++	for (i = 0; i < com_gamecache_count; i++)
++	{
++		if (Q_strcasecmp(mod, com_gamecache[i].mod) == 0)
++		{
++			com_searchpaths = com_gamecache[i].paths;
++			Q_strncpy(com_gamedir, com_gamecache[i].gamedir, MAX_OSPATH - 1);
++			com_gamedir[MAX_OSPATH - 1] = 0;
++			Q_strncpy(com_active_game, mod, sizeof(com_active_game) - 1);
++			com_active_game[sizeof(com_active_game) - 1] = 0;
++			return;
++		}
++	}
++
++	// Reset to baseline, then add the mod directory on top.
++	com_searchpaths = com_gamecache[0].paths;
++	Q_strncpy(com_gamedir, com_gamecache[0].gamedir, MAX_OSPATH - 1);
++	com_gamedir[MAX_OSPATH - 1] = 0;
++
++	if (Q_strcasecmp(mod, "id1") != 0 && com_basedir[0])
++	{
++		int slot;
++		COM_AddGameDirectory(va("%s/%s", com_basedir, mod));
++		if (com_gamecache_count < MAX_GAMECACHE)
++			slot = com_gamecache_count++;
++		else
++		{
++			slot = com_gamecache_next_replace;
++			com_gamecache_next_replace++;
++			if (com_gamecache_next_replace >= MAX_GAMECACHE)
++				com_gamecache_next_replace = 1;
++		}
++		Q_strncpy(com_gamecache[slot].mod, mod, sizeof(com_gamecache[slot].mod) - 1);
++		com_gamecache[slot].mod[sizeof(com_gamecache[slot].mod) - 1] = 0;
++		com_gamecache[slot].paths = com_searchpaths;
++		Q_strncpy(com_gamecache[slot].gamedir, com_gamedir, MAX_OSPATH - 1);
++		com_gamecache[slot].gamedir[MAX_OSPATH - 1] = 0;
++		fs_hunklevel = Hunk_LowMark();
++	}
++
++	Q_strncpy(com_active_game, mod, sizeof(com_active_game) - 1);
++	com_active_game[sizeof(com_active_game) - 1] = 0;
+ }
+ 

@@ -83,7 +83,7 @@
  	struct qsockaddr readaddr;
  	struct qsockaddr myaddr;
  	int		control;
-@@ -1147,53 +1169,50 @@
+@@ -1147,53 +1169,57 @@
  		if ((control & NETFLAG_LENGTH_MASK) != ret)
  			continue;
  
@@ -105,6 +105,7 @@
 +			{
 +				char hostbuf[16];
 +				char mapbuf[16];
++				char gamebuf[16];
 +				int slot;
  
 -		// is it already there?
@@ -113,7 +114,7 @@
 +				if (dfunc.GetAddrFromName(MSG_ReadString(), &readaddr) == -1)
 +				{
 +					// Skip remaining fields in malformed entries.
-+					MSG_ReadString(); MSG_ReadString();
++					MSG_ReadString(); MSG_ReadString(); MSG_ReadString();
 +					MSG_ReadByte(); MSG_ReadByte(); MSG_ReadByte();
 +					continue;
 +				}
@@ -150,9 +151,15 @@
 +				hostbuf[15] = 0;
 +				Q_strncpy(mapbuf, MSG_ReadString(), 15);
 +				mapbuf[15] = 0;
++				Q_strncpy(gamebuf, MSG_ReadString(), 15);
++				gamebuf[15] = 0;
 +
-+				Q_strcpy(hostcache[slot].name, hostbuf);
-+				Q_strcpy(hostcache[slot].map, mapbuf);
++				Q_strncpy(hostcache[slot].name, hostbuf, sizeof(hostcache[slot].name) - 1);
++				hostcache[slot].name[sizeof(hostcache[slot].name) - 1] = 0;
++				Q_strncpy(hostcache[slot].map, mapbuf, sizeof(hostcache[slot].map) - 1);
++				hostcache[slot].map[sizeof(hostcache[slot].map) - 1] = 0;
++				Q_strncpy(hostcache[slot].gamedir, gamebuf, sizeof(hostcache[slot].gamedir) - 1);
++				hostcache[slot].gamedir[sizeof(hostcache[slot].gamedir) - 1] = 0;
 +				hostcache[slot].users = MSG_ReadByte();
 +				hostcache[slot].maxusers = MSG_ReadByte();
 +				if (MSG_ReadByte() != NET_PROTOCOL_VERSION)

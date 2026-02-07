@@ -28,21 +28,31 @@ type ServerInfoCache struct {
 	mu          sync.RWMutex
 	maxServerID int
 	entries     []serverInfoEntry // indexed by server id (0 unused)
+	gameDirs    []string          // indexed by server id (0 unused)
 
 	pollConn *net.UDPConn
 	stopOnce sync.Once
 }
 
-func NewServerInfoCache(maxServerID int) *ServerInfoCache {
+func NewServerInfoCache(maxServerID int, gameDirsByID map[byte]string) *ServerInfoCache {
 	if maxServerID < 1 {
 		maxServerID = 1
 	}
 	if maxServerID > 254 {
 		maxServerID = 254
 	}
+	gameDirs := make([]string, maxServerID+1)
+	for id, gameDir := range gameDirsByID {
+		i := int(id)
+		if i < 1 || i > maxServerID {
+			continue
+		}
+		gameDirs[i] = gameDir
+	}
 	return &ServerInfoCache{
 		maxServerID: maxServerID,
 		entries:     make([]serverInfoEntry, maxServerID+1),
+		gameDirs:    gameDirs,
 	}
 }
 
@@ -185,6 +195,7 @@ func (c *ServerInfoCache) SnapshotForSlist() []struct {
 	ServerID   byte
 	Hostname   string
 	MapName    string
+	GameDir    string
 	Players    byte
 	MaxPlayers byte
 } {
@@ -202,6 +213,7 @@ func (c *ServerInfoCache) SnapshotForSlist() []struct {
 		ServerID   byte
 		Hostname   string
 		MapName    string
+		GameDir    string
 		Players    byte
 		MaxPlayers byte
 	}
@@ -217,12 +229,14 @@ func (c *ServerInfoCache) SnapshotForSlist() []struct {
 			ServerID   byte
 			Hostname   string
 			MapName    string
+			GameDir    string
 			Players    byte
 			MaxPlayers byte
 		}{
 			ServerID:   byte(id),
 			Hostname:   e.hostname,
 			MapName:    e.mapName,
+			GameDir:    c.gameDirs[id],
 			Players:    e.players,
 			MaxPlayers: e.maxPlayers,
 		})

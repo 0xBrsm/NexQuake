@@ -25,6 +25,29 @@
  PollProcedure	slistSendProcedure = {NULL, 0.0, Slist_Send};
  PollProcedure	slistPollProcedure = {NULL, 0.0, Slist_Poll};
  
+@@ -262,7 +265,7 @@
+ static void PrintSlistHeader(void)
+ {
+-	Con_Printf("Server          Map             Users\n");
+-	Con_Printf("--------------- --------------- -----\n");
++	Con_Printf("Server          Map             Game            Users\n");
++	Con_Printf("--------------- --------------- --------------- -----\n");
+ 	slistLastShown = 0;
+ }
+ 
+@@ -274,10 +277,10 @@
+ 	for (n = slistLastShown; n < hostCacheCount; n++)
+ 	{
+ 		if (hostcache[n].maxusers)
+-			Con_Printf("%-15.15s %-15.15s %2u/%2u\n", hostcache[n].name, hostcache[n].map, hostcache[n].users, hostcache[n].maxusers);
++			Con_Printf("%-15.15s %-15.15s %-15.15s %2u/%2u\n", hostcache[n].name, hostcache[n].map, hostcache[n].gamedir, hostcache[n].users, hostcache[n].maxusers);
+ 		else
+-			Con_Printf("%-15.15s %-15.15s\n", hostcache[n].name, hostcache[n].map);
++			Con_Printf("%-15.15s %-15.15s %-15.15s\n", hostcache[n].name, hostcache[n].map, hostcache[n].gamedir);
+ 	}
+ 	slistLastShown = n;
+ }
+ 
 @@ -295,6 +299,7 @@
  {
  	if (slistInProgress)

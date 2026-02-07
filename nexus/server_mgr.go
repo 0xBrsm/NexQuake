@@ -51,6 +51,20 @@ func NewServerManager(dataDir, logsDir, serverBinary string) *ServerManager {
 
 func (m *ServerManager) ServerCount() int { return len(m.servers) }
 
+func (m *ServerManager) GameDirByServerID() map[byte]string {
+	out := make(map[byte]string, len(m.servers))
+	for _, s := range m.servers {
+		if s == nil {
+			continue
+		}
+		if s.spec.ID < 1 || s.spec.ID > 254 {
+			continue
+		}
+		out[byte(s.spec.ID)] = s.spec.ModName
+	}
+	return out
+}
+
 func (m *ServerManager) StartAll() error {
 	if m.serverBinary == "" {
 		return fmt.Errorf("SERVER_BIN is empty")

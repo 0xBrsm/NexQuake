@@ -82,6 +82,7 @@ func buildCCREPServerList(entries []struct {
 	ServerID   byte
 	Hostname   string
 	MapName    string
+	GameDir    string
 	Players    byte
 	MaxPlayers byte
 }) ([]byte, int) {
@@ -93,6 +94,7 @@ func buildCCREPServerList(entries []struct {
 	//     cstring server_address (e.g. "127.13.37.1:26000")
 	//     cstring host_name (<= 15 chars recommended)
 	//     cstring level_name (<= 15 chars recommended)
+	//     cstring game_dir (<= 15 chars recommended)
 	//     u8 players, u8 maxPlayers, u8 protocol_version
 	buf := make([]byte, 0, 512)
 	buf = append(buf, 0, 0, 0, 0) // placeholder header
@@ -112,20 +114,25 @@ func buildCCREPServerList(entries []struct {
 		}
 		hostname := e.Hostname
 		mapName := e.MapName
+		gameDir := e.GameDir
 		if hostname == "" {
 			hostname = "UNNAMED"
 		}
 		if mapName == "" {
 			mapName = "?"
 		}
+		if gameDir == "" {
+			gameDir = "id1"
+		}
 
 		serverAddr := fmt.Sprintf("%d.%d.%d.%d:%d", subnetServersA, subnetServersB, subnetServersC, e.ServerID, defaultServerPort)
 
 		hostname = truncateQuakeString(hostname, 15)
 		mapName = truncateQuakeString(mapName, 15)
+		gameDir = truncateQuakeString(gameDir, 15)
 
 		// Compute the entry size before appending to stay within Quake's datagram limit.
-		entrySize := len(serverAddr) + 1 + len(hostname) + 1 + len(mapName) + 1 + 3
+		entrySize := len(serverAddr) + 1 + len(hostname) + 1 + len(mapName) + 1 + len(gameDir) + 1 + 3
 		if len(buf)+entrySize > maxNetDatagramSize {
 			break
 		}
@@ -133,6 +140,7 @@ func buildCCREPServerList(entries []struct {
 		buf = appendCString(buf, serverAddr)
 		buf = appendCString(buf, hostname)
 		buf = appendCString(buf, mapName)
+		buf = appendCString(buf, gameDir)
 		buf = append(buf, e.Players, e.MaxPlayers, netProtocolVersion)
 		count++
 	}

@@ -1,5 +1,13 @@
 --- net.h
 +++ net.h
+@@ -227,6 +227,7 @@
+ {
+ 	char	name[16];
+ 	char	map[16];
++	char	gamedir[16];
+ 	char	cname[32];
+ 	int		users;
+ 	int		maxusers;
 @@ -314,6 +315,6 @@
  {
  	struct _PollProcedure	*next;
