@@ -1,31 +1,21 @@
 package main
 
 import (
+	"encoding/base64"
 	"net/http/httptest"
 	"testing"
 )
 
-func TestCanonicalRequestHost(t *testing.T) {
-	req := httptest.NewRequest("GET", "http://example.com/ws", nil)
-	req.Host = "Example.COM:1337"
-
-	got := canonicalRequestHost(req)
-	if got != "example.com:1337" {
-		t.Fatalf("canonicalRequestHost() = %q, want %q", got, "example.com:1337")
-	}
-}
-
-func TestDeriveRconTokenForHostDiffersByHost(t *testing.T) {
+func TestDeriveRconTokenFromPassword(t *testing.T) {
 	pw := "secret"
-	a := deriveRconTokenForHost(pw, "quake-a.local:1337")
-	b := deriveRconTokenForHost(pw, "quake-b.local:1337")
-
-	if a == b {
-		t.Fatalf("expected host-bound token mismatch, got same token %q", a)
+	got := deriveRconTokenFromPassword(pw)
+	want := base64.StdEncoding.EncodeToString([]byte(pw))
+	if got != want {
+		t.Fatalf("deriveRconTokenFromPassword() = %q, want %q", got, want)
 	}
 }
 
-func TestIsAdminHostBoundPasswordToken(t *testing.T) {
+func TestIsAdminBase64PasswordToken(t *testing.T) {
 	oldPw := rconPassword
 	oldValidator := globalValidator
 	defer func() {
@@ -36,19 +26,18 @@ func TestIsAdminHostBoundPasswordToken(t *testing.T) {
 	rconPassword = "testpw"
 	globalValidator = nil
 
-	hostA := "quake-a.local:1337"
-	tokenA := deriveRconTokenForHost(rconPassword, hostA)
+	token := deriveRconTokenFromPassword(rconPassword)
 
-	reqA := httptest.NewRequest("GET", "http://"+hostA+"/ws?token="+tokenA, nil)
-	reqA.Host = hostA
+	reqA := httptest.NewRequest("GET", "http://quake-a.local:1337/ws?token="+token, nil)
+	reqA.Host = "quake-a.local:1337"
 	if !IsAdmin(reqA) {
-		t.Fatalf("expected IsAdmin() true for matching host-bound token")
+		t.Fatalf("expected IsAdmin() true for matching base64 token")
 	}
 
-	reqB := httptest.NewRequest("GET", "http://quake-b.local:1337/ws?token="+tokenA, nil)
+	reqB := httptest.NewRequest("GET", "http://quake-b.local:1337/ws?token="+base64.StdEncoding.EncodeToString([]byte("wrong")), nil)
 	reqB.Host = "quake-b.local:1337"
 	if IsAdmin(reqB) {
-		t.Fatalf("expected IsAdmin() false for host mismatch")
+		t.Fatalf("expected IsAdmin() false for non-matching token")
 	}
 }
 

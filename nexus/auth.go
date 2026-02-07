@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"net/http"
@@ -12,15 +11,13 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 )
 
-const rconTokenPrefix = "NQ:rcon:v2|"
-
 const (
 	adminMatchEmail = "email"
 )
 
 var (
 	globalValidator *OIDCValidator
-	rconPassword    string // AUTH_RCON_PASSWORD, host-bound token derived per request
+	rconPassword    string // AUTH_RCON_PASSWORD, token is base64(password)
 )
 
 type OIDCValidator struct {
@@ -89,7 +86,7 @@ func IsAdmin(r *http.Request) bool {
 
 	// Static shared secret token.
 	if rconPassword != "" && k != "" {
-		expected := deriveRconTokenForHost(rconPassword, canonicalRequestHost(r))
+		expected := deriveRconTokenFromPassword(rconPassword)
 		if subtle.ConstantTimeCompare([]byte(k), []byte(expected)) == 1 {
 			return true
 		}
@@ -102,20 +99,8 @@ func IsAdmin(r *http.Request) bool {
 	return false
 }
 
-func canonicalRequestHost(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-	host := strings.TrimSpace(strings.ToLower(r.Host))
-	if host != "" {
-		return host
-	}
-	return strings.TrimSpace(strings.ToLower(r.URL.Host))
-}
-
-func deriveRconTokenForHost(password, host string) string {
-	sum := sha256.Sum256([]byte(rconTokenPrefix + host + "|" + password))
-	return base64.RawURLEncoding.EncodeToString(sum[:])
+func deriveRconTokenFromPassword(password string) string {
+	return base64.StdEncoding.EncodeToString([]byte(password))
 }
 
 func (v *OIDCValidator) check(r *http.Request) bool {
