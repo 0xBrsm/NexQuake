@@ -85,7 +85,7 @@ fi
 if [[ "${kind}" == "client" ]]; then
   echo "Applying client (WASM) overlays + patches ..."
   cp "${ROOT}/client/net_bsd.c" "${ROOT}/client/net_websocket.c" "${ROOT}/client/net_ws_transport.c" "${ROOT}/client/cmd_rcon.c" "${ROOT}/client/cmd_rcon_token.js" "${ROOT}/client/net_websocket.h" "${OUT_DIR}/"
-  cp "${ROOT}/client/snd_sdl.c" "${ROOT}/client/sys_sdl.c" "${ROOT}/client/vid_sdl.c" "${OUT_DIR}/"
+  cp "${ROOT}/client/sys_wasm.c" "${ROOT}/client/vid_wasm.c" "${ROOT}/client/snd_wasm.c" "${OUT_DIR}/"
   cp "${ROOT}/client/Makefile.emscripten" "${ROOT}/client/shell.html" "${OUT_DIR}/"
 
   apply_patch "${ROOT}/client/net.h.patch"

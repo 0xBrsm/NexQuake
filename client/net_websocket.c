@@ -42,7 +42,6 @@ extern int WebSocketTransport_SendFrame(byte routing_byte, int dst_port, byte *b
 extern cvar_t hostname;
 
 static int net_controlsocket;
-static unsigned long myAddr;
 
 static uint32_t WebSocket_GetAddrPrefix24(struct qsockaddr *addr)
 {
@@ -149,8 +148,6 @@ int WebSocket_Init(void)
 	if (!emscripten_websocket_is_supported())
 		Sys_Error("WebSocket_Init: emscripten_websocket_is_supported() says WebSockets aren't supported\n");
 
-	myAddr = 0;
-
 	if (Q_strcmp(hostname.string, "UNNAMED") == 0)
 		Cvar_Set("hostname", "nexquake");
 
@@ -223,8 +220,6 @@ int WebSocket_Read(int socket, byte *buf, int len, struct qsockaddr *addr)
 	byte server_id = 0;
 	int src_port = 0;
 	int read_result;
-
-	(void)socket;
 
 	read_result = WebSocketTransport_Read(socket, buf, len, &server_id, &src_port);
 	if (read_result > 0)
@@ -337,7 +332,7 @@ int WebSocket_GetSocketAddr(int socket, struct qsockaddr *addr)
 int WebSocket_GetNameFromAddr(struct qsockaddr *addr, char *name)
 {
 	(void)addr;
-	sprintf(name, "%s", "quake-wasm\x00");
+	Q_strcpy(name, "quake-wasm");
 	return 0;
 }
 

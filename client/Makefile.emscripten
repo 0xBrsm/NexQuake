@@ -5,11 +5,16 @@ ifeq ($(WEBSOCKET_URL),)
 	WEBSOCKET_URL := ws://localhost:1337/ws
 endif
 
+ifeq ($(NEXQUAKE_VERSION),)
+	NEXQUAKE_VERSION := $(shell cat VERSION 2>/dev/null || echo unknown)
+endif
+
 # Compiler / linker parameters
 CC := emcc
 CFLAGS := -O3 -ffast-math -funroll-loops -fomit-frame-pointer -Wall -Wextra -Wno-implicit-function-declaration \
-	-Wno-unused-parameter -Wno-missing-field-initializers -Wno-sign-compare -Wno-pointer-sign -sUSE_SDL=2 -DSDL
-LDFLAGS := -O3 -Wl,--allow-multiple-definition -sUSE_SDL=2 -sINITIAL_MEMORY=64MB -sTOTAL_STACK=2MB -sALLOW_MEMORY_GROWTH \
+	-Wno-unused-parameter -Wno-missing-field-initializers -Wno-sign-compare -Wno-pointer-sign \
+	-DNEXQUAKE_VERSION='"$(NEXQUAKE_VERSION)"'
+LDFLAGS := -O3 -Wl,--allow-multiple-definition -sMAX_WEBGL_VERSION=2 -sMIN_WEBGL_VERSION=2 -sINITIAL_MEMORY=64MB -sTOTAL_STACK=2MB -sALLOW_MEMORY_GROWTH \
 	--shell-file shell.html -lidbfs.js -sWEBSOCKET_URL=$(WEBSOCKET_URL) -sWEBSOCKET_SUBPROTOCOL=binary \
 	-lwebsocket.js --js-library cmd_rcon_token.js -sASYNCIFY=1 -sASYNCIFY_STACK_SIZE=4MB -sASYNCIFY_IGNORE_INDIRECT=0 -sALLOW_BLOCKING_ON_MAIN_THREAD=1 \
 	-sEXPORTED_RUNTIME_METHODS=['addRunDependency','removeRunDependency','ccall'] -sEXPORT_KEEPALIVE=1
@@ -91,9 +96,9 @@ screen.c
 
 SRCS += \
 cd_null.c \
-snd_sdl.c \
-sys_sdl.c \
-vid_sdl.c
+sys_wasm.c \
+vid_wasm.c \
+snd_wasm.c
 
 OBJS := $(SRCS:.c=.o)
 

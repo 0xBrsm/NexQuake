@@ -801,7 +801,7 @@
         window.addEventListener('beforeunload', requestShutdown);
 
         // Restoring user files must happen before Quake executes quake.rc/config.cfg at startup.
-        // sys_sdl.c waits for IDBFS sync to complete, then calls Module.nqRestoreUserFiles().
+        // sys_wasm.c waits for IDBFS sync to complete, then calls Module.nqRestoreUserFiles().
       })();
       Module.setStatus('Downloading...');
 

@@ -8,10 +8,10 @@ Modifications to id Software's Quake to compile for WebAssembly.
 
 ## Files
 
-**SDL Platform Layer** (Emscripten → browser APIs):
-- `sys_sdl.c` - System layer (main loop, file I/O, timing)
-- `vid_sdl.c` - Video/rendering
-- `snd_sdl.c` - Audio
+**Platform Layer** (direct Emscripten, no SDL):
+- `sys_wasm.c` - System layer (main loop, file I/O, timing, IDBFS)
+- `vid_wasm.c` - WebGL2 video + input
+- `snd_wasm.c` - WebAudio sound
 
 **WebSocket Networking**:
 - `net_websocket.c/h` - WebSocket driver for multiplayer
@@ -32,7 +32,7 @@ Output: `index.html`, `index.js`, `index.wasm` (and optionally `index.data` if t
 
 ## Key Modifications
 
-- **SDL2 platform layer**: Emscripten maps SDL calls to Canvas/WebAudio (software renderer; no WebGL)
+- **Direct Emscripten platform layer**: WebGL2 GPU palette rendering + WebAudio (no SDL)
 - **WebSocket networking**: Replaces UDP sockets for browser compatibility
 - **WebSocket URL**: Derived from `window.location` by default (`ws(s)://<host>/ws`), with optional override via `?ws=...`
 - **Emscripten integration**: Proper main loop and filesystem for browser environment
@@ -43,7 +43,7 @@ This repo uses upstream `id-Software/Quake` as the base source during CI builds.
 
 - `client/shell.html`: fetches `/data-manifest/id1` and installs a lazy-backed virtual filesystem under `/id1` (lowercased paths), instead of relying on `index.data` created by `--preload-file=id1`.
 - `client/Makefile.emscripten`: drops `--preload-file=id1` and does not compile `net_udp.c` (browser networking uses the WebSocket landriver only).
-- `client/sys_sdl.c`: fixes `Sys_FileWrite()` to use `fwrite()` (upstream `initialed85/Quake-WASM` uses `fread()` in this function).
+- `client/sys_wasm.c`: fixes `Sys_FileWrite()` to use `fwrite()` (upstream `initialed85/Quake-WASM` uses `fread()` in this function). Replaces SDL with direct Emscripten APIs.
 - `client/net_bsd.c`: only registers the `WebSocket` landriver (no UDP landriver).
 - `client/net_websocket.c`: derived from `initialed85` but adjusted to:
   - avoid `<netinet/in.h>` under Emscripten (conflicts with upstream Quake `net.h` prototypes),

@@ -1,0 +1,246 @@
+// sys_wasm.c -- WASM system layer (Emscripten only, no SDL)
+#include <stdlib.h>
+#include <sys/time.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <emscripten.h>
+#include "quakedef.h"
+
+#ifndef NEXQUAKE_VERSION
+#define NEXQUAKE_VERSION "unknown"
+#endif
+
+qboolean isDedicated;
+
+static double time, oldtime, newtime;
+static qboolean restore_busy, quit_requested;
+void main_loop(void);
+
+// Stubs: no-ops on WASM
+void Sys_DebugNumber(int y, int val) {}
+void Sys_MakeCodeWriteable(unsigned long startaddr, unsigned long length) {}
+void Sys_DebugLog(char *file, char *fmt, ...) {}
+char *Sys_ConsoleInput(void) { return 0; }
+#if !id386
+void Sys_LowFPPrecision(void) {}
+void Sys_HighFPPrecision(void) {}
+#endif
+
+void Sys_Printf(char *fmt, ...) {
+	va_list a; char t[1024];
+	va_start(a, fmt); vsnprintf(t, sizeof(t), fmt, a); va_end(a);
+	fputs(t, stdout);
+}
+
+void Sys_Quit(void) { quit_requested = true; }
+
+void Sys_Error(char *error, ...) {
+	va_list a; char s[1024];
+	va_start(a, error); vsnprintf(s, sizeof(s), error, a); va_end(a);
+	fprintf(stdout, "Error: %s\n", s);
+	Host_Shutdown(); exit(1);
+}
+
+void Sys_Warn(char *warning, ...) {
+	va_list a; char s[1024];
+	va_start(a, warning); vsnprintf(s, sizeof(s), warning, a); va_end(a);
+	fprintf(stdout, "Warning: %s", s);
+}
+
+// File I/O
+#define MAX_HANDLES 10
+static FILE *sys_handles[MAX_HANDLES];
+
+static FILE *get_handle(int handle) {
+	if (handle <= 0 || handle >= MAX_HANDLES)
+		return NULL;
+	return sys_handles[handle];
+}
+
+static int findhandle(void) {
+	for (int i = 1; i < MAX_HANDLES; i++)
+		if (!sys_handles[i]) return i;
+	Sys_Error("out of handles");
+	return -1;
+}
+
+static int Qfilelength(FILE *f) {
+	int pos = ftell(f);
+	fseek(f, 0, SEEK_END);
+	int end = ftell(f);
+	fseek(f, pos, SEEK_SET);
+	return end;
+}
+
+int Sys_FileOpenRead(char *path, int *hndl) {
+	int i = findhandle();
+	FILE *f = fopen(path, "rb");
+	if (!f) { *hndl = -1; return -1; }
+	sys_handles[i] = f; *hndl = i;
+	return Qfilelength(f);
+}
+
+int Sys_FileOpenWrite(char *path) {
+	int i = findhandle();
+	FILE *f = fopen(path, "wb");
+	if (!f) Sys_Error("Error opening %s: %s", path, strerror(errno));
+	sys_handles[i] = f;
+	return i;
+}
+
+void Sys_FileClose(int handle) {
+	FILE *f = get_handle(handle);
+	if (!f)
+		return;
+	fclose(f);
+	sys_handles[handle] = NULL;
+}
+
+void Sys_FileSeek(int handle, int position) {
+	FILE *f = get_handle(handle);
+	if (f)
+		fseek(f, position, SEEK_SET);
+}
+
+int Sys_FileRead(int handle, void *dst, int count) {
+	int size = 0;
+	FILE *f = get_handle(handle);
+	if (f) {
+		char *data = dst;
+		while (count > 0) {
+			size_t done = fread(data, 1, count, f);
+			if (!done) break;
+			data += done; count -= (int)done; size += (int)done;
+		}
+	}
+	return size;
+}
+
+int Sys_FileWrite(int handle, void *src, int count) {
+	int size = 0;
+	FILE *f = get_handle(handle);
+	if (f) {
+		char *data = src;
+		while (count > 0) {
+			size_t done = fwrite(data, 1, count, f);
+			if (!done) break;
+			data += done; count -= (int)done; size += (int)done;
+		}
+	}
+	return size;
+}
+
+int Sys_FileTime(char *path) {
+	FILE *f = fopen(path, "rb");
+	if (f) { fclose(f); return 1; }
+	return -1;
+}
+
+void Sys_mkdir(char *path) { mkdir(path, 0777); }
+
+double Sys_FloatTime(void) {
+	struct timeval tp;
+	static int secbase;
+	gettimeofday(&tp, NULL);
+	if (!secbase) { secbase = tp.tv_sec; return tp.tv_usec / 1000000.0; }
+	return (tp.tv_sec - secbase) + tp.tv_usec / 1000000.0;
+}
+
+byte *Sys_ZoneBase(int *size) {
+	*size = 0xc00000;
+	return malloc(*size);
+}
+
+// IDBFS persistence
+EM_JS(int, wasm_restore_busy, (), { return Module.restore_busy; });
+
+void wasm_init_fs(void) {
+	EM_ASM(
+		Module.restore_busy = 1;
+		try {
+			try { FS.mkdir("/nexquake"); } catch(e) {}
+			try { FS.mount(IDBFS, {}, "/nexquake"); } catch(e) {}
+			console.info("Loading data...");
+			FS.syncfs(true, function(err) {
+				if (err) console.warn("Failed to load data: " + err);
+				else console.info("Data loaded.");
+				Module.restore_busy = 0;
+			});
+		} catch(e) { console.warn("wasm_init_fs failed:", e); Module.restore_busy = 0; }
+	);
+}
+
+int main(int c, char **v) {
+	quakeparms_t parms;
+	int pnum;
+
+	wasm_init_fs();
+	while (wasm_restore_busy()) emscripten_sleep(10);
+	EM_ASM({
+		try { if (Module.nqRestoreUserFiles) Module.nqRestoreUserFiles(); } catch(e) { console.warn('nqRestoreUserFiles failed:', e); }
+	});
+
+	COM_InitArgv(c, v);
+	parms.argc = com_argc;
+	parms.argv = com_argv;
+	parms.memsize = 16 * 1024 * 1024;
+	if ((pnum = COM_CheckParm("-mem"))) {
+		if (pnum >= com_argc - 1) {
+			fprintf(stderr, "Error: -mem requires a size in MB\n");
+			return 1;
+		}
+		parms.memsize = Q_atoi(com_argv[pnum + 1]) * 1024 * 1024;
+	}
+	if ((pnum = COM_CheckParm("-heapsize"))) {
+		if (pnum >= com_argc - 1) {
+			fprintf(stderr, "Error: -heapsize requires a size in KB\n");
+			return 1;
+		}
+		parms.memsize = Q_atoi(com_argv[pnum + 1]) * 1024;
+	}
+	parms.membase = malloc(parms.memsize);
+	if (!parms.membase) {
+		fprintf(stderr, "Error: unable to allocate %d bytes for game memory\n", parms.memsize);
+		return 1;
+	}
+	parms.basedir = ".";
+	parms.cachedir = NULL;
+
+	Host_Init(&parms);
+	Con_Printf("NexQuake WebAssembly -- Version %s\n", NEXQUAKE_VERSION);
+	oldtime = Sys_FloatTime() - 0.1;
+	restore_busy = true;
+#ifdef WASM_BENCHMARK
+	emscripten_set_main_loop_timing(EM_TIMING_SETIMMEDIATE, 0);
+#endif
+	emscripten_set_main_loop(main_loop, 0, 0);
+}
+
+void main_loop(void) {
+	if (quit_requested) {
+		quit_requested = false;
+		Host_Shutdown();
+		EM_ASM({
+			try {
+				if (Module.nqPersistUserFiles) Module.nqPersistUserFiles();
+				if (Module.nqOverlayRefreshVFS) Module.nqOverlayRefreshVFS();
+			} catch(e) { console.warn('quit cleanup failed:', e); }
+		});
+		emscripten_cancel_main_loop();
+		return;
+	}
+	if (restore_busy) {
+		if (wasm_restore_busy()) return;
+		restore_busy = false;
+		EM_ASM( if (typeof Module.hideConsole === 'function') Module.hideConsole(); );
+		EM_ASM( if (typeof Module.captureMouse === 'function') Module.captureMouse(); );
+	}
+	newtime = Sys_FloatTime();
+	time = newtime - oldtime;
+	if (time > sys_ticrate.value * 2) oldtime = newtime;
+	else oldtime += time;
+	Host_Frame(time);
+}
