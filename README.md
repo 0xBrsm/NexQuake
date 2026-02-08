@@ -1,110 +1,147 @@
 # NexQuake
 
-NexQuake is a WebAssembly port of Quake (1996) with WebSocket multiplayer. Play the classic FPS in your browser with a minimal, tunnel-style multiplayer setup (software renderer only).
+Quake was released June 22, 1996 and changed video-gaming forever. **NexQuake** was built to recapture that experience without the setup friction. Playing Quake is now as easy as clicking a link, joining a server, and fragging your friends. The same brutal, satisfying gameplay that shipped in 1996, running natively in your browser in 2026.
+
+## What It Is
+
+NexQuake is a WebAssembly port of Quake with browser-native multiplayer. It takes the original id Software engine, compiles it to WASM, and connects players to dedicated servers through a lightweight Go relay that tunnels UDP over WebSocket.
+
+The result is vanilla Quake (software renderer, original physics, original UI) playable in any modern browser with real-time multiplayer. No plugins, no installs, no compromise on the classic experience.
+
+## Why It Exists
+
+Modern source ports do amazing things. They also require downloading binaries, configuring engines, finding servers, and troubleshooting compatibility. The original Quake was pick-up-and-play: you installed it and fragged. NexQuake brings that simplicity back.
+
+The goals are straightforward:
+
+- **Zero friction**: A URL is the entire install process
+- **Authentic gameplay**: Same movement, same weapons, same feel
+- **Real multiplayer**: Dedicated servers with the standard NetQuake protocol
+- **Self-hostable**: Pull one Docker image, open one port, go frag
+
+## How It Works
+
+Three components work together:
+
+```
+Browser  --WebSocket-->  Nexus  --UDP-->  NetQuake Server
+```
+
+**The WASM Browser Client** is the Quake engine compiled to WebAssembly with Emscripten. It uses WebGL2 for rendering (GPU-side palette conversion from the original 8-bit framebuffer), WebAudio for sound, and HTML5 events for input. Game files are streamed on demand from the server through a virtual filesystem.
+
+**Nexus** is a Go orchestration server that serves client files, serves game data, manages servers, and tunnels multiplayer traffic. Each WebSocket frame carries a small routing header plus a raw NetQuake UDP datagram. Nexus acts as a transparent relay with multi-server routing; it never parses game packets.
+
+**The Dedicated Server** is the original NetQuake engine running headless. Stock protocol, stock gameplay. Nexus spawns and manages server instances, one per game directory (mod).
+
+Players use the standard Quake multiplayer connection experience; either use the Multiplayer menu or from the console (`~`) type `slist` to browse servers and `connect <host>` to join.
 
 ## Quick Start
 
-### Using Docker
+### Docker (Recommended)
+
+While you can certainly add and manage your own mods and configs, NexQuake can auto-bootstrap everything needed to play. No game data setup required:
 
 ```bash
-# 1. Create game data directory and add your PAK files
-mkdir -p data/id1/common
-cp /path/to/your/PAK0.PAK data/id1/common/
-
-# 2. Create logs directory (will be auto-populated by servers)
-mkdir -p logs
-
-# 3. Run with docker compose (builds nexus + nqserver + nqwasm)
+# Run it
 docker compose up --build
 
-# 4. Open browser
-# Visit: http://localhost:1337
+# Play
+# Open http://localhost:1337
 ```
 
-**Directory Structure:**
-- `data/` - Game data (often mounted read-only; must be writable for auto-bootstrap)
-  - `id1/`
-    - `common/` - Shared game files (PAK0/PAK1 + optional loose files like `autoexec.cfg`)
-    - `client/` - Optional client-only overrides
-    - `server/` - Optional server-only overrides
-- `logs/` - Server logs and runtime state (read-write)
-  - `id1/` - Vanilla Quake server logs (auto-created)
+On first boot, Nexus downloads a copy of the original Quake 1.06 shareware and a [LibreQuake](https://github.com/lavenderdotpet/LibreQuake)-based freeware PAK1 automatically. This gives you a registered engine with Episode 1 single-player and full multiplayer mod support.
 
-The Dockerfile builds the image including `nexus`, `nqserver`, and the `nqwasm` client.
+To bootstrap with additional mods (Rocket Arena, CTF, etc.), set the `QUICKSTART` variable:
 
-### Getting Game Data
+```bash
+QUICKSTART=full docker compose up --build
+```
 
-You need Quake's PAK files to play:
-- **PAK0.PAK**: Shareware version (download Quake 1.06 shareware)
-- **PAK1.PAK**: Full version (purchase required)
+See [manifests/](manifests/) for the full list of available quickstart packages.
 
-PAK files can be either uppercase (PAK0.PAK) or lowercase (pak0.pak).
+### Providing Your Own PAK Files
 
-**Container auto-bootstrap (optional)**:
-- On nexus startup, if `${DATA_DIR}` (default `/app/data`) is **writable**, it can bootstrap missing game data into `<data>/<game>/<layer>/` based on `gamedata.json`.
-  - Nexus will look for a quickstart manifest at `${DATA_DIR}/${QUICKSTART:-minimal}.json`. If it doesn't exist, bootstrap is a no-op.
-  - Schema: array of entries, each `{ "game": "id1", "common": ["..."], "client": ["..."], "server": ["..."], "force": false }`. At least one of `common|client|server` must be present and non-empty. `force:true` overrides the “skip if directory already populated” guard.
-  - Example manifests: `manifests/minimal.json` and `manifests/full.json`.
-  - In the runtime image these ship as `/app/data/minimal.json` and `/app/data/full.json` (and disappear if you bind-mount your own `${DATA_DIR}`).
+If you have retail Quake or want to use your own game data:
 
-### How PAK Files Work
+```bash
+# 1. Set up game data
+mkdir -p data/id1/common logs
+cp /path/to/PAK0.PAK data/id1/common/     # shareware or full
+cp /path/to/PAK1.PAK data/id1/common/     # optional, full version
 
-Both the WASM client and NetQuake servers share the same PAK files from the `data/` directory:
+# 2. Run
+docker compose up --build
+```
 
-**Dynamic `/data/id1` Mirroring**
-- Place PAK files in `data/id1/` directory on your host
-- Nexus serves them at `http://localhost:1337/data/id1/...`
-- WASM client fetches a directory listing from `http://localhost:1337/data-manifest/id1` and downloads everything into the virtual filesystem under `/id1` (lowercased paths) before Quake starts (PAKs + any loose files like `autoexec.cfg`)
-- NetQuake servers read the same files from the `/data` volume bind
+- **PAK0.PAK** (shareware): Download the [Quake 1.06 shareware](https://www.gamers.org/pub/idgames/idstuff/quake/quake106.zip) distribution
+- **PAK1.PAK** (full): Purchase Quake on Steam or GOG, copy from the install directory
+- **MODS**: Browse [NetQuake Mods](https://github.com/brstm/QuakeMods) and grab what you like.
 
-**Single source of truth**: One set of PAK files in `data/id1/` serves both browser clients and multiplayer servers. No build-time embedding required.
+NexQuake supports real-time merging of server-side .ent "entity" files for mods that traditionally required recompiling maps (e.g. CTF). Just drop the .ent files in /<mod>/server/maps/ and play.
 
-**How it works:**
-1. Browser loads WASM client
-2. Client fetches file list from `/data-manifest/id1`
-3. Client downloads each file from `/data/id1/...` and writes it into the Emscripten virtual filesystem under `/id1/...` (lowercased)
+### Data Directory Layout
+
+```
+data/
+  id1/
+    common/         Shared game files (PAK0.PAK, PAK1.PAK, autoexec.cfg)
+    client/         Client-only overrides (optional)
+    server/         Server-only overrides (optional)
+logs/               Server logs and runtime state (auto-created)
+```
+
+One set of PAK files serves both browser clients and multiplayer servers. Nexus builds per-target views (client vs server) from the layered directory at runtime.
 
 ### Auto-Connect
 
-Put an `autoexec.cfg` in `data/id1/` with `connect 127.255.255.1`.
-
-## Features
-
-- **WASM Client**: Runs entirely in browser via WebAssembly
-- **Multiplayer**: WebSocket nexus bridges browser clients to Quake servers
-- **Renderer**: Software renderer only
-- **Browser Storage**: Saves persist between sessions
-
-## Local Development
-
-Local development tooling (local build scripts, Playwright, devcontainers) is intentionally not committed in this repo. Use CI artifacts for builds and `docker compose up` for runtime testing.
+If you just want to get playing with a single server, add `connect 127.13.37.1` to `data/id1/common/autoexec.cfg` and players join the server automatically on load.
 
 ## Architecture
 
 ```
-Browser (WASM Client)
-    ↕ WebSocket
-Nexus (Go HTTP Server)
-    ↕ UDP
-NetQuake Server (id1)
+Browser Tab (WASM)
+    |
+    |  HTTP: client files, game data manifests, PAK streaming
+    |  WebSocket: /ws (binary frames with routing header)
+    |
+Nexus (Go, port 1337)
+    |
+    |  UDP: localhost relay
+    |
+NetQuake Servers (127.13.37.<id>:26000)
 ```
 
-Nexus (Go HTTP server) serves client files and relays WebSocket connections to UDP-based Quake servers.
+- **Single container**: Nexus handles HTTP, WebSocket, and server management. One port exposed.
+- **Stateless tunnel**: Each WebSocket frame = routing header + raw UDP datagram. No game packet parsing.
+- **LAN simulation**: Each browser tab gets a unique loopback IP. Servers see distinct "LAN clients" that can be kicked or banned.
+- **Server discovery**: `slist` returns an aggregated server list from the Nexus cache. No flaky broadcast.
 
-## Documentation
+## Project Layout
 
-- **ATTRIBUTIONS.md** - Source provenance and GPL licensing lineage
-- **AGENTS.md** and `.agents/*` - Deeper implementation notes (architecture, protocol, decisions)
+```
+client/           WASM client platform layer and WebSocket networking
+server/           Dedicated server Makefile and patches
+nexus/            Go relay, file serving, server orchestration
+manifests/        Game data bootstrap configs
+build/            Build system and upstream checkout scripts
+Dockerfile        Multi-stage production image
+compose.yml       Docker Compose configuration
+ATTRIBUTIONS.md   Source provenance and GPL lineage
+TECHNICAL.md      Technical deep dive for contributors
+```
 
-## Credits
+## Features
 
-- **id Software** - Original Quake (GPL 2.0)
-- **Gregory Maynard-Hoare** ([GMH-Code](https://github.com/GMH-Code/Quake-WASM)) - Original WASM port
-- **initialed85** - WebSocket multiplayer layer and Go proxy
-- **This fork** - Docker containerization and build system
+- **Browser-native**: Runs in Chrome, Firefox, Safari, Edge, and any browser with WebGL2
+- **Real multiplayer**: Dedicated NetQuake servers with the standard protocol
+- **Software renderer**: GPU-accelerated palette conversion of the original 8-bit framebuffer
+- **Persistent saves**: Config and saves survive browser sessions via IndexedDB
+- **Mod support**: Game directory switching at runtime without page reload
+- **Self-contained**: Single Docker image, single port, optional TLS via reverse proxy
+- **Auto-bootstrap**: Shareware game data downloads automatically on first run
 
 ## License
 
-GPL-2.0-or-later (matches original Quake release)
+GPL-2.0-or-later, consistent with the original Quake GPL release.
 
-**Note**: Game data files (PAK files) have separate licensing. Shareware version permits duplication of official archives only. Full version has restrictive licensing - do not host publicly.
+Game data files (PAK files) have separate licensing. Shareware permits redistribution of official archives only. Full version has restrictive licensing; do not host PAK1.PAK publicly.

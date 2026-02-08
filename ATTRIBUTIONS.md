@@ -10,10 +10,6 @@ This file records upstream sources that NexQuake derives from or incorporates.
   - Upstream path used: `WinQuake/`
   - Notes: Base Quake engine source used by build/staging scripts.
 
-- **Original WASM port (Gregory Maynard-Hoare)**
-  - Repository: https://github.com/GMH-Code/Quake-WASM
-  - Notes: Historical WASM/SDL port lineage used by downstream forks.
-
 ## WebSocket Networking Lineage
 
 - **initialed85 Quake-WASM fork**
@@ -31,6 +27,28 @@ This file records upstream sources that NexQuake derives from or incorporates.
     - `WinQuake/websockets/websockets.c`
     - `WinQuake/websockets/websockets.h`
   - Notes: Secondary websocket transport design/reference lineage.
+
+## LZH Decompression Lineage
+
+- **koron-go/lha**
+  - Repository: https://github.com/koron-go/lha
+  - Notes: LZH decoding logic in `nexus/quake106/quake106.go` is derived from this library. Heavily modified and optimized for Quake 1.06 resource extraction. MIT licensed.
+
+## Quickstart Game Data
+
+- **id Software Quake 1.06 Shareware**
+  - Source: `quake106.zip` from public archives
+  - Notes: Extracted at runtime by `nexus/quake106/` with SHA256 verification at every stage. id Software's shareware license permits redistribution of the original, unmodified archive only. The extraction pipeline enforces this by rejecting any archive or resource that doesn't match known-good hashes.
+
+- **LibreQuake PAK1** (`lq-pak1.zip`)
+  - Repository: https://github.com/lavenderdotpet/LibreQuake
+  - Notes: Open-source PAK1 prepared for NexQuake. Fileset matches retail PAK1 exactly; sounds resampled to match PAK0 shareware quality. Art assets under BSD-3-Clause (LibreQuake contributors). `pop.lmp` under GPL-2.0 (derived from id Software Quake source via [pop.lmp generator](https://github.com/lavenderdotpet/pop.lmp_generator)).
+
+## Acknowledgements
+
+The following projects provided inspiration and reference during NexQuake's development but are not direct code ancestors of the current codebase:
+
+- **Gregory Maynard-Hoare** ([GMH-Code/Quake-WASM](https://github.com/GMH-Code/Quake-WASM)) -- Original WASM/SDL port of Quake. NexQuake's platform layer was rewritten from scratch using direct Emscripten APIs (no SDL), but the GMH port demonstrated the viability of Quake-in-a-browser and influenced downstream forks that NexQuake's WebSocket networking derives from.
 
 ## File-Level Guidance
 
