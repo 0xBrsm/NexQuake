@@ -17,15 +17,15 @@ Go HTTP server that ties everything together: serves the WASM client, serves gam
 
 | File | Purpose |
 |------|---------|
-| `server_mgr.go` | **Server orchestrator.** Discovers game directories under `${DATA_DIR}`, spawns `nqserver` processes (one per mod), manages lifecycle (start, stop, signal). Builds merged runtime basedirs when data is read-only. |
-| `server_polling.go` | **Server-info cache.** Polls running servers with connectionless `CCREQ_SERVER_INFO` on a round-robin schedule (one server every 500ms). Caches replies for fast `slist` responses. |
+| `servers.go` | **Server orchestrator.** Discovers game directories under `${DATA_DIR}`, spawns `nqserver` processes (one per mod), manages lifecycle (start, stop, signal). Builds merged runtime basedirs when data is read-only. |
+| `slist.go` | **Server-info cache.** Polls running servers with connectionless `CCREQ_SERVER_INFO` on a round-robin schedule (one server every 500ms). Caches replies for fast `slist` responses. |
 | `ip.go` | **Loopback IP allocation.** Infrastructure subnet `127.13.37.x` for servers (`.1..N`) and admins (`.255` downward). Client IPs are hashed from source IP into `127.0.0.0/8` (excluding reserved subnet). |
 
 ### Game Data
 
 | File | Purpose |
 |------|---------|
-| `file_mgr.go` | **Manifest builder.** Scans `${DATA_DIR}/<mod>/common` and `${DATA_DIR}/<mod>/client`, builds a JSON manifest with per-file URLs. Implements Quake-like precedence (loose > PAK, higher PAK number wins). |
+| `vfs.go` | **Manifest builder.** Scans `${DATA_DIR}/<mod>/common` and `${DATA_DIR}/<mod>/client`, builds a JSON manifest with per-file URLs. Implements Quake-like precedence (loose > PAK, higher PAK number wins). |
 | `pak.go` | **PAK parser.** Reads PAK file headers, indexes entries, streams individual files via `/pak-extract/<mod>/<layer>/<pak>/<file>`. No pre-extraction needed. |
 | `assets.go` | **Bootstrap.** Downloads game data on first run from a quickstart manifest (e.g., `minimal.json`). Only activates when `${DATA_DIR}` is writable. |
 
