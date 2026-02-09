@@ -1,4 +1,4 @@
-// sys_wasm.c -- WASM system layer (Emscripten only, no SDL)
+// sys_wasm.c -- WASM system layer (Emscripten)
 #include <stdlib.h>
 #include <sys/time.h>
 #include <stdarg.h>
@@ -19,10 +19,8 @@ static double time, oldtime, newtime;
 static qboolean restore_busy, quit_requested;
 void main_loop(void);
 
-// Stubs: no-ops on WASM
-void Sys_DebugNumber(int y, int val) {}
+// Stubs: no-ops on WASM (engine calls these but they have no meaning here)
 void Sys_MakeCodeWriteable(unsigned long startaddr, unsigned long length) {}
-void Sys_DebugLog(char *file, char *fmt, ...) {}
 char *Sys_ConsoleInput(void) { return 0; }
 #if !id386
 void Sys_LowFPPrecision(void) {}
@@ -42,12 +40,6 @@ void Sys_Error(char *error, ...) {
 	va_start(a, error); vsnprintf(s, sizeof(s), error, a); va_end(a);
 	fprintf(stdout, "Error: %s\n", s);
 	Host_Shutdown(); exit(1);
-}
-
-void Sys_Warn(char *warning, ...) {
-	va_list a; char s[1024];
-	va_start(a, warning); vsnprintf(s, sizeof(s), warning, a); va_end(a);
-	fprintf(stdout, "Warning: %s", s);
 }
 
 // File I/O
@@ -237,7 +229,6 @@ void main_loop(void) {
 		if (wasm_restore_busy()) return;
 		restore_busy = false;
 		EM_ASM( if (typeof Module.hideConsole === 'function') Module.hideConsole(); );
-		EM_ASM( if (typeof Module.captureMouse === 'function') Module.captureMouse(); );
 	}
 	newtime = Sys_FloatTime();
 	time = newtime - oldtime;

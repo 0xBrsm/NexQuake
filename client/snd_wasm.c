@@ -1,4 +1,4 @@
-// snd_wasm.c -- WebAudio sound (no SDL)
+// snd_wasm.c -- WebAudio sound
 #include "quakedef.h"
 #include <emscripten.h>
 #include <string.h>

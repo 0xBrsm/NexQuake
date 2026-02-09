@@ -1,4 +1,4 @@
-// vid_wasm.c -- WebGL2 video + input (no SDL)
+// vid_wasm.c -- WebGL2 video + input
 #include "quakedef.h"
 #include "d_local.h"
 #include <emscripten.h>
@@ -8,7 +8,7 @@
 #include <stdlib.h>
 
 unsigned short d_8to16table[256];
-int VGA_width, VGA_height, VGA_rowbytes, VGA_bufferrowbytes = 0;
+int VGA_width, VGA_height, VGA_rowbytes;
 byte *VGA_pagebase;
 extern viddef_t vid;
 extern int m_state;
@@ -270,8 +270,6 @@ void VID_Update(vrect_t *rects) {
 	glUseProgram(prog); glBindVertexArray(vao);
 	glDrawArrays(GL_TRIANGLES, 0, 3);
 }
-
-int VID_SetMode(int mode, unsigned char *palette) { return 0; }
 
 void D_BeginDirectRect(int x, int y, byte *pbitmap, int width, int height) {
 	if (!pixels || !pbitmap || width <= 0 || height <= 0) return;

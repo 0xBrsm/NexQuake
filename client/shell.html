@@ -2,7 +2,6 @@
 <html lang="en-us">
   <head>
     <meta charset="utf-8">
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
     <title>NexQuake</title>
     <style>
       body {
@@ -42,9 +41,6 @@
         height: 50px;
         width: 50px;
         margin: 0px auto;
-        -webkit-animation: rotation .8s linear infinite;
-        -moz-animation: rotation .8s linear infinite;
-        -o-animation: rotation .8s linear infinite;
         animation: rotation 0.8s linear infinite;
         border-left: 10px solid rgb(96,96,96);
         border-right: 10px solid rgb(96,96,96);
@@ -52,18 +48,6 @@
         border-top: 10px solid rgb(255,255,255);
         border-radius: 100%;
         background-color: rgb(32,32,32);
-      }
-      @-webkit-keyframes rotation {
-        from {-webkit-transform: rotate(0deg);}
-        to {-webkit-transform: rotate(360deg);}
-      }
-      @-moz-keyframes rotation {
-        from {-moz-transform: rotate(0deg);}
-        to {-moz-transform: rotate(360deg);}
-      }
-      @-o-keyframes rotation {
-        from {-o-transform: rotate(0deg);}
-        to {-o-transform: rotate(360deg);}
       }
       @keyframes rotation {
         from {transform: rotate(0deg);}
@@ -484,24 +468,16 @@
             });
         }],
         postRun: [],
-        _canLockPointer: true,
         print: (function() {
           outputElement.value = ''; // clear browser cache
           return function(text) {
             if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
-            // These replacements are necessary if you render to raw HTML
-            //text = text.replace(/&/g, "&amp;");
-            //text = text.replace(/</g, "&lt;");
-            //text = text.replace(/>/g, "&gt;");
-            //text = text.replace('\n', '<br>', 'g');
             console.log(text);
             outputElement.value += text + "\n";
             outputElement.scrollTop = outputElement.scrollHeight; // focus on bottom
           };
         })(),
-        canvas: (function() {
-          return canvasElement;
-        })(),
+        canvas: canvasElement,
         setStatus: function(text) {
           if (!Module.setStatus.last) Module.setStatus.last = { time: Date.now(), text: '' };
           if (text === Module.setStatus.last.text) return;
@@ -553,30 +529,6 @@
           vidGamma = Number(Number(vidGamma).toFixed(2));
           console.info('Detected canvas gamma change: ' + vidGamma);
           canvasElement.style.filter = 'brightness(' + ((1.35 - vidGamma) * 2) + ')';
-        },
-        captureMouse: function() {
-          if (Module._canLockPointer && !Module._attemptPointerLock()) {
-            // Unable to lock the pointer immediately, so do it when a key is pressed
-            Module._canLockPointer = false;
-            console.info('Delayed pointer lock requested.');
-            document.addEventListener('keydown', Module._lockPointerOnKey);
-          }
-        },
-        _attemptPointerLock: function() {
-          if (document.pointerLockElement === null) {
-            // Attempt a pointer lock now if there isn't one present
-            canvasElement.requestPointerLock();
-          }
-
-          return document.pointerLockElement !== null;
-        },
-        _lockPointerOnKey: function(event) {
-          if ((event.key === 'Escape') || Module._attemptPointerLock()) {
-            // Pointer successfully locked, or Esc pressed
-            document.removeEventListener('keydown', Module._lockPointerOnKey);
-            console.info('Delayed pointer lock complete.');
-            Module._canLockPointer = true;
-          }
         },
         totalDependencies: 0,
         monitorRunDependencies: function(left) {
