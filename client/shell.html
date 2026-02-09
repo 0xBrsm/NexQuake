@@ -795,7 +795,7 @@
               Module.ccall('NexQuake_OnPageHide', 'void', [], []);
             }
             persistUserFiles();
-          } catch (e) {}
+          } catch (e) { console.warn('requestShutdown failed:', e); }
         }
         window.addEventListener('pagehide', requestShutdown);
         window.addEventListener('beforeunload', requestShutdown);

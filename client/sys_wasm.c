@@ -222,6 +222,7 @@ int main(int c, char **v) {
 void main_loop(void) {
 	if (quit_requested) {
 		quit_requested = false;
+		if (cls.state == ca_connected) CL_Disconnect();
 		Host_Shutdown();
 		EM_ASM({
 			try {

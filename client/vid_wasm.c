@@ -11,6 +11,9 @@ unsigned short d_8to16table[256];
 int VGA_width, VGA_height, VGA_rowbytes, VGA_bufferrowbytes = 0;
 byte *VGA_pagebase;
 extern viddef_t vid;
+extern int m_state;
+extern void SNDDMA_Pause(void);
+extern void SNDDMA_Resume(void);
 
 #define BASEWIDTH  800
 #define BASEHEIGHT 525
@@ -22,6 +25,7 @@ static uint32_t pal_rgba[256];
 static qboolean mouse_avail;
 static float mouse_x, mouse_y;
 static qboolean pointer_locked;
+static double ptrlock_lost_at;
 
 // DOM keyCode -> Quake key (browser handles numlock translation for numpad)
 static const uint8_t keymap[256] = {
@@ -114,8 +118,15 @@ static void init_gl(int w, int h) {
 	glUniform1i(glGetUniformLocation(prog, "pal"), 1);
 }
 
+// Pointer lock with caught promise rejection (avoids SecurityError on post-Escape cooldown)
+EM_JS(void, js_request_pointerlock, (), {
+	var p = document.getElementById('canvas').requestPointerLock();
+	if (p && p.catch) p.catch(function(){});
+});
+
 // Input callbacks
 static EM_BOOL on_key(int type, const EmscriptenKeyboardEvent *e, void *ud) {
+	if (e->keyCode == 27 && emscripten_get_now() - ptrlock_lost_at < 50) return 1;
 	int k = e->keyCode < 256 ? keymap[e->keyCode] : 0;
 	if (!k) return 0;
 	Key_Event(k, type == EMSCRIPTEN_EVENT_KEYDOWN);
@@ -131,7 +142,10 @@ static EM_BOOL on_mouse_move(int t, const EmscriptenMouseEvent *e, void *ud) {
 static EM_BOOL on_mouse_btn(int type, const EmscriptenMouseEvent *e, void *ud) {
 	if (!mouse_avail) return 0;
 	qboolean down = (type == EMSCRIPTEN_EVENT_MOUSEDOWN);
-	if (down && !pointer_locked) emscripten_request_pointerlock("#canvas", 1);
+	if (down && !pointer_locked) {
+		js_request_pointerlock();
+		if (key_dest == key_menu) { m_state = 0; key_dest = key_game; return 1; }
+	}
 	static const int bmap[] = { K_MOUSE1, K_MOUSE3, K_MOUSE2 };
 	if (e->button > 2) return 0;
 	Key_Event(bmap[e->button], down);
@@ -147,7 +161,27 @@ static EM_BOOL on_wheel(int t, const EmscriptenWheelEvent *e, void *ud) {
 }
 
 static EM_BOOL on_ptrlock(int t, const EmscriptenPointerlockChangeEvent *e, void *ud) {
-	pointer_locked = e->isActive; return 1;
+	pointer_locked = e->isActive;
+	if (!e->isActive) {
+		ptrlock_lost_at = emscripten_get_now();
+		if (key_dest == key_game) { Key_Event(K_ESCAPE, 1); Key_Event(K_ESCAPE, 0); }
+	}
+	return 1;
+}
+
+static EM_BOOL on_visibility(int t, const EmscriptenVisibilityChangeEvent *e, void *ud) {
+	if (e->hidden) {
+		mouse_x = mouse_y = 0;
+		SNDDMA_Pause();
+		emscripten_set_main_loop_timing(EM_TIMING_SETTIMEOUT, 100);
+	} else {
+		emscripten_set_main_loop_timing(EM_TIMING_RAF, 0);
+		SNDDMA_Resume();
+		EmscriptenPointerlockChangeEvent pe;
+		if (emscripten_get_pointerlock_status(&pe) == EMSCRIPTEN_RESULT_SUCCESS)
+			pointer_locked = pe.isActive;
+	}
+	return 1;
 }
 
 static void init_input(void) {
@@ -158,6 +192,7 @@ static void init_input(void) {
 	emscripten_set_mouseup_callback("#canvas", 0, 1, on_mouse_btn);
 	emscripten_set_wheel_callback("#canvas", 0, 1, on_wheel);
 	emscripten_set_pointerlockchange_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, 0, 1, on_ptrlock);
+	emscripten_set_visibilitychange_callback(0, 1, on_visibility);
 }
 
 // Video interface
@@ -260,17 +295,17 @@ void IN_Commands(void) {}
 void IN_Move(usercmd_t *cmd) {
 	if (!mouse_avail) return;
 	mouse_x *= sensitivity.value; mouse_y *= sensitivity.value;
-	if ((in_strafe.state & 1) || (lookstrafe.value && (in_mlook.state & 1)))
+	if ((in_strafe.state & 1) || lookstrafe.value)
 		cmd->sidemove += m_side.value * mouse_x;
 	else
 		cl.viewangles[YAW] -= m_yaw.value * mouse_x;
-	if (in_mlook.state & 1) V_StopPitchDrift();
-	if ((in_mlook.state & 1) && !(in_strafe.state & 1)) {
+	V_StopPitchDrift();
+	if (!(in_strafe.state & 1)) {
 		cl.viewangles[PITCH] += m_pitch.value * mouse_y;
 		if (cl.viewangles[PITCH] > 80) cl.viewangles[PITCH] = 80;
 		if (cl.viewangles[PITCH] < -70) cl.viewangles[PITCH] = -70;
 	} else {
-		if ((in_strafe.state & 1) && noclip_anglehack) cmd->upmove -= m_forward.value * mouse_y;
+		if (noclip_anglehack) cmd->upmove -= m_forward.value * mouse_y;
 		else cmd->forwardmove -= m_forward.value * mouse_y;
 	}
 	mouse_x = mouse_y = 0;

@@ -10,6 +10,7 @@ static int snd_inited;
 static int16_t dma_buffer[DMA_SAMPLES];
 static int audio_read_cursor;
 extern int desired_speed;
+extern int snd_blocked;
 
 EM_JS(int, js_audio_init, (int rate, int buf, int samples, int cursor), {
 	try {
@@ -60,6 +61,14 @@ EM_JS(void, js_audio_shutdown, (), {
 	} catch(e) { console.warn("js_audio_shutdown failed:", e); }
 });
 
+EM_JS(void, js_audio_pause, (), {
+	if (Module._nq_audio) { Module._nq_audio.node.disconnect(); Module._nq_audio.ctx.suspend(); }
+});
+
+EM_JS(void, js_audio_unpause, (), {
+	if (Module._nq_audio) { Module._nq_audio.node.connect(Module._nq_audio.ctx.destination); Module._nq_audio.ctx.resume(); }
+});
+
 qboolean SNDDMA_Init(void) {
 	if (snd_inited) return true;
 	int rate = desired_speed ? desired_speed : 11025;
@@ -74,6 +83,20 @@ qboolean SNDDMA_Init(void) {
 		return false;
 	snd_inited = 1;
 	return true;
+}
+
+void SNDDMA_Pause(void) {
+	if (!snd_inited) return;
+	snd_blocked++;
+	js_audio_pause();
+}
+
+void SNDDMA_Resume(void) {
+	if (!snd_inited) return;
+	memset(dma_buffer, 0, sizeof(dma_buffer));
+	audio_read_cursor = shm->samplepos;
+	js_audio_unpause();
+	snd_blocked--;
 }
 
 int SNDDMA_GetDMAPos(void) { return snd_inited ? audio_read_cursor : 0; }
