@@ -61,7 +61,7 @@ net_driver_t net_drivers[MAX_NET_DRIVERS] =
 
 int net_numdrivers = 2;
 
-#include "net_websocket.h"
+#include "net_ws_vnet.h"
 
 net_landriver_t	net_landrivers[MAX_NET_DRIVERS] =
 {
@@ -91,4 +91,3 @@ net_landriver_t	net_landrivers[MAX_NET_DRIVERS] =
 };
 
 int net_numlandrivers = 1;
-

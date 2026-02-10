@@ -5,119 +5,162 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
 
-// globalServerInfoCache is used by the WS->UDP relay to answer Quake's `slist`
-// broadcast from a stable polled snapshot (rather than relying on UDP broadcast
-// delivery semantics on loopback).
-var globalServerInfoCache *ServerInfoCache
-
 const serverInfoPollStep = 500 * time.Millisecond
 
-type serverInfoEntry struct {
-	hostname   string
-	mapName    string
-	players    byte
-	maxPlayers byte
-	lastSeen   time.Time
-}
-
-type ServerInfoCache struct {
-	mu          sync.RWMutex
-	maxServerID int
-	entries     []serverInfoEntry // indexed by server id (0 unused)
-	gameDirs    []string          // indexed by server id (0 unused)
+type ServerInfoPoller struct {
+	mgr *ServerManager
 
 	pollConn *net.UDPConn
 	stopOnce sync.Once
 }
 
-func NewServerInfoCache(maxServerID int, gameDirsByID map[byte]string) *ServerInfoCache {
-	if maxServerID < 1 {
-		maxServerID = 1
-	}
-	if maxServerID > 254 {
-		maxServerID = 254
-	}
-	gameDirs := make([]string, maxServerID+1)
-	for id, gameDir := range gameDirsByID {
-		i := int(id)
-		if i < 1 || i > maxServerID {
-			continue
-		}
-		gameDirs[i] = gameDir
-	}
-	return &ServerInfoCache{
-		maxServerID: maxServerID,
-		entries:     make([]serverInfoEntry, maxServerID+1),
-		gameDirs:    gameDirs,
-	}
+func NewServerInfoPoller(mgr *ServerManager) *ServerInfoPoller {
+	return &ServerInfoPoller{mgr: mgr}
 }
 
-func (c *ServerInfoCache) Start(ctx context.Context) error {
-	if c.maxServerID < 1 {
-		return fmt.Errorf("invalid max server id")
-	}
-
-	// Use a single UDP socket for polling. Bind it to a stable "nexus" loopback
-	// address so it can't collide with per-client loopback allocations.
-	listenAddr := &net.UDPAddr{
-		IP:   net.IPv4(subnetNexusA, subnetNexusB, subnetNexusC, nexusPollerHostOct).To4(),
-		Port: 0,
-	}
-
-	udpConn, err := net.ListenUDP("udp4", listenAddr)
+func (p *ServerInfoPoller) Start(ctx context.Context) error {
+	udpConn, err := net.ListenUDP("udp4", relayListenAddr())
 	if err != nil {
-		// Fall back to any available address.
-		udpConn, err = net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
-		if err != nil {
-			return fmt.Errorf("server info poller: listen udp: %w", err)
-		}
+		return fmt.Errorf("server info poller: listen udp: %w", err)
 	}
 
-	c.pollConn = udpConn
+	p.pollConn = udpConn
 
-	go c.readLoop(ctx, udpConn)
-	go c.pollLoop(ctx, udpConn)
-
-	infof("Server info cache: polling 127.%d.%d.1..%d:%d every %s (round-robin step %s)",
-		subnetServersB, subnetServersC, c.maxServerID, defaultServerPort,
-		time.Duration(c.maxServerID)*serverInfoPollStep, serverInfoPollStep,
-	)
+	go p.readLoop(ctx, udpConn)
+	go p.pollLoop(ctx, udpConn)
 
 	return nil
 }
 
-func (c *ServerInfoCache) Stop() {
-	c.stopOnce.Do(func() {
-		if c.pollConn != nil {
-			_ = c.pollConn.Close()
+func (p *ServerInfoPoller) Stop() {
+	p.stopOnce.Do(func() {
+		if p.pollConn != nil {
+			_ = p.pollConn.Close()
 		}
 	})
 }
 
-func (c *ServerInfoCache) pollLoop(ctx context.Context, conn *net.UDPConn) {
+func fillRunningPorts(mgr *ServerManager, dst []int) []int {
+	dst = dst[:0]
+	if mgr == nil {
+		return dst
+	}
+
+	mgr.mu.RLock()
+	defer mgr.mu.RUnlock()
+
+	for port, recs := range mgr.serversByPort {
+		if port < 1 || port > 65535 {
+			continue
+		}
+		for _, rec := range recs {
+			if rec == nil || rec.running == nil || rec.running.cmd == nil || rec.running.cmd.Process == nil {
+				continue
+			}
+			if !isProcessAlive(rec.running.cmd.Process) {
+				continue
+			}
+			dst = append(dst, port)
+			break
+		}
+	}
+	return dst
+}
+
+func staleAfterForTargets(targetCount int) time.Duration {
+	pollPeriod := time.Duration(targetCount) * serverInfoPollStep
+	staleAfter := pollPeriod * 10
+	if staleAfter < 30*time.Second {
+		staleAfter = 30 * time.Second
+	}
+	return staleAfter
+}
+
+func snapshotForSlist(mgr *ServerManager) []serverListEntry {
+	if mgr == nil {
+		return nil
+	}
+
+	ports := fillRunningPorts(mgr, nil)
+	staleAfter := staleAfterForTargets(len(ports))
+	now := time.Now()
+
+	mgr.mu.RLock()
+	out := make([]serverListEntry, 0, len(ports))
+	for _, port := range ports {
+		recs := mgr.serversByPort[port]
+		var rec *serverRecord
+		for _, r := range recs {
+			if r == nil || r.running == nil || r.running.cmd == nil || r.running.cmd.Process == nil {
+				continue
+			}
+			if !isProcessAlive(r.running.cmd.Process) {
+				continue
+			}
+			rec = r
+			break
+		}
+		if rec == nil {
+			continue
+		}
+		if now.Sub(rec.lastSeen) > staleAfter {
+			continue
+		}
+
+		gameDir := rec.launch.spec.ModName
+
+		out = append(out, serverListEntry{
+			ListenPort: port,
+			Hostname:   rec.hostname,
+			MapName:    rec.mapName,
+			GameDir:    gameDir,
+			Players:    rec.players,
+			MaxPlayers: rec.maxPlayers,
+		})
+	}
+	mgr.mu.RUnlock()
+
+	sort.Slice(out, func(i, j int) bool {
+		hi := out[i].Hostname
+		hj := out[j].Hostname
+		if hi == "" {
+			hi = "UNNAMED"
+		}
+		if hj == "" {
+			hj = "UNNAMED"
+		}
+		hi = strings.ToLower(hi)
+		hj = strings.ToLower(hj)
+		if hi != hj {
+			return hi < hj
+		}
+		return out[i].ListenPort < out[j].ListenPort
+	})
+	return out
+}
+
+func (p *ServerInfoPoller) pollLoop(ctx context.Context, conn *net.UDPConn) {
 	req := buildCCREQServerInfo()
 
-	// Prime the cache quickly at startup (bounded by maxServerID).
-	for id := 1; id <= c.maxServerID; id++ {
-		dst := &net.UDPAddr{
-			IP:   net.IPv4(subnetServersA, subnetServersB, subnetServersC, byte(id)).To4(),
-			Port: defaultServerPort,
-		}
+	var ports []int
+
+	// Prime quickly at startup.
+	ports = fillRunningPorts(p.mgr, ports)
+	for _, port := range ports {
+		dst := serverUDPAddr(port)
 		if _, err := conn.WriteToUDP(req, dst); err != nil && errors.Is(err, net.ErrClosed) {
 			return
 		}
 	}
 
-	nextID := 1
-	pollOne := func(serverID int) bool {
-		dst := &net.UDPAddr{
-			IP:   net.IPv4(subnetServersA, subnetServersB, subnetServersC, byte(serverID)).To4(),
-			Port: defaultServerPort,
-		}
+	pollOne := func(port int) bool {
+		dst := serverUDPAddr(port)
 		if _, err := conn.WriteToUDP(req, dst); err != nil {
 			return !errors.Is(err, net.ErrClosed)
 		}
@@ -127,23 +170,32 @@ func (c *ServerInfoCache) pollLoop(ctx context.Context, conn *net.UDPConn) {
 	ticker := time.NewTicker(serverInfoPollStep)
 	defer ticker.Stop()
 
+	infof("Server info poller: polling %d targets every %s (round-robin step %s)",
+		len(ports), time.Duration(len(ports))*serverInfoPollStep, serverInfoPollStep)
+
+	rrNext := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if nextID > c.maxServerID {
-				nextID = 1
+			ports = fillRunningPorts(p.mgr, ports)
+			if len(ports) == 0 {
+				continue
 			}
-			if !pollOne(nextID) {
+			if rrNext >= len(ports) {
+				rrNext = 0
+			}
+			port := ports[rrNext]
+			rrNext++
+			if !pollOne(port) {
 				return
 			}
-			nextID++
 		}
 	}
 }
 
-func (c *ServerInfoCache) readLoop(ctx context.Context, conn *net.UDPConn) {
+func (p *ServerInfoPoller) readLoop(ctx context.Context, conn *net.UDPConn) {
 	buf := make([]byte, 2048)
 	for {
 		_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
@@ -162,15 +214,8 @@ func (c *ServerInfoCache) readLoop(ctx context.Context, conn *net.UDPConn) {
 			continue
 		}
 
-		if src == nil || src.IP == nil {
-			continue
-		}
-		ip4 := src.IP.To4()
-		if ip4 == nil || ip4[0] != subnetServersA || ip4[1] != subnetServersB || ip4[2] != subnetServersC {
-			continue
-		}
-		serverID := int(ip4[3])
-		if serverID < 1 || serverID > c.maxServerID {
+		srcPort, ok := serverSourcePortFromAddr(src)
+		if !ok {
 			continue
 		}
 
@@ -179,67 +224,8 @@ func (c *ServerInfoCache) readLoop(ctx context.Context, conn *net.UDPConn) {
 			continue
 		}
 
-		c.mu.Lock()
-		c.entries[serverID] = serverInfoEntry{
-			hostname:   hostname,
-			mapName:    mapName,
-			players:    players,
-			maxPlayers: maxPlayers,
-			lastSeen:   time.Now(),
+		if p.mgr != nil {
+			p.mgr.UpdateObservedServerInfo(srcPort, hostname, mapName, players, maxPlayers)
 		}
-		c.mu.Unlock()
 	}
-}
-
-func (c *ServerInfoCache) SnapshotForSlist() []struct {
-	ServerID   byte
-	Hostname   string
-	MapName    string
-	GameDir    string
-	Players    byte
-	MaxPlayers byte
-} {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	now := time.Now()
-	pollPeriod := time.Duration(c.maxServerID) * serverInfoPollStep
-	staleAfter := pollPeriod * 10
-	if staleAfter < 30*time.Second {
-		staleAfter = 30 * time.Second
-	}
-
-	var out []struct {
-		ServerID   byte
-		Hostname   string
-		MapName    string
-		GameDir    string
-		Players    byte
-		MaxPlayers byte
-	}
-	for id := 1; id <= c.maxServerID; id++ {
-		e := c.entries[id]
-		if e.lastSeen.IsZero() {
-			continue
-		}
-		if now.Sub(e.lastSeen) > staleAfter {
-			continue
-		}
-		out = append(out, struct {
-			ServerID   byte
-			Hostname   string
-			MapName    string
-			GameDir    string
-			Players    byte
-			MaxPlayers byte
-		}{
-			ServerID:   byte(id),
-			Hostname:   e.hostname,
-			MapName:    e.mapName,
-			GameDir:    c.gameDirs[id],
-			Players:    e.players,
-			MaxPlayers: e.maxPlayers,
-		})
-	}
-	return out
 }

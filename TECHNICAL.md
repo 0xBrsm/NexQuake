@@ -8,7 +8,7 @@ NexQuake follows three principles:
 
 1. **Don't fight the browser.** The client targets one platform: the browser. Since there is no need for cross-platform portability, NexQuake uses WebGL2, WebAudio, and HTML5 input directly rather than going through an abstraction layer like SDL.
 
-2. **Don't fight Quake.** The goal is to play Quake as it was built, quirks, rough edges, and all. The engine has known bugs and idiosyncrasies; we preserve original behavior rather than fixing it for convenience. Patches over rewrites. Overlays over forks. If vanilla Quake does something a certain way, we (generally) keep it.
+2. **Don't fight Quake.** The goal is to play Quake as it was built, quirks, rough edges, and all. The engine has known bugs and idiosyncrasies; we preserve original behavior rather than fixing it for convenience. Patches over rewrites. Overlays over forks. If default Quake does something a certain way, we (generally) keep it.
 
 3. **Don't fight the network.** NetQuake's UDP implementation is essential to the feel of the game. The Nexus tunnel carries raw datagrams with a minimal routing header and stays out of the way.
 
@@ -92,10 +92,10 @@ Game proxies typically parse packets, maintain session state, and layer their ow
 Every WebSocket binary frame contains:
 
 ```
-[server_id : u8] [udp_port : u16 big-endian] [raw NetQuake datagram]
+[udp_port : u16 big-endian] [raw NetQuake datagram]
 ```
 
-Three bytes of routing header, then the exact bytes that would go over UDP. Nexus reads the header, forwards the datagram to `127.13.37.<server_id>:<port>`, and sends the reply back with the server's source port in the header.
+Two bytes of routing header, then the exact bytes that would go over UDP. Nexus reads the destination port, forwards the datagram to `${NQSERVER_IP}:<port>` (default `127.13.37.9`), and sends replies back with the server source port in the same 2-byte header slot.
 
 ### Why This Works
 
@@ -105,19 +105,19 @@ Because Nexus never parses the datagram payload, it has no knowledge of whether 
 
 ### Multi-Server Routing
 
-The `server_id` byte supports multiple servers behind one Nexus instance over a single WebSocket connection. Servers bind to `127.13.37.1`, `127.13.37.2`, etc. The client selects a server by setting the routing byte.
+Server selection is port-based: managed id `N` listens on loopback `:(26000+N)` (default = `:26000`).
 
-Broadcasting (routing_byte = 0xFF) triggers Nexus's server-info cache, which replies with aggregated `CCREP_SERVER_INFO` responses built from polled data. This replaces NetQuake's UDP broadcast, which never worked well and doesn't work across loopback addresses on Linux anyway.
+Control/broadcast traffic uses `udp_port = 0`. For `slist`, Nexus detects `CCREQ_SERVER_INFO` and replies with aggregated `CCREP_SERVER_INFO` data built from its polled server cache. This replaces NetQuake's UDP broadcast, which never worked well and doesn't work across loopback addresses on Linux anyway.
 
-## Loopback Infrastructure Subnet
+## Port-Only Relay Addressing
 
-NexQuake simulates a LAN on the loopback interface:
+NexQuake routes exclusively by UDP port:
 
-- Each server binds to `127.13.37.<id>:26000`
-- Each browser client's UDP socket binds to a hashed IP in `127.0.0.0/8` (deterministic from client source IP)
-- Each admin connection binds to `127.13.37.<octet>` (same subnet as servers, allocated from .255 downward)
+- Browser frames carry destination port in the 2-byte WS header
+- Nexus forwards to `${NQSERVER_IP}:<port>` (default `127.13.37.9`)
+- Client-facing Quake addresses are virtualized as `0.0.0.0:<port>` (IP is ignored by the overlay)
 
-Every browser tab looks like a distinct LAN client to the server. No port juggling, no NAT traversal, no connection tracking. The server sees real UDP traffic from real (loopback) IP addresses.
+There is no client IP emulation and no LAN-style per-client subnet allocation.
 
 ## Build Architecture
 
@@ -197,7 +197,7 @@ NexQuake is configured entirely through environment variables, with no config fi
 | `LOGS_DIR` | `/app/logs` | Server state (read-write) |
 | `QUICKSTART` | `minimal` | Bootstrap manifest |
 | `AUTH_ISSUER` | (unset) | OIDC provider URL for admin auth |
-| `AUTH_RCON_PASSWORD` | (unset) | Legacy admin shared secret |
+| `AUTH_RCON_PASSWORD` | (unset) | Shared secret for in-game `rcon_password` validation |
 | `LOG_LEVEL` | `info` | Logging verbosity |
 
 ## What's Next

@@ -53,7 +53,7 @@
  // parse protocol version number
  	i = MSG_ReadLong ();
  	if (i != PROTOCOL_VERSION)
-@@ -281,6 +293,54 @@
+@@ -281,6 +293,63 @@
  		S_TouchSound (str);
  	}
  
@@ -92,7 +92,8 @@
 +
 +	{
 +		double start = Sys_FloatTime();
-+		while ((Sys_FloatTime() - start) < 10.0)
++		double wait_limit = 30.0;
++		while ((Sys_FloatTime() - start) < wait_limit)
 +		{
 +			int busy = EM_ASM_INT({
 +				if (typeof Module === 'undefined') return 0;
@@ -101,6 +102,14 @@
 +			if (!busy)
 +				break;
 +			emscripten_sleep(1);
++		}
++		{
++			int failed = EM_ASM_INT({
++				if (typeof Module === 'undefined' || !Module.nexquakePrefetchFailures) return 0;
++				return Object.keys(Module.nexquakePrefetchFailures).length;
++			});
++			if (failed > 0)
++				Con_DPrintf("NexQuake prefetch: %d assets failed; falling back to lazy fetch\n", failed);
 +		}
 +	}
 +#endif

@@ -22,12 +22,12 @@ These replace UDP sockets with WebSocket transport for browser multiplayer.
 
 | File | Purpose | Why It's Needed |
 |------|---------|-----------------|
-| `net_websocket.c` | **WebSocket multiplayer driver.** Implements the Quake `net_landriver` interface over WebSocket. Opens connection to `/ws`, sends/receives binary frames with routing header (server_id + UDP port + raw datagram). Handles server selection, broadcast, and connection lifecycle. | Browsers can't open UDP sockets. This driver makes WebSocket look like UDP to the Quake networking stack. |
-| `net_websocket.h` | **Driver header.** Public interface for the WebSocket landriver. | Declares the driver functions that `net_bsd.c` references. |
-| `net_ws_transport.c` | **Transport layer.** WebSocket connection management, message queuing, frame callbacks. Handles the boundary between JavaScript WebSocket events and C-side packet delivery. | Separates transport concerns (connection, buffering, callbacks) from protocol concerns (routing, server selection) in the WebSocket driver. |
+| `net_ws_transport.c` | **WebSocket transport.** Owns the Emscripten websocket lifecycle, callbacks, frame queues, and 2-byte port-header framing. | Browsers can't open UDP sockets. This layer turns WebSocket frames into queued datagrams. |
+| `net_ws_transport.h` | **Transport header.** Public transport API (including `WebSocketTransport_SendFrame`). | Used by `cmd_rcon.c` (nexus control-plane) and the vnet driver. |
+| `net_ws_vnet.c` | **Virtual LAN + landriver.** Implements Quake's `net_landriver` interface over the WebSocket transport. Projects a fixed virtual server IP veneer and applies nexus-assigned local virtual client IP identity for stock Quake APIs. | Keeps the Quake networking stack believing it's talking to UDP sockets. |
+| `net_ws_vnet.h` | **Driver header.** Public interface for the WebSocket landriver. | Declares the driver functions that `net_bsd.c` references. |
 | `net_bsd.c` | **Driver table.** Replaces the original `net_bsd.c` to register only the WebSocket landriver (no UDP). | Quake's networking discovers available drivers from this table. In the browser, WebSocket is the only option. |
-| `cmd_rcon.c` | **RCON commands.** Implements `rcon` console command for admin authentication and server commands. | Allows admin control of servers through the Quake console. |
-| `cmd_rcon_token.js` | **RCON token bridge.** JavaScript helper that provides the auth token to the C RCON layer. | The auth token comes from the browser environment (URL param or cookie); this bridges it to C. |
+| `cmd_rcon.c` | **RCON commands.** Implements `rcon_password` + command framing for the Nexus control channel with explicit host/port targeting. | Keeps admin command targeting explicit (`rcon <host|port> <cmd>`) and avoids implicit destination fallback. |
 
 ### Patches
 
@@ -48,7 +48,7 @@ Applied to upstream Quake source at build time. Each patch is minimal and target
 | File | Purpose |
 |------|---------|
 | `Makefile.emscripten` | Emscripten build configuration. Source file list, compiler flags (`-sMAX_WEBGL_VERSION=2`, `-sASYNCIFY`), linker settings. No SDL references. |
-| `shell.html` | HTML template for the browser client. Bootstrap logic: fetches `/data-manifest/id1`, creates virtual filesystem, downloads game data, starts Quake. Contains canvas element, loading UI, query parameter handling (`?ws=`, `?-nosound`, etc.). |
+| `shell.html` | HTML template for the browser client. Bootstrap logic: fetches `/data-manifest/id1`, creates virtual filesystem, downloads game data, starts Quake. Contains canvas element, loading UI, and query parameter handling (for example `?-nosound`). |
 
 ## Build Process
 
@@ -63,7 +63,7 @@ patch -p0 < /path/to/client/net_main.c.patch
 # ... etc
 
 # 3. Copy overlay files
-cp /path/to/client/*.c /path/to/client/*.h /path/to/client/*.js .
+cp /path/to/client/*.c /path/to/client/*.h .
 cp /path/to/client/Makefile.emscripten /path/to/client/shell.html .
 
 # 4. Build
@@ -79,5 +79,5 @@ The automated build scripts (`build/build-client.sh`) handle all of this.
 - **No SDL**: Direct browser APIs only. Smaller binary, fewer layers, easier debugging.
 - **GPU palette rendering**: 8-bit framebuffer uploaded as R8 texture, palette lookup in fragment shader. Eliminates per-frame CPU conversion.
 - **Event-driven input**: Emscripten HTML5 callbacks fire `Key_Event()` directly. No polling loop.
-- **WebSocket URL from location**: `ws(s)://<window.location.host>/ws` by default, overridable with `?ws=<url>`.
-- **Vanilla UI preserved**: No custom menus. `connect`, `slist`, standard Quake console.
+- **WebSocket URL**: `Module.websocketUrl` / `Module.WEBSOCKET_URL` if set (headless/tests), else `ws(s)://<window.location.host>/ws`; if neither exists, websocket init fails fast.
+- **Default UI preserved**: No custom menus. `connect`, `slist`, standard Quake console.

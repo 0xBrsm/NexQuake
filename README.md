@@ -6,7 +6,7 @@ Quake was released June 22, 1996 and changed video-gaming forever. **NexQuake** 
 
 NexQuake is a WebAssembly port of Quake with browser-native multiplayer. It takes the original id Software engine, compiles it to WASM, and connects players to dedicated servers through a lightweight Go relay that tunnels UDP over WebSocket.
 
-The result is vanilla Quake (software renderer, original physics, original UI) playable in any modern browser with real-time multiplayer. No plugins, no installs, no compromise on the classic experience.
+The result is default Quake (software renderer, original physics, original UI) playable in any modern browser with real-time multiplayer. No plugins, no installs, no compromise on the classic experience.
 
 ## Why It Exists
 
@@ -94,7 +94,7 @@ One set of PAK files serves both browser clients and multiplayer servers. Nexus 
 
 ### Auto-Connect
 
-If you just want to get playing with a single server, add `connect 127.13.37.1` to `data/id1/common/autoexec.cfg` and players join the server automatically on load.
+If you just want to get playing with a single server, add `connect 0.0.0.0:26000` to `data/id1/common/autoexec.cfg` and players join the server automatically on load.
 
 ## Architecture
 
@@ -108,12 +108,12 @@ Nexus (Go, port 1337)
     |
     |  UDP: localhost relay
     |
-NetQuake Servers (127.13.37.<id>:26000)
+NetQuake Servers (loopback:26000 and loopback:(26000+id))
 ```
 
 - **Single container**: Nexus handles HTTP, WebSocket, and server management. One port exposed.
 - **Stateless tunnel**: Each WebSocket frame = routing header + raw UDP datagram. No game packet parsing.
-- **LAN simulation**: Each browser tab gets a unique loopback IP. Servers see distinct "LAN clients" that can be kicked or banned.
+- **Port-only routing**: Browser overlay addresses are virtualized as `0.0.0.0:<port>`; nexus keys routing only by destination port.
 - **Server discovery**: `slist` returns an aggregated server list from the Nexus cache. No flaky broadcast.
 
 ## Project Layout

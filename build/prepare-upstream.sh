@@ -64,9 +64,7 @@ if [[ "${kind}" == "server" ]]; then
   echo "Applying server overlays + patches ..."
   cp "${ROOT}/server/Makefile.dedicated" "${OUT_DIR}/"
 
-  apply_patch "${ROOT}/server/net_udp.c.patch"
   apply_patch "${ROOT}/server/common.c.patch"
-  apply_patch "${ROOT}/server/net_main.c.patch"
   apply_patch "${ROOT}/server/sv_main.c.patch"
 
   if [[ "${server_bits}" == "64" ]]; then
@@ -84,7 +82,7 @@ fi
 
 if [[ "${kind}" == "client" ]]; then
   echo "Applying client (WASM) overlays + patches ..."
-  cp "${ROOT}/client/net_bsd.c" "${ROOT}/client/net_websocket.c" "${ROOT}/client/net_ws_transport.c" "${ROOT}/client/cmd_rcon.c" "${ROOT}/client/cmd_rcon_token.js" "${ROOT}/client/net_websocket.h" "${OUT_DIR}/"
+  cp "${ROOT}/client/net_bsd.c" "${ROOT}/client/net_ws_transport.c" "${ROOT}/client/net_ws_vnet.c" "${ROOT}/client/cmd_rcon.c" "${ROOT}/client/net_ws_transport.h" "${ROOT}/client/net_ws_vnet.h" "${OUT_DIR}/"
   cp "${ROOT}/client/sys_wasm.c" "${ROOT}/client/vid_wasm.c" "${ROOT}/client/snd_wasm.c" "${OUT_DIR}/"
   cp "${ROOT}/client/Makefile.emscripten" "${ROOT}/client/shell.html" "${OUT_DIR}/"
 

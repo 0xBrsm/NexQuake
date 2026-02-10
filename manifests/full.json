@@ -1,17 +1,17 @@
 [
   {
     "game": "arena",
-    "common": ["https://github.com/brstm/QuakeMods/raw/refs/heads/main/NetQuake/farena12.zip"],
-    "server": ["https://github.com/brstm/QuakeMods/raw/refs/heads/main/NetQuake/fasrv12.zip"]
+    "common": ["https://github.com/0xBrsm/QuakeMods/raw/refs/heads/main/NetQuake/farena12.zip"],
+    "server": ["https://github.com/0xBrsm/QuakeMods/raw/refs/heads/main/NetQuake/fasrv12.zip"]
   },
   {
     "game": "ctf",
-    "common": ["https://github.com/brstm/QuakeMods/raw/refs/heads/main/NetQuake/3wctfc.zip"],
-    "server": ["https://github.com/brstm/QuakeMods/raw/refs/heads/main/NetQuake/3wave421d.zip"]
+    "common": ["https://github.com/0xBrsm/QuakeMods/raw/refs/heads/main/NetQuake/3wctfc.zip"],
+    "server": ["https://github.com/0xBrsm/QuakeMods/raw/refs/heads/main/NetQuake/3wave421d.zip"]
   },
   {
     "game": "id1",
-    "common": ["https://github.com/brstm/QuakeMods/raw/refs/heads/main/NetQuake/quake106.zip",
-                "https://github.com/brstm/QuakeMods/raw/refs/heads/main/NetQuake/lq-pak1.zip"]
+    "common": ["https://github.com/0xBrsm/QuakeMods/raw/refs/heads/main/NetQuake/quake106.zip",
+                "https://github.com/0xBrsm/QuakeMods/raw/refs/heads/main/NetQuake/lq-pak1.zip"]
   }
 ]

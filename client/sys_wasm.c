@@ -236,3 +236,24 @@ void main_loop(void) {
 	else oldtime += time;
 	Host_Frame(time);
 }
+
+// Exported JS hooks (browser only).
+EMSCRIPTEN_KEEPALIVE void NexQuake_ExecCommand(const char *cmd)
+{
+	if (!cmd || !cmd[0])
+		return;
+	Cbuf_AddText((char *)cmd);
+	Cbuf_AddText("\n");
+}
+
+EMSCRIPTEN_KEEPALIVE void NexQuake_OnPageHide(void)
+{
+	if (cls.state == ca_connected)
+		CL_Disconnect();
+	Host_Shutdown();
+}
+
+EMSCRIPTEN_KEEPALIVE void NexQuake_VFSReady(void)
+{
+	// No-op for the browser; headless builds define this in sys_node.c.
+}

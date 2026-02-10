@@ -52,10 +52,11 @@ The following projects provided inspiration and reference during NexQuake's deve
 
 ## File-Level Guidance
 
-- `client/net_websocket.c`: derivative net driver glue for NexQuake.
-- `client/net_ws_transport.c`: derivative transport/callback/queue logic.
+- `client/net_ws_transport.c`: derivative websocket transport (Emscripten websocket lifecycle + frame queues).
+- `client/net_ws_vnet.c`: derivative net driver + virtual LAN address veneer for NexQuake.
 - `client/cmd_rcon.c`: NexQuake-focused auth/token command layer; still part of the derivative websocket module lineage.
-- `client/net_websocket.h`: derivative public net driver interface.
+- `client/net_ws_transport.h`: public transport interface.
+- `client/net_ws_vnet.h`: public net driver interface.
 
 ## License
 

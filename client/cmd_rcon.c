@@ -9,47 +9,108 @@
 
 #include "quakedef.h"
 
-extern void RconToken_SetFromPassword(const char *password);
+#include <stdlib.h>
+
+#include "net_ws_transport.h"
 
 static qboolean rcon_commands_registered = false;
 
-static void RconPassword_f(void)
-{
-	const char *pw;
-
-	if (Cmd_Argc() != 2)
-	{
-		Con_Printf("usage: rcon_password <password>\n");
-		return;
-	}
-
-	pw = Cmd_Argv(1);
-	if (!pw || !pw[0])
-	{
-		Con_Printf("usage: rcon_password <password>\n");
-		return;
-	}
-
-	RconToken_SetFromPassword(pw);
-	Con_Printf("Password set. You must reload the client for it to take effect.\n");
-}
+static cvar_t rcon_password = {"rcon_password", ""};
 
 static void Rcon_f(void)
 {
-	if (cls.state != ca_connected)
+	char *target;
+	char targetbuf[32];
+	char *cmd;
+	char *pw;
+	int payload_len;
+	byte *payload;
+	int targetlen;
+	int cmdlen;
+	int pwlen;
+	int argc;
+
+	argc = Cmd_Argc();
+	if (argc < 2)
 	{
-		Con_Printf("Can't \"%s\", not connected\n", Cmd_Argv(0));
+		Con_Printf("usage: rcon <cmd> | rcon <host|port> <cmd>\n");
 		return;
 	}
 
-	if (cls.demoplayback)
-		return;
+	targetbuf[0] = 0;
+	cmd = Cmd_Args();
+	target = targetbuf;
+	if (argc > 2)
+	{
+		char *arg1 = Cmd_Argv(1);
+		int i;
 
-	MSG_WriteByte(&cls.message, clc_stringcmd);
-	if (Cmd_Argc() > 1)
-		SZ_Print(&cls.message, Cmd_Args());
-	else
-		SZ_Print(&cls.message, "\n");
+		// First, treat arg1 as a hostcache name and resolve to its port.
+		for (i = 0; i < hostCacheCount; i++)
+		{
+			if (Q_strcasecmp(arg1, hostcache[i].name) == 0)
+			{
+				Q_strncpy(targetbuf, hostcache[i].cname, sizeof(targetbuf) - 1);
+				targetbuf[sizeof(targetbuf) - 1] = 0;
+				break;
+			}
+		}
+
+		// Otherwise, accept direct numeric port targets.
+		if (!targetbuf[0] && arg1[0] >= '0' && arg1[0] <= '9')
+		{
+			char *end;
+			long port = strtol(arg1, &end, 10);
+			if (end != arg1 && *end == '\0' && port >= 1 && port <= 65535)
+			{
+				Q_strncpy(targetbuf, arg1, sizeof(targetbuf) - 1);
+				targetbuf[sizeof(targetbuf) - 1] = 0;
+			}
+		}
+
+		if (targetbuf[0])
+		{
+			// Retokenize the args string so Cmd_Args() yields everything after the target.
+			Cmd_TokenizeString(cmd);
+			cmd = Cmd_Args();
+		}
+	}
+
+	if (!targetbuf[0] && cls.state == ca_connected && cls.netcon)
+	{
+		int ld = cls.netcon->landriver;
+		int i;
+		if (ld >= 0 && ld < net_numlandrivers && net_landrivers[ld].initialized)
+			for (i = 0; i < hostCacheCount; i++)
+				if (hostcache[i].ldriver == ld &&
+					net_landrivers[ld].AddrCompare(&cls.netcon->addr, &hostcache[i].addr) >= 0)
+				{
+					Q_strncpy(targetbuf, hostcache[i].cname, sizeof(targetbuf) - 1);
+					targetbuf[sizeof(targetbuf) - 1] = 0;
+					break;
+				}
+	}
+
+	cmdlen = Q_strlen(cmd);
+	pw = rcon_password.string;
+	pwlen = pw ? Q_strlen(pw) : 0;
+	targetlen = Q_strlen(target);
+
+	payload_len = pwlen + 1 + targetlen + 1 + cmdlen;
+	payload = (byte *)Z_Malloc(payload_len);
+	if (pwlen > 0)
+		Q_memcpy(payload, pw, pwlen);
+	payload[pwlen] = 0;
+	if (targetlen > 0)
+		Q_memcpy(payload + pwlen + 1, target, targetlen);
+	payload[pwlen + 1 + targetlen] = 0;
+	Q_memcpy(payload + pwlen + 1 + targetlen + 1, cmd, cmdlen);
+
+	// Port 0 is nexus control traffic.
+	if (WebSocketTransport_SendFrame(0, payload, payload_len) < 0)
+		Con_Printf("rcon: send failed\n");
+
+	Z_Free(payload);
 }
 
 void Rcon_RegisterCommands(void)
@@ -58,6 +119,6 @@ void Rcon_RegisterCommands(void)
 		return;
 	rcon_commands_registered = true;
 
-	Cmd_AddCommand("rcon_password", RconPassword_f);
+	Cvar_RegisterVariable(&rcon_password);
 	Cmd_AddCommand("rcon", Rcon_f);
 }

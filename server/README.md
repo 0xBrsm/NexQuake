@@ -12,7 +12,6 @@ Builds the **complete WinQuake engine for Linux** with null drivers for graphics
 |------|---------|-----------------|
 | `Makefile.dedicated` | **Build configuration.** Compiles the full WinQuake source with null drivers (`vid_null`, `snd_null`, `cd_null`, `in_null`). Supports platform detection via `PLATFORM` env var (linux/amd64, linux/arm64, linux/arm/v7, linux/386). Defaults to 32-bit on most platforms. | The build entry point. Handles cross-compilation, bitness selection, and architecture-specific flags. |
 | `sys_linux_stub.c` | **System stub.** Provides `Sys_SendKeyEvents()` (required by the engine but unused in dedicated mode). Appended to the upstream `sys_linux.c` during build. | WinQuake expects this function even when no keyboard input is possible. Without it, the linker fails. |
-| `net_udp.c.patch` | **IP binding.** Adds `-ip <address>` command-line flag so the server can bind to a specific IP instead of `INADDR_ANY`. | Nexus runs multiple servers on the same port (26000) by binding each to a different loopback address (`127.13.37.1`, `127.13.37.2`, etc.). Stock Quake only binds to 0.0.0.0. |
 | `common.c.patch` | **Pointer underflow fix.** Guards `COM_FileBase()` against reading before the start of the input string. | Stock Quake assumes filenames always contain a path separator. On ARM (armhf), the underflow causes a crash. |
 | `sv_main.c.patch` | **Entity overrides.** Allows the server to load `maps/<map>.ent` files to override entity placement in BSP maps. Optional quality-of-life feature. | Lets server admins customize spawn points, item placement, and other entities without modifying the BSP file. |
 | `64bit/*.64bit.patch` | **64-bit patches.** Fix `string_t` pointer-subtraction truncation and related issues for 64-bit builds. Applied only when building with `BITS=64`. | QuakeC uses 32-bit offsets for string references. On 64-bit, pointer arithmetic overflows. These patches widen the affected paths. |
@@ -28,7 +27,6 @@ cd Quake/WinQuake
 cp /path/to/server/Makefile.dedicated .
 
 # Apply required patches
-patch -p0 < /path/to/server/net_udp.c.patch
 patch -p0 < /path/to/server/common.c.patch
 
 # Append stub
@@ -51,10 +49,8 @@ The automated build script (`build/build-server.sh`) handles all of this.
 ## Running
 
 ```bash
-./nqserver -dedicated -ip 127.13.37.1
+./nqserver -dedicated -port 26000
 ```
-
-The `-ip` flag (from `net_udp.c.patch`) binds to a specific loopback address. Nexus starts servers this way to support multiple game instances on the same port.
 
 ## Why 32-Bit by Default
 

@@ -1,10 +1,6 @@
 # NexQuake (nqwasm) Makefile for Emscripten / WebAssembly
 # Written by Gregory Maynard-Hoare
 
-ifeq ($(WEBSOCKET_URL),)
-	WEBSOCKET_URL := ws://localhost:1337/ws
-endif
-
 ifeq ($(NEXQUAKE_VERSION),)
 	NEXQUAKE_VERSION := $(shell cat VERSION 2>/dev/null || echo unknown)
 endif
@@ -14,9 +10,13 @@ CC := emcc
 CFLAGS := -O3 -ffast-math -funroll-loops -fomit-frame-pointer -Wall -Wextra -Wno-implicit-function-declaration \
 	-Wno-unused-parameter -Wno-missing-field-initializers -Wno-sign-compare -Wno-pointer-sign \
 	-DNEXQUAKE_VERSION='"$(NEXQUAKE_VERSION)"'
+WEBSOCKET_URL_FLAG :=
+ifneq ($(strip $(WEBSOCKET_URL)),)
+WEBSOCKET_URL_FLAG := -sWEBSOCKET_URL=$(WEBSOCKET_URL)
+endif
 LDFLAGS := -O3 -Wl,--allow-multiple-definition -sMAX_WEBGL_VERSION=2 -sMIN_WEBGL_VERSION=2 -sINITIAL_MEMORY=64MB -sTOTAL_STACK=2MB -sALLOW_MEMORY_GROWTH \
-	--shell-file shell.html -lidbfs.js -sWEBSOCKET_URL=$(WEBSOCKET_URL) -sWEBSOCKET_SUBPROTOCOL=binary \
-	-lwebsocket.js --js-library cmd_rcon_token.js -sASYNCIFY=1 -sASYNCIFY_STACK_SIZE=4MB -sASYNCIFY_IGNORE_INDIRECT=0 -sALLOW_BLOCKING_ON_MAIN_THREAD=1 \
+	--shell-file shell.html -lidbfs.js $(WEBSOCKET_URL_FLAG) -sWEBSOCKET_SUBPROTOCOL=binary \
+	-lwebsocket.js -sASYNCIFY=1 -sASYNCIFY_STACK_SIZE=4MB -sASYNCIFY_IGNORE_INDIRECT=0 -sALLOW_BLOCKING_ON_MAIN_THREAD=1 \
 	-sEXPORTED_RUNTIME_METHODS=['addRunDependency','removeRunDependency','ccall'] -sEXPORT_KEEPALIVE=1
 TARGET := index.html
 
@@ -43,8 +43,8 @@ net_dgrm.c \
 net_loop.c \
 net_main.c \
 net_vcr.c \
-net_websocket.c \
 net_ws_transport.c \
+net_ws_vnet.c \
 cmd_rcon.c \
 pr_cmds.c \
 pr_edict.c \

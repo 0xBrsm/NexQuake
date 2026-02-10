@@ -46,8 +46,7 @@ BITS ?= auto
 # - armhf (linux/arm/v7)
 # - i386  (linux/386)
 TARGET ?=
-# IDGODS enables the privilege system (please command, IsID() check)
-BASE_CFLAGS = -Dstricmp=strcasecmp -fcommon -no-pie -DNO_X86_ASM=1 -Did386=0 -fno-strict-aliasing -DIDGODS
+BASE_CFLAGS = -Dstricmp=strcasecmp -fcommon -no-pie -DNO_X86_ASM=1 -Did386=0 -fno-strict-aliasing
 RELEASE_CFLAGS = $(BASE_CFLAGS) -O3 -Wall
 DEBUG_CFLAGS = $(BASE_CFLAGS) -g -Wall
 LDFLAGS = -lm -rdynamic

@@ -1,10 +1,10 @@
 /*
- * net_websocket.h
+ * net_ws_vnet.h
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
- * This module includes derivative work from
- * upstream websocket networking implementations by initialed85.
- * See ../ATTRIBUTIONS.md for upstream repositories, paths, and pinned commits.
+ * WebSocket landriver interface for NexQuake. Implements Quake's
+ * `net_landriver` APIs on top of the WebSocket transport in
+ * net_ws_transport.c.
  */
 
 int  WebSocket_Init (void);

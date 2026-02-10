@@ -2,34 +2,143 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
+	"net"
+	"strconv"
+	"sync"
+
+	"github.com/gorilla/websocket"
 )
 
+type Router struct {
+	ws       *websocket.Conn
+	udpConn  *net.UDPConn
+	wsTx     chan []byte
+	clientIP [4]byte
+	isAdmin  bool
+
+	ctx       context.Context
+	cancel    context.CancelFunc
+	closeOnce sync.Once
+}
+
+func NewRouter(ws *websocket.Conn, sourceKey string, isAdmin bool) (*Router, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	clientIP, err := allocateRelaySourceIPv4(sourceKey)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
+	udpConn, err := net.ListenUDP("udp4", relayListenAddrForClient(clientIP))
+	if err != nil {
+		releaseRelaySourceIPv4(clientIP)
+		cancel()
+		return nil, fmt.Errorf("listen udp: %w", err)
+	}
+
+	return &Router{
+		ws:       ws,
+		udpConn:  udpConn,
+		wsTx:     make(chan []byte, 1024),
+		clientIP: clientIP,
+		isAdmin:  isAdmin,
+		ctx:      ctx,
+		cancel:   cancel,
+	}, nil
+}
+
+func (r *Router) Close() {
+	if r == nil {
+		return
+	}
+	r.closeOnce.Do(func() {
+		r.cancel()
+		if r.udpConn != nil {
+			_ = r.udpConn.Close()
+		}
+		if r.ws != nil {
+			_ = r.ws.Close()
+		}
+		releaseRelaySourceIPv4(r.clientIP)
+		r.clientIP = [4]byte{}
+	})
+}
+
+func (r *Router) Run() {
+	if r == nil {
+		return
+	}
+
+	if frame := buildWSClientIdentityFrame(r.clientIP); len(frame) > 0 {
+		r.sendWS(frame, true)
+	}
+
+	go r.udpReadLoop()
+	go r.wsWriteLoop()
+	r.wsReadLoop()
+	r.Close()
+}
+
+func (r *Router) sendWS(frame []byte, drop bool) {
+	if r == nil || len(frame) == 0 || r.ctx.Err() != nil {
+		return
+	}
+
+	if drop {
+		select {
+		case <-r.ctx.Done():
+		case r.wsTx <- frame:
+		default:
+			warnf("ws tx channel full, dropping packet")
+		}
+		return
+	}
+
+	select {
+	case <-r.ctx.Done():
+	case r.wsTx <- frame:
+	}
+}
+
+func buildWSFrame(port int, payload []byte) []byte {
+	if port < 0 || port > 65535 {
+		return nil
+	}
+	frame := make([]byte, wsPortHeaderSize+len(payload))
+	frame[0] = byte((port >> 8) & 0xff)
+	frame[1] = byte(port & 0xff)
+	copy(frame[wsPortHeaderSize:], payload)
+	return frame
+}
+
+func (r *Router) handleWSFrame(packet []byte) {
+	if len(packet) < wsPortHeaderSize {
+		return
+	}
+
+	dstPort := int(packet[0])<<8 | int(packet[1])
+	payload := packet[wsPortHeaderSize:]
+
+	if dstPort == 0 {
+		if globalServerManager != nil && isCCREQServerInfo(payload) {
+			entries := snapshotForSlist(globalServerManager)
+			listPayload, _ := buildCCREPServerList(entries)
+			r.sendWS(buildWSFrame(0, listPayload), false)
+		} else {
+			r.handleAdminFrame(payload)
+		}
+		return
+	}
+
+	r.udpWrite(dstPort, payload)
+}
+
 const (
-	defaultServerPort = 26000
-
-	// Reserved infra subnet:
-	// - nexus uses .0
-	// - dedicated servers use .1..N
-	// - admin relays are allocated from .255 downward
-	subnetAdminsA = 127
-	subnetAdminsB = 13
-	subnetAdminsC = 37
-
-	// Dedicated servers share the same infra subnet.
-	subnetServersA = 127
-	subnetServersB = 13
-	subnetServersC = 37
-
-	// Nexus/orchestration entities live in the same infra subnet.
-	subnetNexusA       = 127
-	subnetNexusB       = 13
-	subnetNexusC       = 37
-	nexusPollerHostOct = 0
-
-	wsRoutingHeaderSize  = 3
-	wsRoutingBroadcastID = 0xFF
+	wsPortHeaderSize = 2
 )
 
 const (
@@ -41,6 +150,15 @@ const (
 	ccreqServerInfo byte = 0x02
 	ccrepServerInfo byte = 0x83
 )
+
+type serverListEntry struct {
+	ListenPort int
+	Hostname   string
+	MapName    string
+	GameDir    string
+	Players    byte
+	MaxPlayers byte
+}
 
 // Quake constants (see quakedef.h/net.h):
 // MAX_DATAGRAM=1024 and NET_HEADERSIZE=8 => NET_DATAGRAMSIZE=1032.
@@ -78,20 +196,13 @@ func truncateQuakeString(s string, maxBytes int) string {
 	return s[:maxBytes]
 }
 
-func buildCCREPServerList(entries []struct {
-	ServerID   byte
-	Hostname   string
-	MapName    string
-	GameDir    string
-	Players    byte
-	MaxPlayers byte
-}) ([]byte, int) {
+func buildCCREPServerList(entries []serverListEntry) ([]byte, int) {
 	// Format:
 	//   u32 control header (NETFLAG_CTL | length)
 	//   u8  CCREP_SERVER_INFO (0x83) - overloaded for nexus aggregated list mode
 	//   u8  count
 	//   repeated entries:
-	//     cstring server_address (e.g. "127.13.37.1:26000")
+	//     cstring server_port (e.g. "26000")
 	//     cstring host_name (<= 15 chars recommended)
 	//     cstring level_name (<= 15 chars recommended)
 	//     cstring game_dir (<= 15 chars recommended)
@@ -104,12 +215,8 @@ func buildCCREPServerList(entries []struct {
 
 	count := 0
 	for _, e := range entries {
-		// The in-engine hostcache is only 8 entries; sending more is wasted and risks oversize.
-		if count >= 8 {
-			break
-		}
-
-		if e.ServerID == 0 || e.ServerID == 0xFF {
+		serverPort := e.ListenPort
+		if serverPort <= 0 || serverPort > 65535 {
 			continue
 		}
 		hostname := e.Hostname
@@ -125,19 +232,19 @@ func buildCCREPServerList(entries []struct {
 			gameDir = "id1"
 		}
 
-		serverAddr := fmt.Sprintf("%d.%d.%d.%d:%d", subnetServersA, subnetServersB, subnetServersC, e.ServerID, defaultServerPort)
+		serverPortText := strconv.Itoa(serverPort)
 
 		hostname = truncateQuakeString(hostname, 15)
 		mapName = truncateQuakeString(mapName, 15)
 		gameDir = truncateQuakeString(gameDir, 15)
 
 		// Compute the entry size before appending to stay within Quake's datagram limit.
-		entrySize := len(serverAddr) + 1 + len(hostname) + 1 + len(mapName) + 1 + len(gameDir) + 1 + 3
+		entrySize := len(serverPortText) + 1 + len(hostname) + 1 + len(mapName) + 1 + len(gameDir) + 1 + 3
 		if len(buf)+entrySize > maxNetDatagramSize {
 			break
 		}
 
-		buf = appendCString(buf, serverAddr)
+		buf = appendCString(buf, serverPortText)
 		buf = appendCString(buf, hostname)
 		buf = appendCString(buf, mapName)
 		buf = appendCString(buf, gameDir)

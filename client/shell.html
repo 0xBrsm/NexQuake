@@ -77,19 +77,8 @@
       var Module = {
         preRun: [function() {
           function normalizeGameName(name) {
-            name = String(name || '').trim().toLowerCase();
-            if (!name) return 'id1';
-            var out = '';
-            for (var i = 0; i < name.length && out.length < 15; i++) {
-              var c = name[i];
-              if (c === '/' || c === '\\' || c === ':' || c === '.') break;
-              if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c === '_' || c === '-') {
-                out += c;
-              } else {
-                break;
-              }
-            }
-            return out || 'id1';
+            name = String(name || '').trim();
+            return name || 'id1';
           }
 
           function ensureGameDir(mod) {
@@ -159,21 +148,37 @@
             var node = FS.createFile(parent, name, null, true, false);
             node.url = url;
             node.usedBytes = Number.isFinite(size) && size > 0 ? size : 0;
+            node.nqErrorCount = 0;
+            node.nqRetryAfterMs = 0;
+            node.nqLastLoadError = '';
             // Export a handle so we can prefetch into this node later.
             if (!Module.nexquakeRemoteFiles) Module.nexquakeRemoteFiles = Object.create(null);
 
           function ensureLoaded() {
             if (node.contents) return;
+              if (node.nqRetryAfterMs && Date.now() < node.nqRetryAfterMs) {
+                throw new Error(node.nqLastLoadError || ('remote file fetch throttled for ' + node.url));
+              }
               // Synchronous XHR is still permitted on the main thread, but Chrome disallows
               // setting responseType for sync requests. Use the classic "x-user-defined" path
               // and convert responseText -> Uint8Array.
               var xhr = new XMLHttpRequest();
-              xhr.open('GET', node.url, false);
-              try { xhr.overrideMimeType('text/plain; charset=x-user-defined'); } catch (e) {}
-              xhr.send(null);
+              try {
+                xhr.open('GET', node.url, false);
+                try { xhr.overrideMimeType('text/plain; charset=x-user-defined'); } catch (e) {}
+                xhr.send(null);
+              } catch (e) {
+                node.nqErrorCount = (node.nqErrorCount || 0) + 1;
+                node.nqRetryAfterMs = Date.now() + Math.min(15000, 500 * Math.pow(2, Math.min(node.nqErrorCount, 5)));
+                node.nqLastLoadError = String(e && e.message ? e.message : e);
+                throw e;
+              }
 
               if (xhr.status !== 200 && xhr.status !== 0) {
-                throw new Error('remote file fetch failed: ' + xhr.status + ' for ' + node.url);
+                node.nqErrorCount = (node.nqErrorCount || 0) + 1;
+                node.nqRetryAfterMs = Date.now() + Math.min(15000, 500 * Math.pow(2, Math.min(node.nqErrorCount, 5)));
+                node.nqLastLoadError = 'remote file fetch failed: ' + xhr.status + ' for ' + node.url;
+                throw new Error(node.nqLastLoadError);
               }
 
               var text = xhr.responseText || '';
@@ -181,6 +186,9 @@
               for (var i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i) & 0xFF;
               node.contents = bytes;
               node.usedBytes = bytes.length;
+              node.nqErrorCount = 0;
+              node.nqRetryAfterMs = 0;
+              node.nqLastLoadError = '';
             }
 
             node.stream_ops = {
@@ -272,7 +280,7 @@
             ensureDirForPath(outPath);
 
             // Do not replace existing local files. Loose files should override "pak-like"
-            // remote assets, matching vanilla Quake precedence.
+            // remote assets, matching default Quake precedence.
             try {
               var existing = FS.lookupPath(outPath).node;
               if (existing) {
@@ -299,6 +307,7 @@
           Module.nexquakePrefetchQueue = Module.nexquakePrefetchQueue || [];
           Module.nexquakePrefetchBusy = 0;
           Module.nexquakePrefetchConcurrency = Module.nexquakePrefetchConcurrency || 16;
+          Module.nexquakePrefetchFailures = Module.nexquakePrefetchFailures || Object.create(null);
 
           function parsePositiveInt(value, fallback) {
             var n = Number(value);
@@ -309,6 +318,7 @@
 
           Module.nexquakePrefetchReset = function() {
             Module.nexquakePrefetchQueue = [];
+            Module.nexquakePrefetchFailures = Object.create(null);
           };
 
           Module.nexquakePrefetchEnqueue = function(relPath) {
@@ -352,7 +362,7 @@
                 try {
                   await prefetchOne(queue[j]);
                 } catch (e) {
-                  // Best-effort: Quake will still attempt to load synchronously and surface errors.
+                  Module.nexquakePrefetchFailures[queue[j]] = String(e && e.message ? e.message : e);
                 }
               }
             }
@@ -368,6 +378,7 @@
             Module.nexquakePrefetchQueue = [];
             if (!list.length) return;
             Module.nexquakePrefetchBusy = 1;
+            Module.nexquakePrefetchFailures = Object.create(null);
             prefetchMany(list, Module.nexquakePrefetchConcurrency)
               .finally(function() { Module.nexquakePrefetchBusy = 0; });
           };

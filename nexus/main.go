@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -29,6 +30,9 @@ func main() {
 	defer runCancel()
 
 	cfg := loadRuntimeConfig()
+	if err := prependPath(cfg.binDir); err != nil {
+		log.Fatalf("Failed to configure PATH: %v", err)
+	}
 
 	// Validate runtime artifacts early; avoids confusing partial startup.
 	if !fileExists(filepath.Join(cfg.clientDir, "index.html")) {
@@ -45,19 +49,17 @@ func main() {
 	}
 
 	// Start dedicated servers (one per mod directory).
-	serverMgr := NewServerManager(cfg.dataDir, cfg.logsDir, cfg.serverBinary)
+	serverMgr := NewServerManager(cfg.dataDir, cfg.logsDir)
 	if err := serverMgr.StartAll(); err != nil {
 		log.Fatalf("Failed to start servers: %v", err)
 	}
-	ConfigureInfraSubnet(serverMgr.ServerCount())
-	infof("Infra subnet configured: %d.%d.%d.0/24 (nexus=.0 servers=1..%d admins descending from .255)",
-		subnetNexusA, subnetNexusB, subnetNexusC, serverMgr.ServerCount())
+	globalServerManager = serverMgr
 
-	// Start the nexus-managed server info cache (used for Quake's `slist`).
-	globalServerInfoCache = NewServerInfoCache(serverMgr.ServerCount(), serverMgr.GameDirByServerID())
-	if err := globalServerInfoCache.Start(runCtx); err != nil {
-		warnf("Server info cache disabled: %v", err)
-		globalServerInfoCache = nil
+	// Start the nexus-managed server info poller (used for Quake's `slist`).
+	serverInfoPoller := NewServerInfoPoller(serverMgr)
+	if err := serverInfoPoller.Start(runCtx); err != nil {
+		warnf("Server info poller disabled: %v", err)
+		serverInfoPoller = nil
 	}
 
 	pakCache := newPakIndexCache()
@@ -85,8 +87,8 @@ func main() {
 
 	log.Println("Shutting down gracefully...")
 	runCancel()
-	if globalServerInfoCache != nil {
-		globalServerInfoCache.Stop()
+	if serverInfoPoller != nil {
+		serverInfoPoller.Stop()
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -104,7 +106,7 @@ type runtimeConfig struct {
 	httpPort               string
 	dataDir                string
 	logsDir                string
-	serverBinary           string
+	binDir                 string
 	clientDir              string
 	corsOrigin             string
 	debugStartup           bool
@@ -117,12 +119,31 @@ func loadRuntimeConfig() runtimeConfig {
 		httpPort:               getEnv("HTTP_PORT", "1337"),
 		dataDir:                getEnv("DATA_DIR", "/app/data"),
 		logsDir:                getEnv("LOGS_DIR", "/app/logs"),
-		serverBinary:           getEnv("SERVER_BIN", filepath.Join(binDir, "nqserver")),
-		clientDir:              getEnv("CLIENT_DIR", "/app/bin/nqwasm"),
+		binDir:                 binDir,
+		clientDir:              getEnv("CLIENT_DIR", filepath.Join(binDir, "nqwasm")),
 		corsOrigin:             getEnv("CORS_ALLOWED_ORIGIN", ""),
 		debugStartup:           getEnv("DEBUG_STARTUP", "") == "1",
 		vfsPrefetchConcurrency: getEnvIntMin("CLIENT_BATCH_SIZE", 16, 1),
 	}
+}
+
+func prependPath(binDir string) error {
+	dir := strings.TrimSpace(binDir)
+	if dir == "" {
+		return nil
+	}
+
+	existing := os.Getenv("PATH")
+	for _, part := range strings.Split(existing, string(os.PathListSeparator)) {
+		if part == dir {
+			return nil
+		}
+	}
+
+	if existing == "" {
+		return os.Setenv("PATH", dir)
+	}
+	return os.Setenv("PATH", dir+string(os.PathListSeparator)+existing)
 }
 
 func handleCLI(args []string) (handled bool, exitCode int) {
@@ -184,8 +205,9 @@ func logArtifactFingerprints(cfg runtimeConfig) {
 			log.Printf("  nexus   %s  %s", sum, exe)
 		}
 	}
-	if sum, err := sha256File(cfg.serverBinary); err == nil {
-		log.Printf("  nqserver %s  %s", sum, cfg.serverBinary)
+	serverPath := filepath.Join(cfg.binDir, "nqserver")
+	if sum, err := sha256File(serverPath); err == nil {
+		log.Printf("  nqserver %s  %s", sum, serverPath)
 	}
 	wasmPath := filepath.Join(cfg.clientDir, "index.wasm")
 	if sum, err := sha256File(wasmPath); err == nil {

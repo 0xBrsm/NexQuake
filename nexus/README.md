@@ -10,16 +10,16 @@ Go HTTP server that ties everything together: serves the WASM client, serves gam
 |------|---------|
 | `main.go` | **Entry point.** HTTP server setup, route registration, auth initialization, server manager startup, signal handling, graceful shutdown. |
 | `websock.go` | **WebSocket handler.** Upgrades `/ws` to WebSocket, reads/writes binary frames, manages per-connection state, tracks admin connections. |
-| `udp.go` | **UDP relay.** Bidirectional relay between WebSocket frames and backend UDP sockets. Allocates per-connection loopback source IPs. Sends best-effort disconnect on WebSocket close. |
-| `routing.go` | **Tunnel routing.** Parses the per-frame routing header (server_id + UDP port). Implements `slist` control-plane: handles broadcast frames, builds aggregated `CCREP_SERVER_INFO` responses from cache. |
+| `udp.go` | **UDP relay.** Bidirectional relay between WebSocket frames and backend UDP sockets. Routes strictly by UDP port. |
+| `protocol.go` | **Tunnel protocol helpers.** Defines WebSocket port-header constants and Quake control-packet encode/decode helpers. Implements `slist` control-plane and aggregated `CCREP_SERVER_INFO` responses from cache. |
 
 ### Server Management
 
 | File | Purpose |
 |------|---------|
-| `servers.go` | **Server orchestrator.** Discovers game directories under `${DATA_DIR}`, spawns `nqserver` processes (one per mod), manages lifecycle (start, stop, signal). Builds merged runtime basedirs when data is read-only. |
+| `servers.go` | **Server orchestrator.** Loads launch entries from `${DATA_DIR}/servers.ini` (or defaults to one default `nqserver` if missing), spawns dedicated server processes, and manages lifecycle (start, stop, signal). Builds merged runtime basedirs when data is read-only. |
 | `slist.go` | **Server-info cache.** Polls running servers with connectionless `CCREQ_SERVER_INFO` on a round-robin schedule (one server every 500ms). Caches replies for fast `slist` responses. |
-| `ip.go` | **Loopback IP allocation.** Infrastructure subnet `127.13.37.x` for servers (`.1..N`) and admins (`.255` downward). Client IPs are hashed from source IP into `127.0.0.0/8` (excluding reserved subnet). |
+| `udp_addr.go` | **Relay addressing helpers.** Uses per-client hashed loopback source binds (`127.x.y.z:0`) and loopback server destinations (`127.0.0.1:<port>`). |
 
 ### Game Data
 

@@ -114,11 +114,19 @@ func installFromSource(ctx context.Context, urlStr, destRoot string) error {
 }
 
 func extractZipGeneric(zr *zip.Reader, destRoot string) error {
+	stripPrefix := zipSingleRootPrefix(zr)
+
 	for _, zf := range zr.File {
 		name := strings.ReplaceAll(zf.Name, `\`, `/`)
 		name = strings.TrimLeft(name, "/")
 
 		if name == "" || strings.HasSuffix(name, "/") || zf.FileInfo().IsDir() {
+			continue
+		}
+		if stripPrefix != "" && strings.HasPrefix(name, stripPrefix) {
+			name = strings.TrimPrefix(name, stripPrefix)
+		}
+		if name == "" {
 			continue
 		}
 
@@ -141,6 +149,41 @@ func extractZipGeneric(zr *zip.Reader, destRoot string) error {
 		}
 	}
 	return nil
+}
+
+func zipSingleRootPrefix(zr *zip.Reader) string {
+	root := ""
+	sawFile := false
+
+	for _, zf := range zr.File {
+		name := strings.ReplaceAll(zf.Name, `\`, `/`)
+		name = strings.TrimLeft(name, "/")
+		if name == "" || strings.HasSuffix(name, "/") || zf.FileInfo().IsDir() {
+			continue
+		}
+
+		sawFile = true
+		slash := strings.IndexByte(name, '/')
+		if slash <= 0 {
+			// At least one file already at archive root: keep paths as-is.
+			return ""
+		}
+
+		part := name[:slash]
+		if root == "" {
+			root = part
+			continue
+		}
+		if part != root {
+			// Multiple different top-level roots: keep paths as-is.
+			return ""
+		}
+	}
+
+	if !sawFile || root == "" {
+		return ""
+	}
+	return root + "/"
 }
 
 // --- Helpers ---
