@@ -1,0 +1,34 @@
+# sv_main.c — format string vulnerability in SV_SendServerinfo
+#
+# SV_SendServerinfo() uses a progs string (the worldspawn message field) as
+# the format argument to sprintf:
+#
+#     sprintf (message, pr_strings+sv.edicts->v.message);
+#
+# If the level's worldspawn message contains printf format specifiers like
+# %s or %n, this produces undefined behavior — at best a crash, at worst
+# a controllable write. The progs string can originate from a malicious
+# .bsp or mod. The fix passes the string as a "%s" argument instead,
+# and uses snprintf to bounds-check the 2048-byte buffer.
+#
+# Reference: fixed in Quakespasm, TyrQuake, and other modern source ports.
+#
+--- sv_main.c
++++ sv_main.c
+@@ -192,7 +192,7 @@
+ 	char			message[2048];
+ 
+ 	MSG_WriteByte (&client->message, svc_print);
+-	sprintf (message, "%c\nVERSION %4.2f SERVER (%i CRC)", 2, VERSION, pr_crc);
++	snprintf (message, sizeof(message), "%c\nVERSION %4.2f SERVER (%i CRC)", 2, VERSION, pr_crc);
+ 	MSG_WriteString (&client->message,message);
+ 
+ 	MSG_WriteByte (&client->message, svc_serverinfo);
+@@ -204,6 +204,6 @@
+ 	else
+ 		MSG_WriteByte (&client->message, GAME_COOP);
+ 
+-	sprintf (message, pr_strings+sv.edicts->v.message);
++	snprintf (message, sizeof(message), "%s", pr_strings+sv.edicts->v.message);
+ 
+ 	MSG_WriteString (&client->message,message);

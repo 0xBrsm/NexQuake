@@ -1,0 +1,77 @@
+# host_cmd.c — save/load path overflows and Host_Say buffer overflow
+#
+# Four overflows in host_cmd.c:
+#
+# 1. Host_SavegameComment() copies cl.levelname into the comment buffer via
+#    memcpy without checking its length against SAVEGAME_COMMENT_LENGTH.
+# 2. Host_Savegame_f() uses sprintf(name, "%s/%s", ...) into a 256-byte
+#    buffer — a long save name from the console overflows it.
+# 3. Host_Loadgame_f() uses the same unbounded sprintf for the load path.
+# 4. Host_Say() uses sprintf into a 64-byte text buffer with hostname.string,
+#    which is a player-settable cvar with no length limit. A long hostname
+#    overflows the buffer before the subsequent truncation check runs.
+#
+# The fix clamps the memcpy length and replaces sprintf with snprintf.
+#
+--- host_cmd.c
++++ host_cmd.c
+#
+# Fix 1: Clamp cl.levelname length before memcpy into comment buffer.
+#
+@@ -818,11 +818,15 @@
+ void Host_SavegameComment (char *text)
+ {
+ 	int		i;
+-	char	kills[20];
++	char	kills[20];
++	int		len;
+ 
+ 	for (i=0 ; i<SAVEGAME_COMMENT_LENGTH ; i++)
+ 		text[i] = ' ';
+-	memcpy (text, cl.levelname, strlen(cl.levelname));
++	len = strlen(cl.levelname);
++	if (len > SAVEGAME_COMMENT_LENGTH)
++		len = SAVEGAME_COMMENT_LENGTH;
++	memcpy (text, cl.levelname, len);
+ 	sprintf (kills,"kills:%3i/%3i", cl.stats[STAT_MONSTERS], cl.stats[STAT_TOTALMONSTERS]);
+ 	memcpy (text+22, kills, strlen(kills));
+ // convert space to _ to make stdio happy
+#
+# Fix 2: Use snprintf for save path to prevent overflow of 256-byte buffer.
+#
+@@ -862,7 +868,7 @@
+ 		return;
+ 	}
+ 
+-	sprintf (name, "%s/%s", com_gamedir, Cmd_Argv(1));
++	snprintf (name, sizeof(name), "%s/%s", com_gamedir, Cmd_Argv(1));
+ 	COM_DefaultExtension (name, ".sav");
+ 	
+ 	Con_Printf ("Saving game to %s...\n", name);
+#
+# Fix 3: Use snprintf for load path to prevent overflow of MAX_OSPATH buffer.
+#
+@@ -917,7 +923,7 @@
+ 
+ 	cls.demonum = -1;		// stop demo loop in case this fails
+ 
+-	sprintf (name, "%s/%s", com_gamedir, Cmd_Argv(1));
++	snprintf (name, sizeof(name), "%s/%s", com_gamedir, Cmd_Argv(1));
+ 	COM_DefaultExtension (name, ".sav");
+ 	
+ // we can't call SCR_BeginLoadingPlaque, because too much stack space has
+#
+# Fix 4: Use snprintf in Host_Say to prevent overflow of 64-byte text buffer.
+#         hostname.string is a cvar with no length limit; without snprintf the
+#         sprintf can write past the end of text[] before the truncation check.
+#
+@@ -1046,7 +1052,7 @@
+ // turn on color set 1
+ 	if (!fromServer)
+-		sprintf (text, "%c%s: ", 1, save->name);
++		snprintf (text, sizeof(text), "%c%s: ", 1, save->name);
+ 	else
+-		sprintf (text, "%c<%s> ", 1, hostname.string);
++		snprintf (text, sizeof(text), "%c<%s> ", 1, hostname.string);
+ 
+ 	j = sizeof(text) - 2 - Q_strlen(text);  // -2 for /n and null terminator

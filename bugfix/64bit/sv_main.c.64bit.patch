@@ -1,3 +1,20 @@
+# sv_main.c — worldmodel/mapname pointer arithmetic truncation on 64-bit
+#
+# SV_SpawnServer() sets progs global fields by subtracting pr_strings
+# from pointers that live outside the progs string heap:
+#
+#     ent->v.model    = sv.worldmodel->name - pr_strings;
+#     mapname         = sv.name - pr_strings;
+#     startspot       = sv.startspot - pr_strings;  (Quake2 only)
+#
+# On 32-bit the pointer differences fit in an int. On 64-bit these
+# pointers can be far apart in memory, producing truncated garbage
+# offsets. QuakeC accesses to worldmodel name, mapname, or startspot
+# then index into random memory instead of valid strings.
+#
+# The fix copies each string into the progs heap with ED_NewString()
+# so the offset is always a small, valid value.
+#
 --- sv_main.c
 +++ sv_main.c
 @@ -1157,7 +1157,7 @@

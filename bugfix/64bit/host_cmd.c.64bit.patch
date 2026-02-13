@@ -1,0 +1,26 @@
+# host_cmd.c — netname pointer arithmetic truncation on 64-bit
+#
+# Host_Name_f() sets a player's netname in the QuakeC VM via:
+#
+#     host_client->edict->v.netname = host_client->name - pr_strings;
+#
+# host_client->name lives in the client_t struct (malloc/Hunk), while
+# pr_strings is a separate Hunk allocation. On 32-bit the pointer
+# difference fits in an int. On 64-bit the two allocations can be
+# far apart in memory, so the subtraction truncates to garbage —
+# other players see corrupt names or the server crashes.
+#
+# The fix copies the name into the progs string heap with
+# ED_NewString() so the offset is always valid.
+#
+--- host_cmd.c
++++ host_cmd.c
+@@ -936,7 +936,7 @@
+ 		if (Q_strcmp(host_client->name, newName) != 0)
+ 			Con_Printf ("%s renamed to %s\n", host_client->name, newName);
+ 	Q_strcpy (host_client->name, newName);
+-	host_client->edict->v.netname = host_client->name - pr_strings;
++	host_client->edict->v.netname = ED_NewString (host_client->name) - pr_strings;
+ 	
+ // send notification to all clients
+ 		

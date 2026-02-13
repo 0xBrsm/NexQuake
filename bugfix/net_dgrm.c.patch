@@ -1,0 +1,114 @@
+# net_dgrm.c — three networking bugs
+#
+# 1. BAN_TEST POSIX struct portability. The #else fallback for non-Windows
+#    builds manually defines struct in_addr, struct sockaddr_in, AF_INET,
+#    and declares inet_ntoa/inet_addr. These hand-rolled definitions are
+#    fragile and can cause problems when the struct layout does not match the
+#    platform. The fix replaces them with standard POSIX #include directives.
+#
+# 2. AddrCompare connection matching (NAT bug). UDP_AddrCompare() returns
+#    0 for an exact match, 1 for same-IP-different-port, and -1 for different
+#    IP. The original check `if (ret >= 0)` treats "same IP, different port"
+#    as a reconnection, so a second player behind the same NAT (same public
+#    IP, different source port) kicks the first player. The fix changes the
+#    check to `if (ret == 0)`.
+#
+# 3. Datagram_GetMessage receive buffer overflow. The packet reassembly loop
+#    memcpys incoming data into sock->receiveMessage without checking whether
+#    the accumulated length exceeds NET_MAXMESSAGE. A malicious or malformed
+#    oversized packet can overflow the buffer. The fix adds bounds checks at
+#    each memcpy site.
+#
+--- net_dgrm.c
++++ net_dgrm.c
+#
+# Fix 1: Replace hand-rolled POSIX struct definitions with standard headers.
+#
+@@ -29,26 +29,9 @@
+ #include <sys/socket.h>
+ #include <arpa/inet.h>
+ #else
+-#define AF_INET 		2	/* internet */
+-struct in_addr
+-{
+-	union
+-	{
+-		struct { unsigned char s_b1,s_b2,s_b3,s_b4; } S_un_b;
+-		struct { unsigned short s_w1,s_w2; } S_un_w;
+-		unsigned long S_addr;
+-	} S_un;
+-};
+-#define	s_addr	S_un.S_addr	/* can be used for most tcp & ip code */
+-struct sockaddr_in
+-{
+-    short			sin_family;
+-    unsigned short	sin_port;
+-	struct in_addr	sin_addr;
+-    char			sin_zero[8];
+-};
+-char *inet_ntoa(struct in_addr in);
+-unsigned long inet_addr(const char *cp);
++#include <sys/socket.h>
++#include <netinet/in.h>
++#include <arpa/inet.h>
+ #endif
+ #endif	// BAN_TEST
+ 
+#
+# Fix 3a: Bounds-check individual packet length before memcpy.
+#
+@@ -438,9 +421,21 @@
+ 			sock->receiveSequence++;
+ 
+ 			length -= NET_HEADERSIZE;
++			if (length > NET_MAXMESSAGE)
++			{
++				Con_Printf("Datagram_GetMessage: oversize packet (%u)\n", length);
++				sock->receiveMessageLength = 0;
++				continue;
++			}
+ 
+ 			if (flags & NETFLAG_EOM)
+ 			{
+#
+# Fix 3b: Bounds-check assembled message length at end-of-message.
+#
++				if (sock->receiveMessageLength + (int)length > NET_MAXMESSAGE)
++				{
++					Con_Printf("Datagram_GetMessage: oversize message (%d)\n", sock->receiveMessageLength + (int)length);
++					sock->receiveMessageLength = 0;
++					continue;
++				}
+ 				SZ_Clear(&net_message);
+ 				SZ_Write(&net_message, sock->receiveMessage, sock->receiveMessageLength);
+ 				SZ_Write(&net_message, packetBuffer.data, length);
+@@ -450,7 +445,13 @@
+ 				break;
+ 			}
+ 
+#
+# Fix 3c: Bounds-check assembled message length during fragment accumulation.
+#
++			if (sock->receiveMessageLength + (int)length > NET_MAXMESSAGE)
++			{
++				Con_Printf("Datagram_GetMessage: oversize message (%d)\n", sock->receiveMessageLength + (int)length);
++				sock->receiveMessageLength = 0;
++				continue;
++			}
+ 			Q_memcpy(sock->receiveMessage + sock->receiveMessageLength, packetBuffer.data, length);
+ 			sock->receiveMessageLength += length;
+ 			continue;
+ 
+#
+# Fix 2: Change `ret >= 0` to `ret == 0` so same-IP-different-port is not
+#         treated as a reconnection (allows multiple players behind NAT).
+#
+@@ -994,7 +995,7 @@
+ 		if (s->driver != net_driverlevel)
+ 			continue;
+ 		ret = dfunc.AddrCompare(&clientaddr, &s->addr);
+-		if (ret >= 0)
++		if (ret == 0)
+ 		{
+ 			// is this a duplicate connection reqeust?
+ 			if (ret == 0 && net_time - s->connecttime < 2.0)

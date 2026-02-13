@@ -31,17 +31,89 @@ These replace UDP sockets with WebSocket transport for browser multiplayer.
 
 ### Patches
 
-Applied to upstream Quake source at build time. Each patch is minimal and targeted.
+Applied to upstream Quake source at build time after bugfix patches. Each patch
+is NexQuake-specific and targeted at WASM/browser compatibility or NexQuake
+features. No overlap with `bugfix/` patches (verified — hunks target different
+line ranges even when patching the same file).
 
-| File | What It Patches | Why It's Needed |
-|------|----------------|-----------------|
-| `net.h.patch` | Function pointer signatures | WASM enforces strict signatures. Quake's `PollProcedure` used unprototyped callbacks -- crashes in WASM with `function signature mismatch`. |
-| `net_main.c.patch` | Poll callback prototypes | Companion to `net.h.patch`. Makes poll callbacks take `void*` argument. |
-| `net_dgrm.c.patch` | Datagram handling | Three fixes: (1) bounds check on fragmented message accumulation (prevents memory corruption), (2) browser yield during connect loops (Asyncify `emscripten_sleep` so WebSocket `onmessage` can fire), (3) ignore non-ACCEPT/REJECT control packets during connect (prevents `slist` replies from breaking handshake). |
-| `chase.c.patch` | Chase camera | Minor fix for WASM compatibility. |
-| `cl_parse.c.patch` | Client parsing | Adds precache prefetch: client fetches assets during map load for faster level transitions. |
-| `common.c.patch` | Common utilities | Fixes for WASM environment compatibility. |
-| `host.c.patch` | Host layer | Dynamic mod context support for game directory switching. |
+#### `chase.c.patch` — WASM link-time signature fix
+
+Adds an explicit `extern` prototype for `SV_RecursiveHullCheck()`. Without it,
+WASM's strict function signature checking causes a link-time mismatch error.
+The original code relied on an implicit declaration, which C99 deprecated and
+Emscripten rejects.
+
+#### `common.h.patch` — `COM_SwitchGame` declaration
+
+Declares `COM_SwitchGame()` (implemented in `common.c.patch`) so that
+`cl_parse.c` can call it when connecting to a server running a different mod.
+
+#### `common.c.patch` — mod directory switching (`COM_SwitchGame`)
+
+Adds `COM_SwitchGame()`: a game directory cache that allows the client to
+switch between mods (e.g. `id1` → `hipnotic`) at connect time without
+restarting. Caches up to 64 mod search paths in a ring buffer backed by
+`Hunk_Alloc`. On Emscripten, calls `Module.nexquakeSwitchGameData()` to
+notify JavaScript so it can fetch the correct game data.
+
+#### `host.c.patch` — Hunk level tracking for mod switching
+
+Adds `fs_hunklevel` alongside `host_hunklevel` so `COM_SwitchGame()` can safely
+free and reallocate the Hunk for different mod directories without corrupting
+the host's high water mark. Ensures `Hunk_FreeToLowMark()` uses whichever mark
+is higher.
+
+#### `net.h.patch` — `PollProcedure` signature + `hostcache` gamedir field
+
+Two changes:
+1. Adds a `gamedir[16]` field to `hostcache_t` so the server list can display
+   and match which game/mod each server is running.
+2. Changes the `PollProcedure` function pointer from unprototyped `()` to
+   `(void *arg)`. WASM enforces strict function signature matching — the
+   original unprototyped callback crashes with "function signature mismatch."
+
+#### `net_main.c.patch` — server list and poll infrastructure
+
+Multiple NexQuake-specific changes to the network main loop:
+1. **Aggregated server list.** Adds `slist_agg_done` flag and early-exit logic.
+   When the Nexus returns a single aggregated server list packet, the client
+   stops the default 1.5s LAN polling window immediately.
+2. **Gamedir column.** Adds a `Game` column to the `slist` console output.
+3. **`void*` poll signatures.** Updates `Slist_Send()` and `Slist_Poll()` to
+   match the `(void *arg)` signature from `net.h.patch`.
+4. **`SchedulePollProcedure` dedup.** Prevents scheduling the same poll
+   procedure twice, which can corrupt the linked list and cause infinite loops.
+5. **Emscripten yield.** Adds `emscripten_sleep(1)` in the blocking
+   `NET_Connect` poll loop so WebSocket `onmessage` callbacks can fire.
+
+#### `net_dgrm.c.patch` — datagram layer WASM fixes
+
+NexQuake-specific changes to the datagram network layer:
+1. **`void*` poll signatures.** Updates `Test_Poll()` and `Test2_Poll()` to
+   match the `(void *arg)` signature from `net.h.patch`.
+2. **Aggregated server list parsing.** Rewrites `_Datagram_SearchForHosts()` to
+   parse the Nexus's batched server list format (count + per-server fields
+   including port, name, map, gamedir, users, maxusers, protocol). Uses
+   `Q_strncpy` for bounds-safe copies into `hostcache` entries.
+3. **Emscripten yield during connect.** Adds `emscripten_sleep(1)` in the
+   `_Datagram_CheckNewConnections` connect loop so WebSocket frames can arrive.
+
+#### `cl_parse.c.patch` — mod switching and asset prefetch
+
+Two features added to `CL_ParseServerInfo()`:
+1. **Automatic mod switching.** On connect, looks up the server's `gamedir`
+   from `hostcache` and calls `COM_SwitchGame()` to load the correct mod data
+   before parsing precache lists.
+2. **Parallel asset prefetch (Emscripten).** Enqueues all precache model and
+   sound paths into a JavaScript prefetch pipeline (`Module.nexquakePrefetchEnqueue`).
+   Waits up to 30 seconds for all fetches to complete before continuing with
+   Quake's synchronous load path. Eliminates "death by sequential latency"
+   when loading large maps over the network.
+3. **Keepalive fix.** Changes `CL_KeepaliveMessage()` to use direct buffer
+   indexing instead of `MSG_ReadByte()`, which can misread data when called
+   mid-parse (e.g. during serverinfo precache). Downgrades the error to
+   `Con_DPrintf` instead of `Host_Error` since non-nop datagrams arriving
+   during load are harmless.
 
 ### Build
 
@@ -49,6 +121,21 @@ Applied to upstream Quake source at build time. Each patch is minimal and target
 |------|---------|
 | `Makefile.emscripten` | Emscripten build configuration. Source file list, compiler flags (`-sMAX_WEBGL_VERSION=2`, `-sASYNCIFY`), linker settings. No SDL references. |
 | `shell.html` | HTML template for the browser client. Bootstrap logic: fetches `/data-manifest/id1`, creates virtual filesystem, downloads game data, starts Quake. Contains canvas element, loading UI, and query parameter handling (for example `?-nosound`). |
+
+## Patch Overlap Analysis
+
+The bugfix patches (`bugfix/`) and client patches both modify `common.c`,
+`net_dgrm.c`, and `net.h`, but they target completely separate regions:
+
+| File | Bugfix hunks | Client hunks | Conflict? |
+|------|-------------|-------------|-----------|
+| `common.c` | Lines 855–980 (COM_FileBase, COM_Parse) | Lines 21, 1239–1834 (include, COM_SwitchGame) | ❌ No |
+| `net_dgrm.c` | Lines 29–50, 438–455, 994 (structs, overflow, NAT) | Lines 54, 516, 644, 1103–1313 (signatures, slist, yield) | ❌ No |
+| `net.h` | Lines 241–254 (htonl/ntohl declarations) | Lines 227, 314 (hostcache gamedir, PollProcedure sig) | ❌ No |
+
+Bugfix patches are applied first by `prepare-upstream.sh`, then client patches
+on top. The line offsets may shift slightly due to earlier patches adding/removing
+lines, but `patch` handles this with fuzz matching.
 
 ## Build Process
 
@@ -81,3 +168,18 @@ The automated build scripts (`build/build-client.sh`) handle all of this.
 - **Event-driven input**: Emscripten HTML5 callbacks fire `Key_Event()` directly. No polling loop.
 - **WebSocket URL**: `Module.websocketUrl` / `Module.WEBSOCKET_URL` if set (headless/tests), else `ws(s)://<window.location.host>/ws`; if neither exists, websocket init fails fast.
 - **Default UI preserved**: No custom menus. `connect`, `slist`, standard Quake console.
+
+## Necessity Review
+
+All client patches are **necessary** for NexQuake:
+
+| Patch | Verdict | Reason |
+|-------|---------|--------|
+| `chase.c.patch` | **Required** | WASM build fails without the explicit prototype |
+| `common.h.patch` | **Required** | Declaration for COM_SwitchGame |
+| `common.c.patch` | **Required** | Mod switching is core NexQuake functionality |
+| `host.c.patch` | **Required** | Companion to common.c.patch (Hunk safety) |
+| `net.h.patch` | **Required** | WASM crashes without strict function signatures |
+| `net_main.c.patch` | **Required** | Aggregated slist, poll dedup, WASM yields |
+| `net_dgrm.c.patch` | **Required** | Nexus server list protocol, WASM yields |
+| `cl_parse.c.patch` | **Required** | Mod switching + asset prefetch for playable load times |

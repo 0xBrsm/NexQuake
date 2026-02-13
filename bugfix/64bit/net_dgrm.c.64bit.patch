@@ -1,3 +1,16 @@
+# net_dgrm.c — hand-rolled POSIX struct definitions use wrong-sized types
+#
+# The BAN_TEST #else fallback manually defines struct in_addr using
+# 'unsigned long S_addr'. On 32-bit systems unsigned long is 4 bytes,
+# so this works by coincidence. On 64-bit systems unsigned long is
+# 8 bytes, making the struct twice as large as the real one and
+# completely breaking all network address comparisons and packet
+# handling. The fix replaces the hand-rolled definitions with
+# standard POSIX #include directives.
+#
+# Note: This fix overlaps with bugfix/net_dgrm.c.patch (Fix 1).
+# When BUGFIX=1, the build script skips this patch to avoid conflict.
+#
 --- net_dgrm.c
 +++ net_dgrm.c
 @@ -29,25 +29,8 @@

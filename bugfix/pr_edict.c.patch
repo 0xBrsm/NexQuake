@@ -1,0 +1,54 @@
+# pr_edict.c — sprintf overflows in value/global string functions
+#
+# PR_ValueString() and PR_UglyValueString() use sprintf(line, "%s", ...) to
+# format an ev_string value from progs.dat into a static 256-byte buffer.
+# Since progs strings can be arbitrarily long, this overflows easily.
+# PR_GlobalString() is worse — it concatenates an offset number, a global
+# name, and the value string into a 128-byte buffer via sprintf. The fix
+# replaces all unbounded sprintf calls with snprintf(line, sizeof(line), ...).
+#
+# Reference: https://github.com/sezero/quakespasm/issues/25
+#
+--- pr_edict.c
++++ pr_edict.c
+@@ -464,7 +464,7 @@
+ 	switch (type)
+ 	{
+ 	case ev_string:
+-		sprintf (line, "%s", pr_strings + val->string);
++		snprintf (line, sizeof(line), "%s", pr_strings + val->string);
+ 		break;
+ 	case ev_entity:	
+ 		sprintf (line, "entity %i", NUM_FOR_EDICT(PROG_TO_EDICT(val->edict)) );
+@@ -504,7 +504,7 @@
+ 	switch (type)
+ 	{
+ 	case ev_string:
+-		sprintf (line, "%s", pr_strings + val->string);
++		snprintf (line, sizeof(line), "%s", pr_strings + val->string);
+ 		break;
+ 	case ev_entity:	
+ 		sprintf (line, "%i", NUM_FOR_EDICT(PROG_TO_EDICT(val->edict)));
+@@ -536,10 +536,10 @@
+ 	def = ED_GlobalAtOfs(ofs);
+ 	if (!def)
+-		sprintf (line,"%i(???)", ofs);
++		snprintf (line, sizeof(line), "%i(???)", ofs);
+ 	else
+ 	{
+ 		s = PR_ValueString (def->type, val);
+-		sprintf (line,"%i(%s)%s", ofs, pr_strings + def->s_name, s);
++		snprintf (line, sizeof(line), "%i(%s)%s", ofs, pr_strings + def->s_name, s);
+ 	}
+ 
+ 	i = strlen(line);
+@@ -559,7 +559,7 @@
+ 	def = ED_GlobalAtOfs(ofs);
+ 	if (!def)
+-		sprintf (line,"%i(???)", ofs);
++		snprintf (line, sizeof(line), "%i(???)", ofs);
+ 	else
+-		sprintf (line,"%i(%s)", ofs, pr_strings + def->s_name);
++		snprintf (line, sizeof(line), "%i(%s)", ofs, pr_strings + def->s_name);
+ 
+ 	i = strlen(line);

@@ -1,0 +1,34 @@
+# net.h — htonl/ntohl declaration conflict with standard headers
+#
+# The fallback declarations for htonl/htons/ntohl/ntohs at lines 241-254
+# are guarded by `#if !defined(_WIN32) && !defined(__linux__) && !defined(__sun__)`
+# and `#ifndef htonl`. On platforms where <arpa/inet.h> is now included
+# (from the net_dgrm.c POSIX struct fix), these declarations conflict
+# because the standard header declares them as uint32_t while Quake
+# declares them as unsigned long. The #ifndef guard doesn't help because
+# modern headers declare them as functions, not macros.
+#
+# The fix removes the hand-rolled declarations entirely and includes
+# <arpa/inet.h> instead, which is available on all non-Windows platforms
+# including Emscripten/WASM.
+#
+--- net.h
++++ net.h
+@@ -241,14 +241,3 @@
+-#if !defined(_WIN32 ) && !defined (__linux__) && !defined (__sun__)
+-#ifndef htonl
+-extern unsigned long htonl (unsigned long hostlong);
+-#endif
+-#ifndef htons
+-extern unsigned short htons (unsigned short hostshort);
+-#endif
+-#ifndef ntohl
+-extern unsigned long ntohl (unsigned long netlong);
+-#endif
+-#ifndef ntohs
+-extern unsigned short ntohs (unsigned short netshort);
+-#endif
+-#endif
++#if !defined(_WIN32)
++#include <arpa/inet.h>
++#endif

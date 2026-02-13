@@ -6,6 +6,9 @@
 # them (sparse-checkout WinQuake/) and applies our server overlays/patches
 # into a temporary working tree.
 #
+# By default, community-sourced vanilla Quake bugfix patches (buffer overflows,
+# crashes, etc.) from src/bugfix/ are applied before any build-specific patches.
+# Set BUGFIX=0 to disable.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -60,19 +63,36 @@ apply_patch() {
   patch -p0 -d "${OUT_DIR}" < "${patch_path}"
 }
 
+# --- Upstream bugfix patches (opt-in via BUGFIX=1) ---------------------------
+# These fix well-documented vanilla WinQuake bugs (buffer overflows, crashes,
+# etc.) and are applied to the pristine source *before* any build-specific
+# patches.  They are safe for both server and client builds.
+BUGFIX="${BUGFIX:-1}"
+if [[ "${BUGFIX}" == "1" ]]; then
+  echo "Applying upstream bugfix patches ..."
+  for patch_file in "${ROOT}/bugfix/"*.patch; do
+    [[ -f "${patch_file}" ]] || continue
+    apply_patch "${patch_file}"
+  done
+fi
+
 if [[ "${kind}" == "server" ]]; then
   echo "Applying server overlays + patches ..."
   cp "${ROOT}/server/Makefile.dedicated" "${OUT_DIR}/"
 
-  apply_patch "${ROOT}/server/common.c.patch"
   apply_patch "${ROOT}/server/sv_main.c.patch"
 
   if [[ "${server_bits}" == "64" ]]; then
-    echo "Applying server 64-bit patches ..."
-    apply_patch "${ROOT}/server/64bit/net_dgrm.c.64bit.patch"
-    apply_patch "${ROOT}/server/64bit/pr_cmds.c.64bit.patch"
-    apply_patch "${ROOT}/server/64bit/host_cmd.c.64bit.patch"
-    apply_patch "${ROOT}/server/64bit/sv_main.c.64bit.patch"
+    echo "Applying 64-bit portability patches ..."
+    # net_dgrm.c.64bit.patch replaces the BAN_TEST hand-rolled POSIX structs
+    # with standard headers — same fix as bugfix/net_dgrm.c.patch.
+    # Skip when BUGFIX=1 to avoid a "reversed patch" error.
+    if [[ "${BUGFIX}" != "1" ]]; then
+      apply_patch "${ROOT}/bugfix/64bit/net_dgrm.c.64bit.patch"
+    fi
+    apply_patch "${ROOT}/bugfix/64bit/pr_cmds.c.64bit.patch"
+    apply_patch "${ROOT}/bugfix/64bit/host_cmd.c.64bit.patch"
+    apply_patch "${ROOT}/bugfix/64bit/sv_main.c.64bit.patch"
   fi
 
   if ! grep -q "Stub functions for headless NetQuake server" "${OUT_DIR}/sys_linux.c" 2>/dev/null; then

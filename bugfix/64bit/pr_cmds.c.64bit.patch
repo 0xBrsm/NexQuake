@@ -1,3 +1,21 @@
+# pr_cmds.c — pr_string_temp pointer arithmetic truncation on 64-bit
+#
+# PF_ftos(), PF_vtos(), and PF_etos() format values into a global
+# char pr_string_temp[128] buffer, then return an offset into the
+# progs string table via:
+#
+#     G_INT(OFS_RETURN) = pr_string_temp - pr_strings;
+#
+# On 32-bit systems the pointer difference fits in an int. On 64-bit
+# systems pr_string_temp lives in BSS/data while pr_strings is
+# Hunk-allocated — the pointer difference exceeds 32 bits and is
+# silently truncated to garbage. The QuakeC VM then indexes into
+# pr_strings with a nonsense offset, returning corrupt strings or
+# crashing.
+#
+# The fix allocates pr_string_temp inside the Hunk (near pr_strings)
+# via a lazy-init helper so the offset always fits in an int.
+#
 --- pr_cmds.c
 +++ pr_cmds.c
 @@ -920,18 +920,28 @@
