@@ -27,7 +27,7 @@ These replace UDP sockets with WebSocket transport for browser multiplayer.
 | `net_ws_vnet.c` | **Virtual LAN + landriver.** Implements Quake's `net_landriver` interface over the WebSocket transport. Projects a fixed virtual server IP veneer and applies nexus-assigned local virtual client IP identity for stock Quake APIs. | Keeps the Quake networking stack believing it's talking to UDP sockets. |
 | `net_ws_vnet.h` | **Driver header.** Public interface for the WebSocket landriver. | Declares the driver functions that `net_bsd.c` references. |
 | `net_bsd.c` | **Driver table.** Replaces the original `net_bsd.c` to register only the WebSocket landriver (no UDP). | Quake's networking discovers available drivers from this table. In the browser, WebSocket is the only option. |
-| `cmd_rcon.c` | **RCON commands.** Implements `rcon_password` + command framing for the Nexus control channel with explicit host/port targeting. | Keeps admin command targeting explicit (`rcon <host|port> <cmd>`) and avoids implicit destination fallback. |
+| `cmd_rcon.c` | **RCON commands.** Implements `rcon_password` + command framing for the Nexus control channel, with explicit host/port targeting and sensible fallbacks. | Supports `rcon <host|port> <cmd>`, uses the current server when connected for `rcon <cmd>`, and falls back to Nexus control (`target 0`) when disconnected. |
 
 ### Patches
 
@@ -120,7 +120,7 @@ Two features added to `CL_ParseServerInfo()`:
 | File | Purpose |
 |------|---------|
 | `Makefile.emscripten` | Emscripten build configuration. Source file list, compiler flags (`-sMAX_WEBGL_VERSION=2`, `-sASYNCIFY`), linker settings. No SDL references. |
-| `shell.html` | HTML template for the browser client. Bootstrap logic: fetches `/data-manifest/id1`, creates virtual filesystem, downloads game data, starts Quake. Contains canvas element, loading UI, and query parameter handling (for example `?-nosound`). |
+| `shell.html` | HTML template for the browser client. Bootstrap logic: fetches `/data-manifest/<GAMENAME>`, creates virtual filesystem, downloads game data, starts Quake. Contains canvas element, loading UI, and query parameter handling (for example `?-nosound`). |
 
 ## Patch Overlap Analysis
 

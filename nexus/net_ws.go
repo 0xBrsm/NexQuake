@@ -21,6 +21,11 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Check admin status before upgrading (auth headers are available here)
 	isAdmin := IsAdmin(r)
 	sourceKey := resolveClientSourceKey(r)
+	if isBlockedRelaySource(sourceKey) {
+		warnf("Rejected blocked client source=%q remote=%s", sourceKey, r.RemoteAddr)
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 
 	// Upgrade connection to WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)

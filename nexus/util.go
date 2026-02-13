@@ -3,13 +3,16 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -24,9 +27,28 @@ const (
 	logDebug
 )
 
-var currentLogLevel = logInfo
+const (
+	nexusLogHistoryCap = 2048
+	logTimestampLayout = "2006/01/02 15:04:05"
+)
+
+var (
+	currentLogLevel logLevel = logInfo
+
+	operatorConsoleTimestamp atomic.Bool
+	operatorConsoleMu        sync.Mutex
+
+	nexusLogHistoryMu sync.RWMutex
+	nexusLogHistory   []string
+
+	nexusLogFileMu sync.Mutex
+	nexusLogFile   *os.File
+)
 
 func initLogging() {
+	operatorConsoleTimestamp.Store(true)
+	applyOperatorConsoleTimestampEnv()
+
 	level := strings.ToLower(strings.TrimSpace(os.Getenv("LOG_LEVEL")))
 	switch level {
 	case "", "info":
@@ -39,20 +61,215 @@ func initLogging() {
 		currentLogLevel = logError
 	default:
 		currentLogLevel = logInfo
-		log.Printf("Unknown LOG_LEVEL=%q (expected: error|warn|info|debug); defaulting to info", level)
+		warnf("Unknown LOG_LEVEL=%q (expected: error|warn|info|debug); defaulting to info", level)
 	}
 }
 
-func logf(level logLevel, format string, args ...any) {
-	if level <= currentLogLevel {
-		log.Printf(format, args...)
+func applyOperatorConsoleTimestampEnv() {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv("LOG_CONSOLE_TIMESTAMPS")))
+	if raw == "" {
+		return
 	}
+	switch raw {
+	case "1", "true", "on", "yes":
+		operatorConsoleTimestamp.Store(true)
+	case "0", "false", "off", "no":
+		operatorConsoleTimestamp.Store(false)
+	default:
+		warnf("Unknown LOG_CONSOLE_TIMESTAMPS=%q (expected: on|off); defaulting to on", raw)
+		operatorConsoleTimestamp.Store(true)
+	}
+}
+
+func configureNexusLogFile(logsDir string) error {
+	logsDir = strings.TrimSpace(logsDir)
+	if logsDir == "" {
+		return fmt.Errorf("LOGS_DIR is empty")
+	}
+	if err := os.MkdirAll(logsDir, 0o755); err != nil {
+		return err
+	}
+
+	path := filepath.Join(logsDir, "nexus.log")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+
+	nexusLogFileMu.Lock()
+	old := nexusLogFile
+	nexusLogFile = f
+	nexusLogFileMu.Unlock()
+	if old != nil {
+		_ = old.Close()
+	}
+	return nil
+}
+
+func closeNexusLogFile() {
+	nexusLogFileMu.Lock()
+	f := nexusLogFile
+	nexusLogFile = nil
+	nexusLogFileMu.Unlock()
+	if f != nil {
+		_ = f.Close()
+	}
+}
+
+func setOperatorConsoleTimestamps(enabled bool) {
+	operatorConsoleTimestamp.Store(enabled)
+}
+
+func operatorConsoleTimestampsEnabled() bool {
+	return operatorConsoleTimestamp.Load()
+}
+
+func formatTimestampedLogText(msg string, now time.Time) string {
+	lines := splitLogLines(msg)
+	if len(lines) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	prefix := now.Format(logTimestampLayout) + " "
+	for _, line := range lines {
+		b.WriteString(prefix)
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+func formatPlainLogText(msg string) string {
+	lines := splitLogLines(msg)
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func splitLogLines(msg string) []string {
+	msg = strings.ReplaceAll(msg, "\r\n", "\n")
+	msg = strings.ReplaceAll(msg, "\r", "\n")
+	msg = strings.TrimRight(msg, "\n")
+	if msg == "" {
+		return nil
+	}
+	return strings.Split(msg, "\n")
+}
+
+func writeOperatorConsoleText(timestamped, plain string) {
+	operatorConsoleMu.Lock()
+	defer operatorConsoleMu.Unlock()
+
+	text := plain
+	if operatorConsoleTimestampsEnabled() {
+		text = timestamped
+	}
+	if text == "" {
+		return
+	}
+	_, _ = io.WriteString(os.Stderr, text)
+}
+
+func writeNexusLogFile(text string) {
+	if text == "" {
+		return
+	}
+	nexusLogFileMu.Lock()
+	defer nexusLogFileMu.Unlock()
+	if nexusLogFile == nil {
+		return
+	}
+	_, _ = io.WriteString(nexusLogFile, text)
+}
+
+func logf(level logLevel, format string, args ...any) {
+	if level > currentLogLevel {
+		return
+	}
+	msg := fmt.Sprintf(format, args...)
+	now := time.Now()
+	timestamped := formatTimestampedLogText(msg, now)
+	plain := formatPlainLogText(msg)
+	recordNexusLogLine(timestamped)
+	writeNexusLogFile(timestamped)
+	writeOperatorConsoleText(timestamped, plain)
+}
+
+func logfNoTail(level logLevel, format string, args ...any) {
+	if level > currentLogLevel {
+		return
+	}
+	msg := fmt.Sprintf(format, args...)
+	now := time.Now()
+	writeOperatorConsoleText(formatTimestampedLogText(msg, now), formatPlainLogText(msg))
 }
 
 func errorf(format string, args ...any) { logf(logError, format, args...) }
 func warnf(format string, args ...any)  { logf(logWarn, format, args...) }
 func infof(format string, args ...any)  { logf(logInfo, format, args...) }
 func debugf(format string, args ...any) { logf(logDebug, format, args...) }
+func infofNoTail(format string, args ...any) {
+	logfNoTail(logInfo, format, args...)
+}
+func fatalf(format string, args ...any) {
+	errorf(format, args...)
+	os.Exit(1)
+}
+
+func appendNexusLogLineLocked(line string) {
+	if line == "" {
+		return
+	}
+	if !strings.HasSuffix(line, "\n") {
+		line += "\n"
+	}
+
+	if len(nexusLogHistory) < nexusLogHistoryCap {
+		nexusLogHistory = append(nexusLogHistory, line)
+		return
+	}
+
+	copy(nexusLogHistory, nexusLogHistory[1:])
+	nexusLogHistory[len(nexusLogHistory)-1] = line
+}
+
+func recordNexusLogLine(line string) {
+	if line == "" {
+		return
+	}
+
+	nexusLogHistoryMu.Lock()
+	defer nexusLogHistoryMu.Unlock()
+	for _, chunk := range splitLogLines(line) {
+		appendNexusLogLineLocked(chunk)
+	}
+}
+
+func tailNexusLogLines(n int) []string {
+	if n <= 0 {
+		return nil
+	}
+
+	nexusLogHistoryMu.RLock()
+	snapshot := append([]string(nil), nexusLogHistory...)
+	nexusLogHistoryMu.RUnlock()
+	if len(snapshot) == 0 {
+		return nil
+	}
+
+	if n > len(snapshot) {
+		n = len(snapshot)
+	}
+	start := len(snapshot) - n
+	return append([]string(nil), snapshot[start:]...)
+}
+
+func resetNexusLogHistoryForTest() {
+	nexusLogHistoryMu.Lock()
+	defer nexusLogHistoryMu.Unlock()
+	nexusLogHistory = nil
+}
 
 // ---- Version ----
 
@@ -103,7 +320,7 @@ func getEnvIntMin(key string, defaultValue, minValue int) int {
 	}
 	value, err := strconv.Atoi(raw)
 	if err != nil || value < minValue {
-		log.Printf("Invalid %s=%q (expected integer >= %d); using %d", key, raw, minValue, defaultValue)
+		warnf("Invalid %s=%q (expected integer >= %d); using %d", key, raw, minValue, defaultValue)
 		return defaultValue
 	}
 	return value

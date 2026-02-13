@@ -55,11 +55,12 @@ func fillRunningPorts(mgr *ServerManager, dst []int) []int {
 	mgr.mu.RLock()
 	defer mgr.mu.RUnlock()
 
-	for port, recs := range mgr.serversByPort {
+	for port, ids := range mgr.serverIDsByPort {
 		if port < 1 || port > 65535 {
 			continue
 		}
-		for _, rec := range recs {
+		for _, serverID := range ids {
+			rec := mgr.serversByID[serverID]
 			if rec == nil || rec.running == nil || rec.running.cmd == nil || rec.running.cmd.Process == nil {
 				continue
 			}
@@ -94,9 +95,10 @@ func snapshotForSlist(mgr *ServerManager) []serverListEntry {
 	mgr.mu.RLock()
 	out := make([]serverListEntry, 0, len(ports))
 	for _, port := range ports {
-		recs := mgr.serversByPort[port]
+		ids := mgr.serverIDsByPort[port]
 		var rec *serverRecord
-		for _, r := range recs {
+		for _, serverID := range ids {
+			r := mgr.serversByID[serverID]
 			if r == nil || r.running == nil || r.running.cmd == nil || r.running.cmd.Process == nil {
 				continue
 			}
@@ -113,13 +115,15 @@ func snapshotForSlist(mgr *ServerManager) []serverListEntry {
 			continue
 		}
 
-		gameDir := rec.launch.spec.ModName
+		if rec.spec == nil {
+			continue
+		}
 
 		out = append(out, serverListEntry{
 			ListenPort: port,
 			Hostname:   rec.hostname,
 			MapName:    rec.mapName,
-			GameDir:    gameDir,
+			GameDir:    activeGameDir(rec.spec.SearchPath),
 			Players:    rec.players,
 			MaxPlayers: rec.maxPlayers,
 		})
@@ -170,7 +174,7 @@ func (p *ServerInfoPoller) pollLoop(ctx context.Context, conn *net.UDPConn) {
 	ticker := time.NewTicker(serverInfoPollStep)
 	defer ticker.Stop()
 
-	infof("Server info poller: polling %d targets every %s (round-robin step %s)",
+	debugf("Server info poller: polling %d targets every %s (round-robin step %s)",
 		len(ports), time.Duration(len(ports))*serverInfoPollStep, serverInfoPollStep)
 
 	rrNext := 0
@@ -225,7 +229,7 @@ func (p *ServerInfoPoller) readLoop(ctx context.Context, conn *net.UDPConn) {
 		}
 
 		if p.mgr != nil {
-			p.mgr.UpdateObservedServerInfo(srcPort, hostname, mapName, players, maxPlayers)
+			p.mgr.updateGameState(srcPort, hostname, mapName, players, maxPlayers)
 		}
 	}
 }

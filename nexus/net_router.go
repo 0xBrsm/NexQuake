@@ -7,17 +7,22 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/gorilla/websocket"
 )
 
 type Router struct {
-	ws       *websocket.Conn
-	udpConn  *net.UDPConn
-	wsTx     chan []byte
-	clientIP [4]byte
-	isAdmin  bool
+	ws        *websocket.Conn
+	udpConn   *net.UDPConn
+	wsTx      chan []byte
+	clientIP  [4]byte
+	sourceKey string
+	isAdmin   bool
+
+	routeMu          sync.RWMutex
+	activeServerPort int
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -40,15 +45,18 @@ func NewRouter(ws *websocket.Conn, sourceKey string, isAdmin bool) (*Router, err
 		return nil, fmt.Errorf("listen udp: %w", err)
 	}
 
-	return &Router{
-		ws:       ws,
-		udpConn:  udpConn,
-		wsTx:     make(chan []byte, 1024),
-		clientIP: clientIP,
-		isAdmin:  isAdmin,
-		ctx:      ctx,
-		cancel:   cancel,
-	}, nil
+	router := &Router{
+		ws:        ws,
+		udpConn:   udpConn,
+		wsTx:      make(chan []byte, 1024),
+		clientIP:  clientIP,
+		sourceKey: strings.TrimSpace(sourceKey),
+		isAdmin:   isAdmin,
+		ctx:       ctx,
+		cancel:    cancel,
+	}
+	globalClientSessions.Track(router)
+	return router, nil
 }
 
 func (r *Router) Close() {
@@ -56,6 +64,7 @@ func (r *Router) Close() {
 		return
 	}
 	r.closeOnce.Do(func() {
+		globalClientSessions.Untrack(r)
 		r.cancel()
 		if r.udpConn != nil {
 			_ = r.udpConn.Close()
@@ -66,6 +75,39 @@ func (r *Router) Close() {
 		releaseRelaySourceIPv4(r.clientIP)
 		r.clientIP = [4]byte{}
 	})
+}
+
+func (r *Router) VirtualClientIP() string {
+	if r == nil || r.clientIP[0] == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d.%d.%d.%d", r.clientIP[0], r.clientIP[1], r.clientIP[2], r.clientIP[3])
+}
+
+func (r *Router) SourceKey() string {
+	if r == nil {
+		return ""
+	}
+	return strings.TrimSpace(r.sourceKey)
+}
+
+func (r *Router) noteServerRoutePort(port int) {
+	if r == nil || port < 1 || port > 65535 {
+		return
+	}
+	r.routeMu.Lock()
+	r.activeServerPort = port
+	r.routeMu.Unlock()
+}
+
+func (r *Router) ActiveServerPort() int {
+	if r == nil {
+		return 0
+	}
+	r.routeMu.RLock()
+	port := r.activeServerPort
+	r.routeMu.RUnlock()
+	return port
 }
 
 func (r *Router) Run() {
@@ -134,6 +176,7 @@ func (r *Router) handleWSFrame(packet []byte) {
 		return
 	}
 
+	r.noteServerRoutePort(dstPort)
 	r.udpWrite(dstPort, payload)
 }
 

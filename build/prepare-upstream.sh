@@ -31,7 +31,7 @@ OUT_DIR="${OUT_DIR:-${ROOT}/build/tmp/${kind}}"
 UPSTREAM_QUAKE_DIR="${UPSTREAM_QUAKE_DIR:-${ROOT}/build/tmp}"
 UPSTREAM_WINQUAKE_DIR="${UPSTREAM_WINQUAKE_DIR:-${UPSTREAM_QUAKE_DIR}/WinQuake}"
 UPSTREAM_REPO="${UPSTREAM_REPO:-https://github.com/id-Software/Quake.git}"
-UPSTREAM_REF="${UPSTREAM_REF:-master}"
+UPSTREAM_REF="${UPSTREAM_REF:-HEAD}"
 
 server_bits="${SERVER_BITS:-auto}"
 if [[ "${server_bits}" == "auto" ]]; then
@@ -81,6 +81,7 @@ if [[ "${kind}" == "server" ]]; then
   cp "${ROOT}/server/Makefile.dedicated" "${OUT_DIR}/"
 
   apply_patch "${ROOT}/server/sv_main.c.patch"
+  apply_patch "${ROOT}/server/net_udp.c.patch"
 
   if [[ "${server_bits}" == "64" ]]; then
     echo "Applying 64-bit portability patches ..."
@@ -111,11 +112,21 @@ if [[ "${kind}" == "client" ]]; then
   apply_patch "${ROOT}/client/common.c.patch"
   apply_patch "${ROOT}/client/host.c.patch"
   apply_patch "${ROOT}/client/net_main.c.patch"
+  apply_patch "${ROOT}/client/menu.c.patch"
   apply_patch "${ROOT}/client/net_dgrm.c.patch"
   apply_patch "${ROOT}/client/chase.c.patch"
   apply_patch "${ROOT}/client/cl_parse.c.patch"
 
-  mkdir -p "${OUT_DIR}/id1"
+  client_gamename="$(sed -n 's/^[[:space:]]*#define[[:space:]]*GAMENAME[[:space:]]*"\([^"]\+\)".*/\1/p' "${OUT_DIR}/quakedef.h" | head -n1)"
+  if [[ -z "${client_gamename}" ]]; then
+    echo "failed to resolve GAMENAME from ${OUT_DIR}/quakedef.h" >&2
+    exit 1
+  fi
+
+  client_gamename_escaped="$(printf '%s' "${client_gamename}" | sed -e 's/[\/&]/\\&/g')"
+  sed -i "s/__NEXQUAKE_GAMENAME__/${client_gamename_escaped}/g" "${OUT_DIR}/shell.html"
+
+  mkdir -p "${OUT_DIR}/${client_gamename}"
 fi
 
 echo "OK"

@@ -18,13 +18,17 @@ const maxClientIPProbeAttempts = 4096
 const wsClientIdentityMagic = "NQIP"
 
 type hashedClientIPAllocator struct {
-	mu   sync.Mutex
-	used map[uint32]struct{}
+	mu            sync.Mutex
+	used          map[uint32]struct{}
+	reserved      map[uint32]struct{}
+	blockedSource map[string]struct{}
 }
 
 func newHashedClientIPAllocator() *hashedClientIPAllocator {
 	return &hashedClientIPAllocator{
-		used: make(map[uint32]struct{}),
+		used:          make(map[uint32]struct{}),
+		reserved:      make(map[uint32]struct{}),
+		blockedSource: make(map[string]struct{}),
 	}
 }
 
@@ -32,9 +36,12 @@ func (a *hashedClientIPAllocator) alloc(sourceKey string) ([4]byte, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	base := strings.TrimSpace(sourceKey)
+	base := normalizeSourceKey(sourceKey)
 	if base == "" {
 		base = "unknown"
+	}
+	if _, blocked := a.blockedSource[base]; blocked {
+		return [4]byte{}, false
 	}
 
 	serverIP := nqServerIP.To4()
@@ -53,6 +60,9 @@ func (a *hashedClientIPAllocator) alloc(sourceKey string) ([4]byte, bool) {
 		}
 
 		key := binary.BigEndian.Uint32(candidate[:])
+		if _, reserved := a.reserved[key]; reserved {
+			continue
+		}
 		if _, exists := a.used[key]; exists {
 			continue
 		}
@@ -69,8 +79,42 @@ func (a *hashedClientIPAllocator) release(ip4 [4]byte) {
 		return
 	}
 	a.mu.Lock()
-	delete(a.used, binary.BigEndian.Uint32(ip4[:]))
+	key := binary.BigEndian.Uint32(ip4[:])
+	if _, reserved := a.reserved[key]; !reserved {
+		delete(a.used, key)
+	}
 	a.mu.Unlock()
+}
+
+func (a *hashedClientIPAllocator) reserveAndBlock(ip4 [4]byte, sourceKey string) {
+	if ip4[0] != 127 {
+		return
+	}
+	sourceKey = normalizeSourceKey(sourceKey)
+
+	a.mu.Lock()
+	key := binary.BigEndian.Uint32(ip4[:])
+	a.reserved[key] = struct{}{}
+	a.used[key] = struct{}{}
+	if sourceKey != "" {
+		a.blockedSource[sourceKey] = struct{}{}
+	}
+	a.mu.Unlock()
+}
+
+func (a *hashedClientIPAllocator) isBlockedSource(sourceKey string) bool {
+	sourceKey = normalizeSourceKey(sourceKey)
+	if sourceKey == "" {
+		return false
+	}
+	a.mu.Lock()
+	_, blocked := a.blockedSource[sourceKey]
+	a.mu.Unlock()
+	return blocked
+}
+
+func normalizeSourceKey(sourceKey string) string {
+	return strings.TrimSpace(sourceKey)
 }
 
 var globalClientIPv4Allocator = newHashedClientIPAllocator()
@@ -85,6 +129,14 @@ func allocateRelaySourceIPv4(sourceKey string) ([4]byte, error) {
 
 func releaseRelaySourceIPv4(ip4 [4]byte) {
 	globalClientIPv4Allocator.release(ip4)
+}
+
+func reserveRelayClientIdentity(ip4 [4]byte, sourceKey string) {
+	globalClientIPv4Allocator.reserveAndBlock(ip4, sourceKey)
+}
+
+func isBlockedRelaySource(sourceKey string) bool {
+	return globalClientIPv4Allocator.isBlockedSource(sourceKey)
 }
 
 func buildWSClientIdentityFrame(clientIP [4]byte) []byte {

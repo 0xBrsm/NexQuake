@@ -12,8 +12,9 @@ Builds the **complete WinQuake engine for Linux** with null drivers for graphics
 |------|---------|-----------------|
 | `Makefile.dedicated` | **Build configuration.** Compiles the full WinQuake source with null drivers (`vid_null`, `snd_null`, `cd_null`, `in_null`). Supports platform detection via `PLATFORM` env var (linux/amd64, linux/arm64, linux/arm/v7, linux/386). Defaults to 32-bit on most platforms. | The build entry point. Handles cross-compilation, bitness selection, and architecture-specific flags. |
 | `sys_linux_stub.c` | **System stub.** Provides `Sys_SendKeyEvents()` (required by the engine but unused in dedicated mode). Appended to the upstream `sys_linux.c` during build. | WinQuake expects this function even when no keyboard input is possible. Without it, the linker fails. |
-| `common.c.patch` | **Pointer underflow fix.** Guards `COM_FileBase()` against reading before the start of the input string. | Stock Quake assumes filenames always contain a path separator. On ARM (armhf), the underflow causes a crash. |
+| `bugfix/common.c.patch` | **Archived pointer underflow fix.** Preserves a prior `COM_FileBase()` hardening patch for reference/testing, but is not applied by current build scripts. | Kept to allow regression testing and quick re-enable if needed. |
 | `sv_main.c.patch` | **Entity overrides.** Allows the server to load `maps/<map>.ent` files to override entity placement in BSP maps. Optional quality-of-life feature. | Lets server admins customize spawn points, item placement, and other entities without modifying the BSP file. |
+| `net_udp.c.patch` | **Ephemeral port fix.** Updates `net_hostport` after bind when the server starts with `-port 0`. | Enables dynamic UDP port assignment while still reporting a reachable non-zero port to Nexus and operators. |
 | `64bit/*.64bit.patch` | **64-bit patches.** Fix `string_t` pointer-subtraction truncation and related issues for 64-bit builds. Applied only when building with `BITS=64`. | QuakeC uses 32-bit offsets for string references. On 64-bit, pointer arithmetic overflows. These patches widen the affected paths. |
 
 ## Building
@@ -27,7 +28,8 @@ cd Quake/WinQuake
 cp /path/to/server/Makefile.dedicated .
 
 # Apply required patches
-patch -p0 < /path/to/server/common.c.patch
+patch -p0 < /path/to/server/sv_main.c.patch
+patch -p0 < /path/to/server/net_udp.c.patch
 
 # Append stub
 cat /path/to/server/sys_linux_stub.c >> sys_linux.c

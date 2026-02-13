@@ -73,12 +73,18 @@
       var canvasElement = document.getElementById('canvas');
       var outputElement = document.getElementById('output');
       var exportElement = document.getElementById('exportFile');
+      var NEXQUAKE_GAMENAME = '__NEXQUAKE_GAMENAME__';
 
       var Module = {
+        nexquakeBaseGameName: NEXQUAKE_GAMENAME,
         preRun: [function() {
           function normalizeGameName(name) {
             name = String(name || '').trim();
-            return name || 'id1';
+            return name || NEXQUAKE_GAMENAME;
+          }
+
+          function getBaseGameName() {
+            return normalizeGameName(Module.nexquakeBaseGameName || NEXQUAKE_GAMENAME);
           }
 
           function ensureGameDir(mod) {
@@ -87,14 +93,8 @@
             return mod;
           }
 
-          // Create the baseline id1 mount root.
-          ensureGameDir('id1');
-
-          function urlJoinDataMod(mod, relPath) {
-            mod = normalizeGameName(mod);
-            var parts = String(relPath).split('/').filter(Boolean).map(encodeURIComponent);
-            return '/data/' + encodeURIComponent(mod) + '/' + parts.join('/');
-          }
+          // Create the baseline game mount root.
+          ensureGameDir(getBaseGameName());
 
           function ensureDirForPath(path) {
             var parts = String(path).split('/').filter(Boolean);
@@ -112,7 +112,7 @@
             if (!Module.nexquakeRemoteFiles) Module.nexquakeRemoteFiles = Object.create(null);
             if (!Module.nexquakeRemoteURLs) Module.nexquakeRemoteURLs = Object.create(null);
             if (!Module.nexquakeInstalledManifests) Module.nexquakeInstalledManifests = Object.create(null);
-            Module.nexquakeActiveGame = normalizeGameName(Module.nexquakeActiveGame || 'id1');
+            Module.nexquakeActiveGame = normalizeGameName(Module.nexquakeActiveGame || getBaseGameName());
           } catch (e) {}
 
           function resolveVFSPath(p) {
@@ -329,11 +329,12 @@
           };
 
           async function prefetchOne(lowerRel) {
-            var activeGame = normalizeGameName(Module.nexquakeActiveGame || 'id1');
+            var baseGame = getBaseGameName();
+            var activeGame = normalizeGameName(Module.nexquakeActiveGame || baseGame);
             var outPath = '/' + activeGame + '/' + lowerRel;
             var node = Module.nexquakeRemoteFiles && Module.nexquakeRemoteFiles[outPath];
-            if (!node && activeGame !== 'id1') {
-              node = Module.nexquakeRemoteFiles && Module.nexquakeRemoteFiles['/id1/' + lowerRel];
+            if (!node && activeGame !== baseGame) {
+              node = Module.nexquakeRemoteFiles && Module.nexquakeRemoteFiles['/' + baseGame + '/' + lowerRel];
             }
             if (!node || node.contents) return;
             var resp = await fetch(node.url, { cache: 'force-cache' });
@@ -385,7 +386,9 @@
 
           // Mirror virtualized manifests into /<mod> roots.
           // Files are installed as lazy-backed VFS entries (download on first read).
-          Module.addRunDependency('manifest:id1');
+          var baseGame = getBaseGameName();
+          var manifestDependencyId = 'manifest:' + baseGame;
+          Module.addRunDependency(manifestDependencyId);
 
           function applyPrefetchConcurrency(value) {
             if (value !== null && value !== undefined && value !== '') {
@@ -423,25 +426,7 @@
 
             // Ensure the mount root exists.
             ensureGameDir(mod);
-
-            // Backwards compatibility: old manifests were arrays of relative paths.
-            if (typeof entries[0] === 'string') {
-              entries
-                .filter(function(p) { return typeof p === 'string' && p.trim() !== ''; })
-                .map(function(p) { return p.trim().replace(/^\/+/, ''); })
-                .filter(Boolean)
-                .forEach(function(relPath) {
-                  installLazyFile(mod, relPath, urlJoinDataMod(mod, relPath));
-                });
-              Module.nexquakeInstalledManifests[mod] = true;
-              Module.nexquakeActiveGame = mod;
-              try { if (typeof Module.nqOverlayUpdateDirs === 'function') Module.nqOverlayUpdateDirs(); } catch (e) {}
-              return;
-            }
-
             entries.forEach(function(ent) {
-              if (!ent || typeof ent !== 'object') return;
-              if (typeof ent.path !== 'string' || typeof ent.url !== 'string') return;
               installLazyFile(mod, ent.path, ent.url, Number(ent.size || 0));
             });
             Module.nexquakeInstalledManifests[mod] = true;
@@ -467,13 +452,13 @@
             }
           };
 
-          fetchManifest('id1')
-            .then(function(entries) { installManifest('id1', entries); })
+          fetchManifest(baseGame)
+            .then(function(entries) { installManifest(baseGame, entries); })
             .then(function() {
-              Module.removeRunDependency('manifest:id1');
+              Module.removeRunDependency(manifestDependencyId);
             })
             .catch(function(err) {
-              console.error('Failed to install /id1 manifest:', err);
+              console.error('Failed to install /' + baseGame + ' manifest:', err);
               try { Module.setStatus('Failed to load game data (see console)'); } catch (e) {}
               // Intentionally do not remove the run dependency: Quake must not start without data.
             });
@@ -580,6 +565,20 @@
         var USER_EXTS = ['cfg', 'sav', 'dem', 'pcx'];
         var shutdownRequested = false;
 
+        function normalizeGameName(name) {
+          name = String(name || '').trim();
+          return name || NEXQUAKE_GAMENAME;
+        }
+
+        function getBaseGameName() {
+          try {
+            if (typeof Module !== 'undefined' && Module && Module.nexquakeBaseGameName) {
+              return normalizeGameName(Module.nexquakeBaseGameName);
+            }
+          } catch (e) {}
+          return normalizeGameName(NEXQUAKE_GAMENAME);
+        }
+
         function stripTrailingSlash(path) {
           path = String(path || '');
           if (path.length > 1 && path.endsWith('/')) return path.slice(0, -1);
@@ -609,8 +608,10 @@
         }
 
         function listCandidateGameDirs() {
+          var baseGame = getBaseGameName();
+          var baseGameRoot = '/' + baseGame;
           var dirs = Object.create(null);
-          dirs['/id1'] = true;
+          dirs[baseGameRoot] = true;
 
           // Include any backed-up dirs that already exist on disk.
           try {
@@ -626,20 +627,20 @@
                 } catch (e) {}
               });
 
-              // If we've previously persisted per-mod dirs under /id1/<mod>/..., include them too.
+              // If we've previously persisted per-mod dirs under /<base>/<mod>/..., include them too.
               try {
-                FS.readdir(USERFS_ROOT + '/id1').forEach(function(name) {
+                FS.readdir(USERFS_ROOT + baseGameRoot).forEach(function(name) {
                   if (name === '.' || name === '..') return;
                   try {
-                    var st = FS.stat(USERFS_ROOT + '/id1/' + name);
-                    if (FS.isDir(st.mode)) dirs['/id1/' + name] = true;
+                    var st = FS.stat(USERFS_ROOT + baseGameRoot + '/' + name);
+                    if (FS.isDir(st.mode)) dirs[baseGameRoot + '/' + name] = true;
                   } catch (e) {}
                 });
               } catch (e) {}
             }
           } catch (e) {}
 
-          // Derive from server-provided remote files (supports /id1 and top-level mod dirs).
+          // Derive from server-provided remote files (supports /<base> and top-level mod dirs).
           var remotes = (typeof Module !== 'undefined' && Module && Module.nexquakeRemoteFiles) ? Module.nexquakeRemoteFiles : {};
           Object.keys(remotes || {}).forEach(function(path) {
             path = String(path || '');
@@ -648,10 +649,14 @@
               dirs['/' + m[1]] = true;
             }
 
-            // Back-compat: remote assets may be installed under /id1/<mod>/...
-            // Only include subdirs that look like actual mod roots.
-            var m2 = path.match(/^\/id1\/([^\/]+)\/(pak[0-9]+\.pak|progs\.dat)$/i);
-            if (m2 && m2[1]) dirs['/id1/' + m2[1]] = true;
+            // Back-compat: remote assets may be installed under /<base>/<mod>/...
+            var m2 = path.match(/^\/([^\/]+)\/([^\/]+)\/(pak[0-9]+\.pak|progs\.dat)$/i);
+            if (m2 && m2[1] && m2[2]) {
+              var prefix = String(m2[1]).toLowerCase();
+              if (prefix === baseGame) {
+                dirs['/' + m2[1] + '/' + m2[2]] = true;
+              }
+            }
           });
 
           var out = Object.keys(dirs);

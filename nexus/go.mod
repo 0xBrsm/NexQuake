@@ -4,6 +4,7 @@ go 1.25
 
 require (
 	github.com/coreos/go-oidc/v3 v3.12.0
+	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/gorilla/websocket v1.5.1
 )
 

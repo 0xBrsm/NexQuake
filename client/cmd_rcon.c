@@ -45,8 +45,14 @@ static void Rcon_f(void)
 		char *arg1 = Cmd_Argv(1);
 		int i;
 
+		if (Q_strcasecmp(arg1, "nexus") == 0)
+		{
+			Q_strncpy(targetbuf, "0", sizeof(targetbuf) - 1);
+			targetbuf[sizeof(targetbuf) - 1] = 0;
+		}
+
 		// First, treat arg1 as a hostcache name and resolve to its port.
-		for (i = 0; i < hostCacheCount; i++)
+		for (i = 0; !targetbuf[0] && i < hostCacheCount; i++)
 		{
 			if (Q_strcasecmp(arg1, hostcache[i].name) == 0)
 			{
@@ -61,7 +67,7 @@ static void Rcon_f(void)
 		{
 			char *end;
 			long port = strtol(arg1, &end, 10);
-			if (end != arg1 && *end == '\0' && port >= 1 && port <= 65535)
+			if (end != arg1 && *end == '\0' && port >= 0 && port <= 65535)
 			{
 				Q_strncpy(targetbuf, arg1, sizeof(targetbuf) - 1);
 				targetbuf[sizeof(targetbuf) - 1] = 0;
@@ -80,6 +86,7 @@ static void Rcon_f(void)
 	{
 		int ld = cls.netcon->landriver;
 		int i;
+
 		if (ld >= 0 && ld < net_numlandrivers && net_landrivers[ld].initialized)
 			for (i = 0; i < hostCacheCount; i++)
 				if (hostcache[i].ldriver == ld &&
@@ -89,6 +96,12 @@ static void Rcon_f(void)
 					targetbuf[sizeof(targetbuf) - 1] = 0;
 					break;
 				}
+	}
+	if (!targetbuf[0] && (cls.state != ca_connected || !cls.netcon))
+	{
+		// When disconnected, default bare "rcon <cmd>" to nexus control.
+		Q_strncpy(targetbuf, "0", sizeof(targetbuf) - 1);
+		targetbuf[sizeof(targetbuf) - 1] = 0;
 	}
 
 	cmdlen = Q_strlen(cmd);

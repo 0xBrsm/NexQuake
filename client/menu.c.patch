@@ -1,0 +1,25 @@
+--- menu.c
++++ menu.c
+@@ -2898,5 +2898,6 @@
+ /* SLIST MENU */
+ 
++extern char *NET_SlistFormatEntry(const hostcache_t *host);
+ int		slist_cursor;
+ qboolean slist_sorted;
+ 
+@@ -2939,7 +2939,7 @@
+ 	for (n = 0; n < hostCacheCount; n++)
+ 	{
+ 		if (hostcache[n].maxusers)
+-			sprintf(string, "%-15.15s %-15.15s %2u/%2u\n", hostcache[n].name, hostcache[n].map, hostcache[n].users, hostcache[n].maxusers);
++			Q_strcpy(string, NET_SlistFormatEntry(&hostcache[n]));
+ 		else
+ 			sprintf(string, "%-15.15s %-15.15s\n", hostcache[n].name, hostcache[n].map);
+ 		M_Print (16, 32 + 8*n, string);
+@@ -3015,5 +3015,6 @@
+ 	Cmd_AddCommand ("menu_video", M_Menu_Video_f);
+ 	Cmd_AddCommand ("help", M_Menu_Help_f);
+ 	Cmd_AddCommand ("menu_quit", M_Menu_Quit_f);
++	Cmd_AddCommand ("smenu", M_Menu_Search_f);
+ }
+ 

@@ -25,25 +25,25 @@ type VFSManifestEntry struct {
 
 const headerVFSPrefetchConcurrency = "X-NQ-VFS-Prefetch-Concurrency"
 
-func newDataManifestHandler(dataDir string, pakCache *pakIndexCache, prefetchConcurrency int) http.HandlerFunc {
+func newDataManifestHandler(dataDir string, mgr *ServerManager, pakCache *pakIndexCache, prefetchConcurrency int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 
-		mod := strings.TrimPrefix(r.URL.Path, "/data-manifest/")
-		mod = strings.Trim(mod, "/")
-		if mod == "" {
+		gameDir := strings.TrimPrefix(r.URL.Path, "/data-manifest/")
+		gameDir = strings.Trim(gameDir, "/")
+		if gameDir == "" {
 			http.Error(w, "missing mod", http.StatusBadRequest)
 			return
 		}
-		if strings.Contains(mod, "..") || strings.ContainsAny(mod, `/\`) {
+		if strings.Contains(gameDir, "..") || strings.ContainsAny(gameDir, `/\`) {
 			http.Error(w, "invalid mod", http.StatusBadRequest)
 			return
 		}
 
-		manifest, err := buildVFSManifest(dataDir, mod, pakCache)
+		manifest, err := buildVFSManifest(dataDir, resolveManifestGameDirs(mgr, gameDir), pakCache)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -59,15 +59,66 @@ func newDataManifestHandler(dataDir string, pakCache *pakIndexCache, prefetchCon
 	}
 }
 
-func buildVFSManifest(dataDir, mod string, pakCache *pakIndexCache) ([]VFSManifestEntry, error) {
+func resolveManifestGameDirs(mgr *ServerManager, gameDir string) []string {
+	gameDir = strings.TrimSpace(gameDir)
+	if gameDir == "" {
+		return nil
+	}
+
+	// Always include the requested gamedir so GAMENAME can boot even when no
+	// running server currently has it as the active search-path head.
+	resolved := []string{gameDir}
+	seen := map[string]struct{}{gameDir: {}}
+	if mgr == nil {
+		return resolved
+	}
+
+	mgr.mu.RLock()
+	defer mgr.mu.RUnlock()
+
+	ids := make([]int, 0, len(mgr.serversByID))
+	for id := range mgr.serversByID {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+
+	for _, id := range ids {
+		rec := mgr.serversByID[id]
+		if rec.spec == nil {
+			continue
+		}
+		idx := slices.Index(rec.spec.SearchPath, gameDir)
+		if idx < 0 {
+			continue
+		}
+		for _, fallback := range rec.spec.SearchPath[idx+1:] {
+			fallback = strings.TrimSpace(fallback)
+			if fallback == "" {
+				continue
+			}
+			if _, ok := seen[fallback]; ok {
+				continue
+			}
+			seen[fallback] = struct{}{}
+			resolved = append(resolved, fallback)
+		}
+	}
+	return resolved
+}
+
+func buildVFSManifest(dataDir string, gameDirs []string, pakCache *pakIndexCache) ([]VFSManifestEntry, error) {
 	layers := []string{"common", "client"}
 
 	// Later layers overwrite earlier ones.
 	byKey := make(map[string]VFSManifestEntry)
 
-	for _, layer := range layers {
-		if err := overlayLayerIntoManifest(byKey, dataDir, mod, layer, pakCache); err != nil {
-			return nil, err
+	// path output is ordered highest priority -> lowest priority.
+	for i := len(gameDirs) - 1; i >= 0; i-- {
+		gameDir := gameDirs[i]
+		for _, layer := range layers {
+			if err := overlayLayerIntoManifest(byKey, dataDir, gameDir, layer, pakCache); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -102,7 +153,7 @@ func overlayLayerIntoManifest(byKey map[string]VFSManifestEntry, dataDir, mod, l
 	}
 	for _, pakRel := range paks {
 		full := filepath.Join(root, pakRel)
-		if err := explodePakIntoManifest(byKey, dataDir, mod, layer, full, pakRel, pakCache); err != nil {
+		if err := explodePakIntoManifest(byKey, mod, layer, full, pakRel, pakCache); err != nil {
 			return err
 		}
 	}
@@ -205,7 +256,7 @@ func pakSortKey(name string) pakKey {
 	return pakKey{group: 1, name: lower}
 }
 
-func explodePakIntoManifest(byKey map[string]VFSManifestEntry, dataDir, mod, layer, pakPath, pakRel string, pakCache *pakIndexCache) error {
+func explodePakIntoManifest(byKey map[string]VFSManifestEntry, mod, layer, pakPath, pakRel string, pakCache *pakIndexCache) error {
 	if pakCache == nil {
 		pakCache = newPakIndexCache()
 	}

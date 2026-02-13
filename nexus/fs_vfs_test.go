@@ -37,7 +37,7 @@ func TestBuildVFSManifest_LayersAndPakExplode(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	manifest, err := buildVFSManifest(dataDir, mod, newPakIndexCache())
+	manifest, err := buildVFSManifest(dataDir, []string{mod}, newPakIndexCache())
 	if err != nil {
 		t.Fatalf("buildVFSManifest: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestBuildVFSManifest_LooseBeatsPakWithinLayer(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	manifest, err := buildVFSManifest(dataDir, mod, newPakIndexCache())
+	manifest, err := buildVFSManifest(dataDir, []string{mod}, newPakIndexCache())
 	if err != nil {
 		t.Fatalf("buildVFSManifest: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestBuildVFSManifest_PakOrderWithinLayer(t *testing.T) {
 		"docs/readme.txt": []byte("from pak1"),
 	})
 
-	manifest, err := buildVFSManifest(dataDir, mod, newPakIndexCache())
+	manifest, err := buildVFSManifest(dataDir, []string{mod}, newPakIndexCache())
 	if err != nil {
 		t.Fatalf("buildVFSManifest: %v", err)
 	}
@@ -138,6 +138,106 @@ func TestBuildVFSManifest_PakOrderWithinLayer(t *testing.T) {
 	}
 	if !strings.HasPrefix(got.URL, "/pak-extract/id1/common/pak1.pak/docs/readme.txt") {
 		t.Fatalf("expected pak1 to override pak0, got url=%q", got.URL)
+	}
+}
+
+func TestBuildVFSManifest_SearchPathOrderAcrossGameDirs(t *testing.T) {
+	dataDir := t.TempDir()
+
+	if err := os.MkdirAll(filepath.Join(dataDir, "id1", "common"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "ctf", "common"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dataDir, "id1", "common", "foo.txt"), []byte("id1"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "ctf", "common", "foo.txt"), []byte("ctf"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "id1", "common", "base.txt"), []byte("base"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	manifest, err := buildVFSManifest(dataDir, []string{"ctf", "id1"}, newPakIndexCache())
+	if err != nil {
+		t.Fatalf("buildVFSManifest: %v", err)
+	}
+
+	get := func(p string) (VFSManifestEntry, bool) {
+		for _, e := range manifest {
+			if e.Path == p {
+				return e, true
+			}
+		}
+		return VFSManifestEntry{}, false
+	}
+
+	if e, ok := get("foo.txt"); !ok || !strings.HasPrefix(e.URL, "/data/ctf/common/foo.txt") {
+		t.Fatalf("expected foo.txt from highest-priority game dir, got: ok=%v entry=%+v", ok, e)
+	}
+	if e, ok := get("base.txt"); !ok || !strings.HasPrefix(e.URL, "/data/id1/common/base.txt") {
+		t.Fatalf("expected base.txt from fallback game dir, got: ok=%v entry=%+v", ok, e)
+	}
+}
+
+func TestResolveManifestGameDirs_UsesServerSearchPath(t *testing.T) {
+	mgr := NewServerManager(t.TempDir(), t.TempDir())
+	rec := mgr.RegisterServerLaunch(serverLaunch{slot: 0})
+	mgr.updatePort(rec, 26000)
+	mgr.updateSearchPath(rec, []string{"ctf", "id1"})
+
+	got := resolveManifestGameDirs(mgr, "ctf")
+	want := []string{"ctf", "id1"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("expected game dirs %v, got %v", want, got)
+	}
+}
+
+func TestResolveManifestGameDirs_UsesMatchingSuffixWhenRequestedDirIsNotActive(t *testing.T) {
+	mgr := NewServerManager(t.TempDir(), t.TempDir())
+	rec := mgr.RegisterServerLaunch(serverLaunch{slot: 0})
+	mgr.updatePort(rec, 26000)
+	mgr.updateSearchPath(rec, []string{"arena", "rogue", "id1"})
+
+	got := resolveManifestGameDirs(mgr, "rogue")
+	want := []string{"rogue", "id1"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("expected game dirs %v, got %v", want, got)
+	}
+}
+
+func TestResolveManifestGameDirs_IncludesAllFallbackDirsFromMatchingSearchPaths(t *testing.T) {
+	mgr := NewServerManager(t.TempDir(), t.TempDir())
+	rec0 := mgr.RegisterServerLaunch(serverLaunch{slot: 0})
+	mgr.updatePort(rec0, 26000)
+	mgr.updateSearchPath(rec0, []string{"arena", "id1"})
+
+	rec1 := mgr.RegisterServerLaunch(serverLaunch{slot: 1})
+	mgr.updatePort(rec1, 26001)
+	mgr.updateSearchPath(rec1, []string{"arena", "rogue", "id1"})
+
+	got := resolveManifestGameDirs(mgr, "arena")
+	if len(got) != 3 {
+		t.Fatalf("expected 3 game dirs, got %v", got)
+	}
+	if got[0] != "arena" {
+		t.Fatalf("expected requested game dir first, got %v", got)
+	}
+	if !slices.Contains(got, "id1") || !slices.Contains(got, "rogue") {
+		t.Fatalf("expected merged fallback dirs [id1 rogue], got %v", got)
+	}
+}
+
+func TestResolveManifestGameDirs_FallsBackToRequestedGameDirWithoutServerPath(t *testing.T) {
+	mgr := NewServerManager(t.TempDir(), t.TempDir())
+
+	got := resolveManifestGameDirs(mgr, "id1")
+	want := []string{"id1"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("expected game dirs %v, got %v", want, got)
 	}
 }
 

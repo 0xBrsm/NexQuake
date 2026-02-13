@@ -77,6 +77,32 @@ func TestResolveClientSourceKey_HeaderOverride(t *testing.T) {
 	}
 }
 
+func TestHashedClientIPAllocatorReserveAndBlock(t *testing.T) {
+	a := newHashedClientIPAllocator()
+
+	source := "ip:203.0.113.7"
+	ip4, ok := a.alloc(source)
+	if !ok {
+		t.Fatalf("alloc() for source %q failed", source)
+	}
+
+	a.reserveAndBlock(ip4, source)
+	a.release(ip4)
+
+	if _, ok := a.alloc(source); ok {
+		t.Fatalf("expected blocked source %q to fail allocation", source)
+	}
+
+	other := "ip:198.51.100.5"
+	ipOther, ok := a.alloc(other)
+	if !ok {
+		t.Fatalf("alloc() for other source failed")
+	}
+	if ipOther == ip4 {
+		t.Fatalf("expected reserved ip %v to stay unavailable", ip4)
+	}
+}
+
 func TestBuildWSClientIdentityFrame(t *testing.T) {
 	ip4 := [4]byte{127, 1, 2, 3}
 	frame := buildWSClientIdentityFrame(ip4)

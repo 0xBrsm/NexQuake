@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -21,22 +20,29 @@ func main() {
 		os.Exit(exitCode)
 	}
 
+	if err := configureNexusLogFile(getEnv("LOGS_DIR", "/app/logs")); err != nil {
+		fatalf("Failed to initialize Nexus log file: %v", err)
+	}
+	defer closeNexusLogFile()
+	infof("== Welcome to NexQuake! ==")
+
+	cfg := loadRuntimeConfig()
+
 	// Initialize authentication (admin privilege system).
 	if err := initAuth(); err != nil {
-		log.Fatalf("Failed to initialize auth: %v", err)
+		fatalf("Failed to initialize auth: %v", err)
 	}
 
 	runCtx, runCancel := context.WithCancel(context.Background())
 	defer runCancel()
 
-	cfg := loadRuntimeConfig()
 	if err := prependPath(cfg.binDir); err != nil {
-		log.Fatalf("Failed to configure PATH: %v", err)
+		fatalf("Failed to configure PATH: %v", err)
 	}
 
 	// Validate runtime artifacts early; avoids confusing partial startup.
 	if !fileExists(filepath.Join(cfg.clientDir, "index.html")) {
-		log.Fatalf("WASM client not found: %s", cfg.clientDir)
+		fatalf("WASM client not found: %s", cfg.clientDir)
 	}
 
 	if cfg.debugStartup {
@@ -45,13 +51,13 @@ func main() {
 
 	// Default QUICKSTART is "minimal"; missing manifest is a no-op.
 	if err := bootstrapGameData(runCtx, cfg.dataDir); err != nil {
-		log.Fatalf("Game data bootstrap failed: %v", err)
+		fatalf("Game data bootstrap failed: %v", err)
 	}
 
 	// Start dedicated servers (one per mod directory).
 	serverMgr := NewServerManager(cfg.dataDir, cfg.logsDir)
 	if err := serverMgr.StartAll(); err != nil {
-		log.Fatalf("Failed to start servers: %v", err)
+		fatalf("Failed to start servers: %v", err)
 	}
 	globalServerManager = serverMgr
 
@@ -63,7 +69,7 @@ func main() {
 	}
 
 	pakCache := newPakIndexCache()
-	mux := newMux(cfg, pakCache)
+	mux := newMux(cfg, pakCache, serverMgr)
 
 	server := &http.Server{
 		Addr:              ":" + cfg.httpPort,
@@ -76,7 +82,7 @@ func main() {
 	go func() {
 		infof("Nexus listening on port %s", cfg.httpPort)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server error: %v", err)
+			fatalf("Server error: %v", err)
 		}
 	}()
 
@@ -85,7 +91,7 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	<-sigChan
 
-	log.Println("Shutting down gracefully...")
+	infof("Shutting down gracefully...")
 	runCancel()
 	if serverInfoPoller != nil {
 		serverInfoPoller.Stop()
@@ -95,11 +101,11 @@ func main() {
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		log.Fatalf("Server shutdown failed: %v", err)
+		fatalf("Server shutdown failed: %v", err)
 	}
 
 	_ = serverMgr.StopAll(ctx, 2*time.Second)
-	log.Println("Nexus stopped")
+	infof("Nexus stopped")
 }
 
 type runtimeConfig struct {
@@ -199,24 +205,24 @@ func runHealthcheck(httpPort string) error {
 }
 
 func logArtifactFingerprints(cfg runtimeConfig) {
-	log.Println("Artifact fingerprints:")
+	infof("Artifact fingerprints:")
 	if exe, err := os.Executable(); err == nil {
 		if sum, err := sha256File(exe); err == nil {
-			log.Printf("  nexus   %s  %s", sum, exe)
+			infof("  nexus   %s  %s", sum, exe)
 		}
 	}
 	serverPath := filepath.Join(cfg.binDir, "nqserver")
 	if sum, err := sha256File(serverPath); err == nil {
-		log.Printf("  nqserver %s  %s", sum, serverPath)
+		infof("  nqserver %s  %s", sum, serverPath)
 	}
 	wasmPath := filepath.Join(cfg.clientDir, "index.wasm")
 	if sum, err := sha256File(wasmPath); err == nil {
-		log.Printf("  wasm    %s  %s", sum, wasmPath)
+		infof("  wasm    %s  %s", sum, wasmPath)
 	}
-	log.Println()
+	infof("")
 }
 
-func newMux(cfg runtimeConfig, pakCache *pakIndexCache) *http.ServeMux {
+func newMux(cfg runtimeConfig, pakCache *pakIndexCache, mgr *ServerManager) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// Health check endpoint (Go 1.22+ method-based routing)
@@ -235,7 +241,7 @@ func newMux(cfg runtimeConfig, pakCache *pakIndexCache) *http.ServeMux {
 
 	// Serve game data files - shared between WASM client and servers.
 	// /data-manifest/<mod> returns a virtualized manifest from common+client layers (with PAK exploding).
-	mux.Handle("/data-manifest/", addCORSHeaders(http.HandlerFunc(newDataManifestHandler(cfg.dataDir, pakCache, cfg.vfsPrefetchConcurrency)), cfg.corsOrigin))
+	mux.Handle("/data-manifest/", addCORSHeaders(http.HandlerFunc(newDataManifestHandler(cfg.dataDir, mgr, pakCache, cfg.vfsPrefetchConcurrency)), cfg.corsOrigin))
 	mux.Handle("/pak-extract/", addCORSHeaders(http.HandlerFunc(newPakExtractHandler(cfg.dataDir, pakCache)), cfg.corsOrigin))
 
 	dataFS := http.FileServerFS(os.DirFS(cfg.dataDir))

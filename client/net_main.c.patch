@@ -25,7 +25,8 @@
  PollProcedure	slistSendProcedure = {NULL, 0.0, Slist_Send};
  PollProcedure	slistPollProcedure = {NULL, 0.0, Slist_Poll};
  
-@@ -262,7 +265,7 @@
+@@ -261,11 +265,19 @@
+ 
  static void PrintSlistHeader(void)
  {
 -	Con_Printf("Server          Map             Users\n");
@@ -35,20 +36,27 @@
  	slistLastShown = 0;
  }
  
-@@ -274,10 +277,10 @@
++char *NET_SlistFormatEntry(const hostcache_t *host)
++{
++	static char string[64];
++	sprintf(string, "%-15.15s %-15.15s %-15.15s %2u/%2u\n",
++			host->name, host->map, host->gamedir, host->users, host->maxusers);
++	return string;
++}
++
+ 
+ static void PrintSlist(void)
+ {
+@@ -274,7 +286,7 @@
  	for (n = slistLastShown; n < hostCacheCount; n++)
  	{
  		if (hostcache[n].maxusers)
 -			Con_Printf("%-15.15s %-15.15s %2u/%2u\n", hostcache[n].name, hostcache[n].map, hostcache[n].users, hostcache[n].maxusers);
-+			Con_Printf("%-15.15s %-15.15s %-15.15s %2u/%2u\n", hostcache[n].name, hostcache[n].map, hostcache[n].gamedir, hostcache[n].users, hostcache[n].maxusers);
++			Con_Printf("%s", NET_SlistFormatEntry(&hostcache[n]));
  		else
--			Con_Printf("%-15.15s %-15.15s\n", hostcache[n].name, hostcache[n].map);
-+			Con_Printf("%-15.15s %-15.15s %-15.15s\n", hostcache[n].name, hostcache[n].map, hostcache[n].gamedir);
+ 			Con_Printf("%-15.15s %-15.15s\n", hostcache[n].name, hostcache[n].map);
  	}
- 	slistLastShown = n;
- }
- 
-@@ -295,6 +299,7 @@
+@@ -295,6 +307,7 @@
  {
  	if (slistInProgress)
  		return;
@@ -56,7 +64,7 @@
  
  	if (! slistSilent)
  	{
-@@ -312,7 +317,10 @@
+@@ -312,8 +325,11 @@
  }
  
  
@@ -68,7 +76,8 @@
 +
  	for (net_driverlevel=0; net_driverlevel < net_numdrivers; net_driverlevel++)
  	{
-@@ -323,12 +328,12 @@
+ 		if (!slistLocal && net_driverlevel == 0)
+@@ -323,12 +339,12 @@
  		dfunc.SearchForHosts (true);
  	}
  
@@ -83,7 +92,7 @@
  {
  	for (net_driverlevel=0; net_driverlevel < net_numdrivers; net_driverlevel++)
  	{
-@@ -342,6 +347,18 @@
+@@ -342,6 +358,18 @@
  	if (! slistSilent)
  		PrintSlist();
  
@@ -102,7 +111,7 @@
  	if ((Sys_FloatTime() - slistStartTime) < 1.5)
  	{
  		SchedulePollProcedure(&slistPollProcedure, 0.1);
-@@ -401,7 +418,12 @@
+@@ -401,7 +429,12 @@
  	NET_Slist_f ();
  
  	while(slistInProgress)
@@ -115,8 +124,7 @@
  
  	if (host == NULL)
  	{
-@@ -958,7 +980,20 @@
- void SchedulePollProcedure(PollProcedure *proc, double timeOffset)
+@@ -959,6 +992,19 @@
  {
  	PollProcedure *pp, *prev;
  

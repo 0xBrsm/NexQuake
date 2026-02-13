@@ -52,20 +52,20 @@ func bootstrapGameData(ctx context.Context, dataDir string) error {
 			return fmt.Errorf("gamedata.json[%d]: no layers for %s (config=%s)", i, game, src)
 		}
 
-		if err := installLayer(ctx, dataDir, game, "common", ent.Common, ent.Force, i); err != nil {
+		if err := installLayer(ctx, dataDir, game, "common", ent.Common, ent.Force); err != nil {
 			return fmt.Errorf("gamedata.json[%d]: %w (config=%s)", i, err, src)
 		}
-		if err := installLayer(ctx, dataDir, game, "server", ent.Server, ent.Force, i); err != nil {
+		if err := installLayer(ctx, dataDir, game, "server", ent.Server, ent.Force); err != nil {
 			return fmt.Errorf("gamedata.json[%d]: %w (config=%s)", i, err, src)
 		}
-		if err := installLayer(ctx, dataDir, game, "client", ent.Client, ent.Force, i); err != nil {
+		if err := installLayer(ctx, dataDir, game, "client", ent.Client, ent.Force); err != nil {
 			return fmt.Errorf("gamedata.json[%d]: %w (config=%s)", i, err, src)
 		}
 	}
 	return nil
 }
 
-func installLayer(ctx context.Context, dataDir, game, layer string, sources []string, force bool, entryIndex int) error {
+func installLayer(ctx context.Context, dataDir, game, layer string, sources []string, force bool) error {
 	if len(sources) == 0 {
 		return nil
 	}

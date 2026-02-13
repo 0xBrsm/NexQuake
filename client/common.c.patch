@@ -27,7 +27,7 @@
 +} com_gamecache[MAX_GAMECACHE];
 +static int com_gamecache_count;
 +static int com_gamecache_next_replace = 1;
-+static char com_active_game[16] = "id1";
++static char com_active_game[16] = GAMENAME;
 +extern int fs_hunklevel;
 +
  /*
@@ -43,18 +43,26 @@
  //
  // -cachedir <path>
  // Overrides the system supplied cache directory (NULL or /qcache)
-@@ -1822,5 +1834,84 @@
+@@ -1822,5 +1834,95 @@
  
  	if (COM_CheckParm ("-proghack"))
  		proghack = true;
 +
-+	Q_strcpy(com_gamecache[0].mod, "id1");
++	Q_strncpy(com_gamecache[0].mod, GAMENAME, sizeof(com_gamecache[0].mod) - 1);
++	com_gamecache[0].mod[sizeof(com_gamecache[0].mod) - 1] = 0;
 +	com_gamecache[0].paths = com_searchpaths;
 +	Q_strncpy(com_gamecache[0].gamedir, com_gamedir, MAX_OSPATH - 1);
 +	com_gamecache[0].gamedir[MAX_OSPATH - 1] = 0;
 +	com_gamecache_count = 1;
 +	com_gamecache_next_replace = 1;
 +	fs_hunklevel = Hunk_LowMark();
++
++#ifdef __EMSCRIPTEN__
++	EM_ASM({
++		if (typeof Module === 'undefined') return;
++		Module.nexquakeBaseGameName = UTF8ToString($0);
++	}, GAMENAME);
++#endif
 +}
 +
 +void COM_SwitchGame(const char *gamedir)
@@ -63,7 +71,10 @@
 +	int i;
 +
 +	if (!gamedir || !gamedir[0])
-+		Q_strcpy(mod, "id1");
++	{
++		Q_strncpy(mod, GAMENAME, sizeof(mod) - 1);
++		mod[sizeof(mod) - 1] = 0;
++	}
 +	else
 +	{
 +		Q_strncpy(mod, gamedir, sizeof(mod) - 1);
@@ -103,7 +114,7 @@
 +	Q_strncpy(com_gamedir, com_gamecache[0].gamedir, MAX_OSPATH - 1);
 +	com_gamedir[MAX_OSPATH - 1] = 0;
 +
-+	if (Q_strcasecmp(mod, "id1") != 0 && com_basedir[0])
++	if (Q_strcasecmp(mod, GAMENAME) != 0 && com_basedir[0])
 +	{
 +		int slot;
 +		COM_AddGameDirectory(va("%s/%s", com_basedir, mod));

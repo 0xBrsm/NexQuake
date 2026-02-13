@@ -14,7 +14,7 @@ func TestReadPakContents(t *testing.T) {
 	pakPath := filepath.Join(tmp, "pak0.pak")
 
 	writeTestPak(t, pakPath, map[string][]byte{
-		"gfx/palette.lmp": []byte{0x01, 0x02, 0x03},
+		"gfx/palette.lmp": {0x01, 0x02, 0x03},
 		"progs.dat":       []byte("abcd"),
 	})
 
