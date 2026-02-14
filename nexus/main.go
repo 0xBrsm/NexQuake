@@ -274,7 +274,7 @@ func parseNQServerIP(raw string) net.IP {
 }
 
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	isAdmin := globalAuth.IsAdmin(r)
+	isAdmin, userIdentity := globalAuth.IdentifyRequest(r)
 	sourceKey := nqnet.ResolveClientSourceKey(r)
 	if globalIPAllocator.IsBlocked(sourceKey) {
 		warnf("Rejected blocked client source=%q remote=%s", sourceKey, r.RemoteAddr)
@@ -288,10 +288,19 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if isAdmin {
-		infof("Admin connected: %s (subprotocol=%q source=%q)", conn.RemoteAddr(), conn.Subprotocol(), sourceKey)
+	// Format: <external IP>:<port>
+	displayIP := strings.TrimPrefix(sourceKey, "ip:")
+	displayAddr := displayIP
+	if _, port, splitErr := net.SplitHostPort(conn.RemoteAddr().String()); splitErr == nil {
+		displayAddr = net.JoinHostPort(displayIP, port)
 	} else {
-		debugf("Client connected: %s (subprotocol=%q source=%q)", conn.RemoteAddr(), conn.Subprotocol(), sourceKey)
+		warnf("Could not parse port from remote address %q: %v", conn.RemoteAddr().String(), splitErr)
+	}
+
+	if isAdmin {
+		infof("Admin connected: %s (%s)", displayAddr, userIdentity)
+	} else {
+		debugf("Client connected: %s (%s)", displayAddr, userIdentity)
 	}
 
 	dispatch := nqnet.FrameDispatch{
@@ -319,6 +328,8 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	} else {
 		debugf("Client disconnected: %s", conn.RemoteAddr())
 	}
+
+
 }
 
 func newMux(cfg runtimeConfig, pakCache *gamedata.PakIndexCache, mgr *orch.ServerManager) *http.ServeMux {

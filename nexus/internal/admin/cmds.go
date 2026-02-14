@@ -283,7 +283,7 @@ func executeBanCommand(rawTarget string, env *Env) (string, error) {
 		}
 		fmt.Fprintf(&b, "warning: %s\n", msg)
 	}
-	b.WriteString("ok\n")
+	b.WriteString("complete\n")
 	return b.String(), nil
 }
 
@@ -391,7 +391,7 @@ func execNexusCommand(args string, env *Env) (string, error) {
 		if err := env.LaunchServer(binary, launchArgs); err != nil {
 			return "", withUsage(err, form)
 		}
-		return "ok\n", nil
+		return "server launched\n", nil
 
 	case "remove":
 		form := "remove <idx|port>"
@@ -405,7 +405,7 @@ func execNexusCommand(args string, env *Env) (string, error) {
 		if err := env.RemoveServer(target); err != nil {
 			return "", withUsage(err, form)
 		}
-		return "ok\n", nil
+		return "server removed\n", nil
 
 	case "ban":
 		form := "ban <idx|NQIP>"
@@ -470,7 +470,7 @@ func execNexusCommand(args string, env *Env) (string, error) {
 		if err != nil {
 			return "", withUsage(err, form)
 		}
-		return "ok\n", nil
+		return "complete\n", nil
 	}
 
 	return formatAdminCommandHelp(), nil

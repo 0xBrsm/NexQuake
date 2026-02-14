@@ -609,7 +609,7 @@ func (m *ServerManager) startServer(runtimeBasedir string, launch serverLaunch, 
 	cmd.Stdout = ptyChild
 	cmd.Stderr = ptyChild
 
-	m.debugf("Starting server slot=%d bin=%q args=%q", launch.Slot, launch.Binary, launch.Args)
+	m.debugf("Starting server %d: %s %s", launch.Slot+1, launch.Binary, strings.Join(launch.Args, " "))
 
 	if err := cmd.Start(); err != nil {
 		_ = ptyParent.Close()

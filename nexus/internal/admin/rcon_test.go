@@ -167,8 +167,8 @@ func TestExecNexusCommand_AllTargetAccepted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected start all to be accepted with empty registry, got %v", err)
 	}
-	if reply != "ok\n" {
-		t.Fatalf("expected ok reply, got %q", reply)
+	if reply != "complete\n" {
+		t.Fatalf("expected complete reply, got %q", reply)
 	}
 }
 

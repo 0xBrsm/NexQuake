@@ -271,8 +271,8 @@ func TestExecNexusCommand_RemoveDispatchesForStoppedServer(t *testing.T) {
 	globalAdminEnv = buildAdminEnv()
 
 	reply := execAdminNexusCommand(t, "remove 1")
-	if reply != "ok\n" {
-		t.Fatalf("expected ok reply, got %q", reply)
+	if reply != "server removed\n" {
+		t.Fatalf("expected server removed reply, got %q", reply)
 	}
 	if snaps := mgr.Snapshots(); len(snaps) != 0 {
 		t.Fatalf("expected removed server to be gone from registry, still have %d snapshots", len(snaps))

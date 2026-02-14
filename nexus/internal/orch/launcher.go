@@ -46,9 +46,9 @@ func (m *ServerManager) planLaunches() ([]serverLaunch, []string, error) {
 				Args:   []string{"-dedicated"},
 			},
 		}
-		m.infof("servers.ini not found at %s; using default nqserver launch with runtime port discovery", iniPath)
+		m.infof("Launch plan not found at %s; launching default server", iniPath)
 	} else {
-		m.debugf("Using servers.ini launch plan: %s (%d server entries)", iniPath, len(entries))
+		m.debugf("Using launch plan: %s (%d server entries)", iniPath, len(entries))
 	}
 
 	// Build merged runtime dirs from whatever mods exist in DATA_DIR.

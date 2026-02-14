@@ -94,10 +94,10 @@ func (a *Auth) rconPasswordValue() string {
 	return a.rconPassword
 }
 
-// IsAdmin checks whether the HTTP request carries valid admin credentials.
-func (a *Auth) IsAdmin(r *http.Request) bool {
+// IdentifyRequest checks the request for credentials and returns (isAdmin, identityString).
+func (a *Auth) IdentifyRequest(r *http.Request) (bool, string) {
 	if a == nil {
-		return false
+		return false, "anonymous"
 	}
 	k := requestKey(r)
 
@@ -105,15 +105,31 @@ func (a *Auth) IsAdmin(r *http.Request) bool {
 	if a.rconPassword != "" && k != "" {
 		expected := deriveRconTokenFromPassword(a.rconPassword)
 		if subtle.ConstantTimeCompare([]byte(k), []byte(expected)) == 1 {
-			return true
+			return true, "rcon"
 		}
 	}
 
 	// OIDC JWT.
 	if a.validator != nil {
-		return a.validator.check(r, a.debugf)
+		isAdmin, claims := a.validator.validate(r, a.debugf)
+		if claims != nil {
+			// Identifier = email ?? preferred_username ?? name ?? sub
+			for _, key := range []string{"email", "preferred_username", "name", "sub"} {
+				if val, ok := claims[key].(string); ok && val != "" {
+					return isAdmin, val
+				}
+			}
+			return isAdmin, "oidc-user"
+		}
 	}
-	return false
+
+	return false, "anonymous"
+}
+
+// IsAdmin checks whether the HTTP request carries valid admin credentials.
+func (a *Auth) IsAdmin(r *http.Request) bool {
+	ok, _ := a.IdentifyRequest(r)
+	return ok
 }
 
 // requestKey extracts a credential from ?token= query param or Authorization header.
@@ -133,7 +149,7 @@ func deriveRconTokenFromPassword(password string) string {
 	return base64.StdEncoding.EncodeToString([]byte(password))
 }
 
-func (v *oidcValidator) check(r *http.Request, debugf func(string, ...any)) bool {
+func (v *oidcValidator) validate(r *http.Request, debugf func(string, ...any)) (bool, map[string]any) {
 	raw := r.Header.Get(v.headerName)
 	if strings.EqualFold(v.headerName, "Authorization") && len(raw) > 7 && strings.EqualFold(raw[:7], "Bearer ") {
 		raw = strings.TrimSpace(raw[7:])
@@ -142,22 +158,22 @@ func (v *oidcValidator) check(r *http.Request, debugf func(string, ...any)) bool
 		raw = strings.TrimSpace(r.URL.Query().Get("token"))
 	}
 	if raw == "" {
-		return false
+		return false, nil
 	}
 
 	token, err := v.verifier.Verify(r.Context(), raw)
 	if err != nil {
 		debugf("JWT verification failed: %v", err)
-		return false
+		return false, nil
 	}
 
 	var claims map[string]any
 	if err := token.Claims(&claims); err != nil {
 		debugf("Failed to extract JWT claims: %v", err)
-		return false
+		return false, nil
 	}
 
-	return matchesAdminMatchers(claims, v.adminMatchers)
+	return matchesAdminMatchers(claims, v.adminMatchers), claims
 }
 
 func parseAdminMatchers(raw string) map[string][]string {

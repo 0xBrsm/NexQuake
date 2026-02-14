@@ -135,7 +135,7 @@ func (m *ServerManager) startRecord(rec *serverRecord) error {
 		launch,
 		func(port int) {
 			m.UpdatePort(rec, port)
-			m.debugf("Resolved server listen port (slot=%d port=%d)", rec.Launch.Slot, port)
+			m.debugf("Resolved server %d port: %d", rec.Launch.Slot+1, port)
 		},
 		func(searchPath []string) {
 			searchPath = normalizeSearchPath(searchPath)
