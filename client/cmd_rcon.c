@@ -121,7 +121,7 @@ static void Rcon_f(void)
 
 	// Port 0 is nexus control traffic.
 	if (WebSocketTransport_SendFrame(0, payload, payload_len) < 0)
-		Con_Printf("rcon: send failed\n");
+		Con_Printf("rcon: send failed (%s)\n", WebSocketTransport_LastSendError());
 
 	Z_Free(payload);
 }

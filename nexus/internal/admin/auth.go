@@ -67,20 +67,16 @@ func InitAuth(ctx context.Context, infof, debugf func(string, ...any)) (*Auth, e
 	}
 
 	var methods []string
+	if auth.validator != nil {
+		methods = append(methods, "IdP")
+	}
 	if rconPassword != "" {
 		methods = append(methods, "rcon_password")
-	}
-	if auth.validator != nil {
-		if len(adminMatchers) > 0 {
-			methods = append(methods, "IdP (admin_id)")
-		} else {
-			methods = append(methods, "IdP")
-		}
 	}
 	if len(methods) == 0 {
 		infof("Admin access disabled")
 	} else {
-		infof("Admin access enabled via: %s", strings.Join(methods, ", "))
+		infof("Admin access enabled: %s", strings.Join(methods, ", "))
 	}
 
 	return auth, nil

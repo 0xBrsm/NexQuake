@@ -7,6 +7,11 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const (
+	wsKeepalivePingInterval = 25 * time.Second
+	wsKeepaliveWriteTimeout = 5 * time.Second
+)
+
 // Upgrader is the WebSocket upgrader shared by all connections.
 var Upgrader = websocket.Upgrader{
 	HandshakeTimeout:  10 * time.Second,
@@ -40,10 +45,21 @@ func (r *Router) wsReadLoop() {
 
 // wsWriteLoop writes queued frames to the WebSocket.
 func (r *Router) wsWriteLoop() {
+	pingTicker := time.NewTicker(wsKeepalivePingInterval)
+	defer pingTicker.Stop()
+
 	for {
 		select {
 		case <-r.ctx.Done():
 			return
+		case <-pingTicker.C:
+			if err := r.ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(wsKeepaliveWriteTimeout)); err != nil {
+				if r.ctx.Err() == nil {
+					r.debugf("WebSocket ping error: %v", err)
+				}
+				r.Close()
+				return
+			}
 		case packet := <-r.wsTx:
 			if len(packet) == 0 || r.ctx.Err() != nil {
 				continue

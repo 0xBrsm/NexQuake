@@ -15,6 +15,7 @@ type BanTarget struct {
 // SessionSnapshot is a point-in-time view of a single client session.
 type SessionSnapshot struct {
 	VirtualIP        string
+	SourceIP         string
 	IsAdmin          bool
 	ActiveServerPort int
 }
@@ -114,6 +115,7 @@ func (r *SessionRegistry) SnapshotAll() []SessionSnapshot {
 		for router := range routers {
 			out = append(out, SessionSnapshot{
 				VirtualIP:        virtualIP,
+				SourceIP:         router.SourceIP(),
 				IsAdmin:          router.IsAdmin(),
 				ActiveServerPort: router.activeServerPort(),
 			})

@@ -221,8 +221,14 @@ static qboolean WebSocket_EnsureTransportOpen(void)
 {
 	if (WebSocketTransport_IsOpen())
 		return true;
-	WebSocket_ResetState();
-	return false;
+
+	// Keep socket ref state; only reset derived routing info before reconnect.
+	WebSocket_ResetClientVirtualIP();
+	WebSocket_ResetServerPortMap();
+	if (WebSocketTransport_Open() < 0)
+		return false;
+	WebSocket_UpdateMyTCPIPAddress();
+	return true;
 }
 
 int WebSocket_Init(void)

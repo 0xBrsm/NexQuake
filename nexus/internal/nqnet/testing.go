@@ -24,17 +24,25 @@ func NewTestRouterWith(isAdmin bool, alloc *IPAllocator, sessions *SessionRegist
 
 	ch := make(chan []byte, 16)
 	ctx, cancel := context.WithCancel(context.Background())
-	clientIP, _ := alloc.alloc("test")
+	sourceKey := "ip:198.51.100.10"
+	sourceIP := "198.51.100.10"
+	if isAdmin {
+		sourceKey = "ip:198.51.100.11"
+		sourceIP = "198.51.100.11"
+	}
+	clientIP, _ := alloc.alloc(sourceKey)
 	r := &Router{
-		wsTx:     ch,
-		clientIP: clientIP,
-		isAdmin:  isAdmin,
-		ctx:      ctx,
-		cancel:   cancel,
-		alloc:    alloc,
-		sessions: sessions,
-		warnf:    noopLogf,
-		debugf:   noopLogf,
+		wsTx:      ch,
+		clientIP:  clientIP,
+		sourceKey: sourceKey,
+		sourceIP:  sourceIP,
+		isAdmin:   isAdmin,
+		ctx:       ctx,
+		cancel:    cancel,
+		alloc:     alloc,
+		sessions:  sessions,
+		warnf:     noopLogf,
+		debugf:    noopLogf,
 	}
 	sessions.track(r)
 	return r, ch

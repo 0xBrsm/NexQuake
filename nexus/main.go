@@ -276,6 +276,7 @@ func parseNQServerIP(raw string) net.IP {
 
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	isAdmin, userIdentity := globalAuth.IdentifyRequest(r)
+	sourceIP := nqnet.ResolveClientSourceIP(r)
 	sourceKey := nqnet.ResolveClientSourceKey(r)
 	if globalIPAllocator.IsBlocked(sourceKey) {
 		warnf("Rejected blocked client source=%q remote=%s", sourceKey, r.RemoteAddr)
@@ -289,13 +290,11 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Format: <external IP>:<port>
-	displayIP := strings.TrimPrefix(sourceKey, "ip:")
-	displayAddr := displayIP
-	if _, port, splitErr := net.SplitHostPort(conn.RemoteAddr().String()); splitErr == nil {
-		displayAddr = net.JoinHostPort(displayIP, port)
-	} else {
-		warnf("Could not parse port from remote address %q: %v", conn.RemoteAddr().String(), splitErr)
+	displayAddr := sourceIP
+	if displayAddr == "" {
+		displayAddr = conn.RemoteAddr().String()
+	} else if _, port, err := net.SplitHostPort(conn.RemoteAddr().String()); err == nil {
+		displayAddr = net.JoinHostPort(displayAddr, port)
 	}
 
 	if isAdmin {
@@ -315,7 +314,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	router, err := nqnet.NewRouter(conn, sourceKey, isAdmin, globalIPAllocator, globalSessionRegistry, dispatch, warnf, debugf)
+	router, err := nqnet.NewRouter(conn, sourceKey, sourceIP, isAdmin, globalIPAllocator, globalSessionRegistry, dispatch, warnf, debugf)
 	if err != nil {
 		errorf("Failed to create router: %v", err)
 		_ = conn.Close()
@@ -325,11 +324,10 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	router.Run()
 
 	if isAdmin {
-		infof("Admin disconnected: %s", conn.RemoteAddr())
+		infof("Admin disconnected: %s", displayAddr)
 	} else {
-		debugf("Client disconnected: %s", conn.RemoteAddr())
+		debugf("Client disconnected: %s", displayAddr)
 	}
-
 
 }
 

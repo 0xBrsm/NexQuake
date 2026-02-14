@@ -125,11 +125,14 @@ func TestExecNexusCommand_SessionsListClientSessions(t *testing.T) {
 	nqnet.NewTestRouterWith(true, globalIPAllocator, globalSessionRegistry)
 
 	reply := execAdminNexusCommand(t, "sessions")
-	if !strings.Contains(reply, "#   NQIP") || !strings.Contains(reply, "Role") || !strings.Contains(reply, "Port") || !strings.Contains(reply, "Server") {
+	if !strings.Contains(reply, "#   Role") || !strings.Contains(reply, "IP Address") || !strings.Contains(reply, "NQIP") || !strings.Contains(reply, "Port") || !strings.Contains(reply, "Server") {
 		t.Fatalf("expected sessions header, got %q", reply)
 	}
 	if !strings.Contains(reply, "admin") || !strings.Contains(reply, "client") {
 		t.Fatalf("expected sessions output to include role markers, got %q", reply)
+	}
+	if !strings.Contains(reply, "198.51.100.10") || !strings.Contains(reply, "198.51.100.11") {
+		t.Fatalf("expected sessions output to include source IPs, got %q", reply)
 	}
 }
 
@@ -345,6 +348,9 @@ func TestExecNexusCommand_BanDisconnectsAndBlocksIdentity(t *testing.T) {
 	reply := execAdminNexusCommand(t, "ban "+vip)
 	if !strings.Contains(reply, "banned "+vip) {
 		t.Fatalf("expected ban confirmation, got %q", reply)
+	}
+	if !strings.Contains(reply, "source ip(s): 198.51.100.10") {
+		t.Fatalf("expected ban output to include source ip, got %q", reply)
 	}
 	if routers, _ := globalSessionRegistry.SnapshotByVirtualIP(vip); len(routers) != 0 {
 		t.Fatalf("expected session to be disconnected after ban")

@@ -160,21 +160,36 @@ func ParseClientIP(raw string) (netip.Addr, bool) {
 	return ip.Unmap(), true
 }
 
-// ResolveClientSourceKey derives a stable identity key from an HTTP request.
-func ResolveClientSourceKey(r *http.Request) string {
+// ResolveClientSourceIP returns the external client IP for a request.
+// Preference order:
+// 1) AUTH_CLIENT_IP_HEADER (if configured and parseable)
+// 2) Remote address IP
+func ResolveClientSourceIP(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
 
 	if headerName := strings.TrimSpace(os.Getenv("AUTH_CLIENT_IP_HEADER")); headerName != "" {
 		if ip, ok := ParseClientIP(r.Header.Get(headerName)); ok {
-			return "ip:" + ip.String()
+			return ip.String()
 		}
 	}
 
 	if ip, ok := ParseClientIP(r.RemoteAddr); ok {
-		return "ip:" + ip.String()
+		return ip.String()
 	}
 
+	return ""
+}
+
+// ResolveClientSourceKey derives a stable identity key from an HTTP request.
+func ResolveClientSourceKey(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+
+	if sourceIP := ResolveClientSourceIP(r); sourceIP != "" {
+		return "ip:" + sourceIP
+	}
 	return strings.TrimSpace(r.RemoteAddr)
 }

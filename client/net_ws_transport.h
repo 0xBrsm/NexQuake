@@ -16,6 +16,7 @@ int WebSocketTransport_Open(void);
 void WebSocketTransport_Close(void);
 
 int WebSocketTransport_SendFrame(int dst_port, const byte *buf, int len);
+const char *WebSocketTransport_LastSendError(void);
 
 int WebSocketTransport_ReadControl(byte *buf, int len, int *src_port);
 int WebSocketTransport_ReadData(byte *buf, int len, int *src_port);

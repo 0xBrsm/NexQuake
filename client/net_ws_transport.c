@@ -49,6 +49,7 @@ static qboolean ws_opened = false;
 static qboolean ws_onopen_handled = false;
 static qboolean ws_close_requested = false;
 static EMSCRIPTEN_WEBSOCKET_T ws;
+static const char *ws_last_send_error = "";
 
 // Owned by net_ws_vnet.c.
 extern void WebSocketVNet_SetClientVirtualIP(const byte *ip4);
@@ -79,6 +80,7 @@ static void WebSocketTransport_ResetState(void)
 {
 	ws_opened = false;
 	ws_onopen_handled = false;
+	ws_last_send_error = "";
 	WebSocketTransport_ResetQueues();
 }
 
@@ -300,20 +302,38 @@ int WebSocketTransport_SendFrame(int dst_port, const byte *buf, int len)
 	EMSCRIPTEN_RESULT res;
 
 	if (!ws_opened)
-		return -1;
+	{
+		if (WebSocketTransport_Open() < 0)
+		{
+			ws_last_send_error = "websocket reconnect failed";
+			return -1;
+		}
+	}
 	if (!ws_onopen_handled)
 	{
 		WebSocketTransport_WaitForOnOpen(2000);
 		if (!ws_opened)
+		{
+			ws_last_send_error = "websocket closed while connecting";
 			return -1;
+		}
 		if (!ws_onopen_handled)
-			return 0;
+		{
+			ws_last_send_error = "websocket still connecting";
+			return -1;
+		}
 	}
 
 	if (len < 0 || len > NET_DATAGRAMSIZE)
+	{
+		ws_last_send_error = "payload too large";
 		return -1;
+	}
 	if (dst_port < 0 || dst_port > 65535)
+	{
+		ws_last_send_error = "invalid destination port";
 		return -1;
+	}
 
 	frame[0] = (byte)((dst_port >> 8) & 0xff);
 	frame[1] = (byte)(dst_port & 0xff);
@@ -321,9 +341,20 @@ int WebSocketTransport_SendFrame(int dst_port, const byte *buf, int len)
 
 	res = emscripten_websocket_send_binary(ws, frame, (uint32_t)(len + WS_PORT_HEADER_SIZE));
 	if (res < 0)
+	{
+		ws_last_send_error = "browser send failed";
 		return -1;
+	}
 
+	ws_last_send_error = "";
 	return len;
+}
+
+const char *WebSocketTransport_LastSendError(void)
+{
+	if (!ws_last_send_error[0])
+		return "unknown error";
+	return ws_last_send_error;
 }
 
 int WebSocketTransport_ReadControl(byte *buf, int len, int *src_port)

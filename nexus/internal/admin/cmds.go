@@ -79,6 +79,7 @@ func formatNexusServerList(servers []orch.ServerSnapshot) string {
 
 type nexusClientRow struct {
 	NQIP    string
+	Source  string
 	IsAdmin bool
 	Port    int
 	Server  string
@@ -137,6 +138,7 @@ func queryNexusClientRows(env *Env) []nexusClientRow {
 
 		out = append(out, nexusClientRow{
 			NQIP:    nqip,
+			Source:  strings.TrimSpace(session.SourceIP),
 			IsAdmin: session.IsAdmin,
 			Port:    port,
 			Server:  server,
@@ -145,6 +147,9 @@ func queryNexusClientRows(env *Env) []nexusClientRow {
 
 	sort.Slice(out, func(i, j int) bool {
 		if cmp := compareClientIPText(out[i].NQIP, out[j].NQIP); cmp != 0 {
+			return cmp < 0
+		}
+		if cmp := compareClientIPText(out[i].Source, out[j].Source); cmp != 0 {
 			return cmp < 0
 		}
 		if out[i].Server != out[j].Server {
@@ -166,12 +171,16 @@ func formatNexusClientList(rows []nexusClientRow) string {
 
 	var b strings.Builder
 	b.WriteByte('\n')
-	b.WriteString("#   NQIP             Role   Port  Server\n")
-	b.WriteString("--- --------------- ------ ----- ---------------\n")
+	b.WriteString("#   Role   IP Address      NQIP            Port  Server\n")
+	b.WriteString("--- ------ --------------- --------------- ----- ---------------\n")
 	for i, row := range rows {
 		nqip := strings.TrimSpace(row.NQIP)
 		if nqip == "" {
 			nqip = "?"
+		}
+		source := strings.TrimSpace(row.Source)
+		if source == "" {
+			source = "?"
 		}
 		role := "client"
 		if row.IsAdmin {
@@ -185,7 +194,7 @@ func formatNexusClientList(rows []nexusClientRow) string {
 		if server == "" {
 			server = "-"
 		}
-		fmt.Fprintf(&b, "%-3d %-15.15s %-6.6s %5s %-15.15s\n", i+1, nqip, role, port, server)
+		fmt.Fprintf(&b, "%-3d %-6.6s %-15.15s %-15.15s %5s %-15.15s\n", i+1, role, source, nqip, port, server)
 	}
 	b.WriteString("== end list ==\n\n")
 	return b.String()
@@ -250,6 +259,31 @@ func applyServerBanTargets(targets []nqnet.BanTarget, env *Env) (applied int, er
 	return applied, errs
 }
 
+func uniqueSortedSourceIPs(routers []*nqnet.Router) []string {
+	if len(routers) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(routers))
+	for _, router := range routers {
+		sourceIP := strings.TrimSpace(router.SourceIP())
+		if sourceIP == "" {
+			continue
+		}
+		seen[sourceIP] = struct{}{}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for sourceIP := range seen {
+		out = append(out, sourceIP)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return compareClientIPText(out[i], out[j]) < 0
+	})
+	return out
+}
+
 func executeBanCommand(rawTarget string, env *Env) (string, error) {
 	virtualIP, err := resolveBanVirtualIP(rawTarget, env)
 	if err != nil {
@@ -273,6 +307,9 @@ func executeBanCommand(rawTarget string, env *Env) (string, error) {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "banned %s\n", virtualIP)
+	if sourceIPs := uniqueSortedSourceIPs(routers); len(sourceIPs) > 0 {
+		fmt.Fprintf(&b, "source ip(s): %s\n", strings.Join(sourceIPs, ", "))
+	}
 	fmt.Fprintf(&b, "disconnected %d session(s)\n", len(routers))
 	fmt.Fprintf(&b, "reserved route identity for %d session(s)\n", len(routers))
 	fmt.Fprintf(&b, "issued server ban to %d target(s)\n", applied)

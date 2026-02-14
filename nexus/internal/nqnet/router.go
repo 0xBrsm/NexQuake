@@ -32,6 +32,7 @@ type Router struct {
 	wsTx      chan []byte
 	clientIP  [4]byte
 	sourceKey string
+	sourceIP  string
 	isAdmin   bool
 
 	alloc    *IPAllocator
@@ -53,6 +54,7 @@ type Router struct {
 func NewRouter(
 	ws *websocket.Conn,
 	sourceKey string,
+	sourceIP string,
 	isAdmin bool,
 	alloc *IPAllocator,
 	sessions *SessionRegistry,
@@ -88,6 +90,7 @@ func NewRouter(
 		wsTx:      make(chan []byte, 1024),
 		clientIP:  clientIP,
 		sourceKey: strings.TrimSpace(sourceKey),
+		sourceIP:  strings.TrimSpace(sourceIP),
 		isAdmin:   isAdmin,
 		alloc:     alloc,
 		sessions:  sessions,
@@ -133,6 +136,11 @@ func (r *Router) ClientIP() [4]byte {
 // SourceKey returns the router's identity source key.
 func (r *Router) SourceKey() string {
 	return r.sourceKey
+}
+
+// SourceIP returns the router's best-effort source client IP.
+func (r *Router) SourceIP() string {
+	return r.sourceIP
 }
 
 // IsAdmin reports whether this router has admin privileges.
