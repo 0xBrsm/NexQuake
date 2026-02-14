@@ -1,4 +1,4 @@
-package main
+package orch
 
 import (
 	"bufio"
@@ -9,14 +9,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/0xBrsm/NexQuake/nexus/internal/gamedata"
+
 	"github.com/google/shlex"
 )
 
 type serverLaunch struct {
-	slot   int
-	logDir string
-	binary string
-	args   []string
+	Slot   int
+	LogDir string
+	Binary string
+	Args   []string
 }
 
 var unsupportedLaunchArgs = map[string]struct{}{
@@ -29,7 +31,7 @@ var unsupportedLaunchArgs = map[string]struct{}{
 func (m *ServerManager) planLaunches() ([]serverLaunch, []string, error) {
 	iniPath := filepath.Join(m.dataDir, "servers.ini")
 	startedAt := time.Now().UTC()
-	entries, ok, err := loadServersIni(iniPath, startedAt)
+	entries, ok, err := loadServersIni(iniPath, startedAt, m.warnf)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -38,26 +40,26 @@ func (m *ServerManager) planLaunches() ([]serverLaunch, []string, error) {
 		binary := "nqserver"
 		entries = []serverLaunch{
 			{
-				slot:   0,
-				logDir: fmt.Sprintf("%d-%s-%s", 0, filepath.Base(binary), startTag),
-				binary: binary,
-				args:   []string{"-dedicated"},
+				Slot:   0,
+				LogDir: fmt.Sprintf("%d-%s-%s", 0, filepath.Base(binary), startTag),
+				Binary: binary,
+				Args:   []string{"-dedicated"},
 			},
 		}
-		infof("servers.ini not found at %s; using default nqserver launch with runtime port discovery", iniPath)
+		m.infof("servers.ini not found at %s; using default nqserver launch with runtime port discovery", iniPath)
 	} else {
-		debugf("Using servers.ini launch plan: %s (%d server entries)", iniPath, len(entries))
+		m.debugf("Using servers.ini launch plan: %s (%d server entries)", iniPath, len(entries))
 	}
 
 	// Build merged runtime dirs from whatever mods exist in DATA_DIR.
-	mods, err := listMods(m.dataDir)
+	mods, err := gamedata.ListMods(m.dataDir)
 	if err != nil {
 		return nil, nil, err
 	}
 	return entries, mods, nil
 }
 
-func loadServersIni(iniPath string, startedAt time.Time) (entries []serverLaunch, found bool, err error) {
+func loadServersIni(iniPath string, startedAt time.Time, warnf func(string, ...any)) (entries []serverLaunch, found bool, err error) {
 	st, statErr := os.Stat(iniPath)
 	if statErr != nil {
 		if errors.Is(statErr, os.ErrNotExist) {
@@ -134,10 +136,10 @@ func loadServersIni(iniPath string, startedAt time.Time) (entries []serverLaunch
 		logDir := fmt.Sprintf("%d-%s-%s", slot, filepath.Base(binary), startTag)
 
 		entries = append(entries, serverLaunch{
-			slot:   slot,
-			logDir: logDir,
-			binary: binary,
-			args:   args,
+			Slot:   slot,
+			LogDir: logDir,
+			Binary: binary,
+			Args:   args,
 		})
 	}
 	if err := scanner.Err(); err != nil {

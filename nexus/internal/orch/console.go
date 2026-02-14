@@ -1,4 +1,4 @@
-package main
+package orch
 
 import (
 	"bufio"
@@ -122,12 +122,12 @@ func newServerConsole(pty *os.File) *serverConsole {
 	}
 }
 
-func (c *serverConsole) WriteCommand(cmd string) error {
-	return c.WriteCommandWithOptions(cmd, serverConsoleWriteOptions{})
+func (c *serverConsole) writeCommand(cmd string) error {
+	return c.writeCommandWithOptions(cmd, serverConsoleWriteOptions{})
 }
 
-func (c *serverConsole) WriteCommandWithOptions(cmd string, opts serverConsoleWriteOptions) error {
-	if c == nil || c.pty == nil {
+func (c *serverConsole) writeCommandWithOptions(cmd string, opts serverConsoleWriteOptions) error {
+	if c.pty == nil {
 		return io.ErrClosedPipe
 	}
 	line := formatServerConsoleCommand(cmd)
@@ -153,25 +153,16 @@ func normalizeConsoleRelayLine(line string) string {
 }
 
 func (c *serverConsole) queueSuppressedRelayEchoLine(line string) {
-	if c == nil {
-		return
-	}
 	key := normalizeConsoleRelayLine(line)
 	if key == "" {
 		return
 	}
 	c.suppressedRelayMu.Lock()
-	if c.suppressedRelayEcho == nil {
-		c.suppressedRelayEcho = make(map[string]int)
-	}
 	c.suppressedRelayEcho[key]++
 	c.suppressedRelayMu.Unlock()
 }
 
 func (c *serverConsole) unqueueSuppressedRelayEchoLine(line string) {
-	if c == nil {
-		return
-	}
 	key := normalizeConsoleRelayLine(line)
 	if key == "" {
 		return
@@ -187,9 +178,6 @@ func (c *serverConsole) unqueueSuppressedRelayEchoLine(line string) {
 }
 
 func (c *serverConsole) consumeSuppressedRelayEchoLine(line string) bool {
-	if c == nil {
-		return false
-	}
 	key := normalizeConsoleRelayLine(line)
 	if key == "" {
 		return false
@@ -208,7 +196,7 @@ func (c *serverConsole) consumeSuppressedRelayEchoLine(line string) bool {
 	return true
 }
 
-func (c *serverConsole) Subscribe(buffer int) (<-chan string, func()) {
+func (c *serverConsole) subscribe(buffer int) (<-chan string, func()) {
 	if buffer <= 0 {
 		buffer = 128
 	}
@@ -217,9 +205,6 @@ func (c *serverConsole) Subscribe(buffer int) (<-chan string, func()) {
 	c.subscribersMu.Lock()
 	subscriberID := c.nextSubscriberID
 	c.nextSubscriberID++
-	if c.subscribers == nil {
-		c.subscribers = make(map[int]chan string)
-	}
 	c.subscribers[subscriberID] = ch
 	c.subscribersMu.Unlock()
 
@@ -235,8 +220,8 @@ func (c *serverConsole) Subscribe(buffer int) (<-chan string, func()) {
 	return ch, cancel
 }
 
-func (c *serverConsole) SubscribeFiltered(buffer int, filter serverConsoleLineFilter) (<-chan string, func()) {
-	lines, cancel := c.Subscribe(buffer)
+func (c *serverConsole) subscribeFiltered(buffer int, filter serverConsoleLineFilter) (<-chan string, func()) {
+	lines, cancel := c.subscribe(buffer)
 	if filter == nil {
 		filter = func(line string) (string, bool) {
 			return line, true
@@ -280,7 +265,7 @@ func (c *serverConsole) SubscribeFiltered(buffer int, filter serverConsoleLineFi
 }
 
 func (c *serverConsole) publishLine(line string) {
-	if c == nil || line == "" {
+	if line == "" {
 		return
 	}
 	c.appendHistoryLine(line)
@@ -296,16 +281,12 @@ func (c *serverConsole) publishLine(line string) {
 }
 
 func (c *serverConsole) appendHistoryLine(line string) {
-	if c == nil || line == "" {
+	if line == "" {
 		return
 	}
 
 	c.historyMu.Lock()
 	defer c.historyMu.Unlock()
-
-	if c.historyCap <= 0 {
-		c.historyCap = 2048
-	}
 
 	if len(c.history) < c.historyCap {
 		c.history = append(c.history, line)
@@ -316,8 +297,8 @@ func (c *serverConsole) appendHistoryLine(line string) {
 	c.history[len(c.history)-1] = line
 }
 
-func (c *serverConsole) Tail(n int, filter serverConsoleLineFilter) []string {
-	if c == nil || n <= 0 {
+func (c *serverConsole) tail(n int, filter serverConsoleLineFilter) []string {
+	if n <= 0 {
 		return nil
 	}
 	if filter == nil {
@@ -356,8 +337,8 @@ func (c *serverConsole) closeSubscribers() {
 	}
 }
 
-func (c *serverConsole) Run(logFile *os.File) {
-	if c == nil || c.pty == nil {
+func (c *serverConsole) run(logFile *os.File, formatLogLine func(string, time.Time) string) {
+	if c.pty == nil {
 		return
 	}
 	defer c.closeSubscribers()
@@ -366,7 +347,7 @@ func (c *serverConsole) Run(logFile *os.File) {
 	for {
 		line, err := reader.ReadString('\n')
 		if len(line) > 0 {
-			_, _ = io.WriteString(logFile, formatTimestampedLogText(line, time.Now()))
+			_, _ = io.WriteString(logFile, formatLogLine(line, time.Now()))
 			c.publishLine(line)
 		}
 		if err != nil {
@@ -375,14 +356,11 @@ func (c *serverConsole) Run(logFile *os.File) {
 	}
 }
 
-func (c *serverConsole) CaptureCommandOutput(cmd string, maxWait, idleWait time.Duration) (string, error) {
-	return c.CaptureCommandOutputFiltered(cmd, maxWait, idleWait, nil)
+func (c *serverConsole) captureCommandOutput(cmd string, maxWait, idleWait time.Duration) (string, error) {
+	return c.captureCommandOutputFiltered(cmd, maxWait, idleWait, nil)
 }
 
-func (c *serverConsole) CaptureCommandOutputFiltered(cmd string, maxWait, idleWait time.Duration, filter serverConsoleLineFilter) (string, error) {
-	if c == nil {
-		return "", io.ErrClosedPipe
-	}
+func (c *serverConsole) captureCommandOutputFiltered(cmd string, maxWait, idleWait time.Duration, filter serverConsoleLineFilter) (string, error) {
 	if maxWait <= 0 {
 		maxWait = 750 * time.Millisecond
 	}
@@ -393,10 +371,10 @@ func (c *serverConsole) CaptureCommandOutputFiltered(cmd string, maxWait, idleWa
 	c.commandMu.Lock()
 	defer c.commandMu.Unlock()
 
-	lines, cancel := c.SubscribeFiltered(256, filter)
+	lines, cancel := c.subscribeFiltered(256, filter)
 	defer cancel()
 
-	if err := c.WriteCommand(cmd); err != nil {
+	if err := c.writeCommand(cmd); err != nil {
 		return "", err
 	}
 	return collectConsoleOutput(lines, maxWait, idleWait), nil
@@ -464,7 +442,7 @@ func monitorServerStartup(
 		return
 	}
 
-	lines, cancel := console.SubscribeFiltered(256, nil)
+	lines, cancel := console.subscribeFiltered(256, nil)
 	defer cancel()
 
 	requestedPort := false
@@ -486,12 +464,12 @@ func monitorServerStartup(
 		trimmed := strings.TrimSpace(line)
 		if strings.Contains(trimmed, "========Quake Initialized=========") {
 			if needPath && !requestedPath {
-				if err := console.WriteCommand("path"); err == nil {
+				if err := console.writeCommand("path"); err == nil {
 					requestedPath = true
 				}
 			}
 			if needPort && !requestedPort {
-				if err := console.WriteCommand("port"); err == nil {
+				if err := console.writeCommand("port"); err == nil {
 					requestedPort = true
 				}
 			}

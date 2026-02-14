@@ -1,4 +1,4 @@
-package main
+package orch
 
 import (
 	"cmp"
@@ -14,67 +14,62 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/0xBrsm/NexQuake/nexus/internal/gamedata"
 	"github.com/creack/pty"
 )
 
-var globalServerManager *ServerManager
-
 // serverSpec is resolved runtime metadata for a running server.
-//
-// It becomes authoritative only after startup probes resolve both listen port
-// and search path from the server console.
 type serverSpec struct {
 	Slot       int
 	ListenPort int
 	SearchPath []string
 }
 
+// managedServer represents a running server process.
 type managedServer struct {
 	spec    serverSpec
-	cmd     *exec.Cmd
-	console *serverConsole
+	Cmd     *exec.Cmd
+	Console *serverConsole
 	done    chan error
 }
 
-func (s *managedServer) WriteConsole(cmd string) error {
-	if s == nil || s.console == nil {
+func (s *managedServer) writeConsole(cmd string) error {
+	if s.Console == nil {
 		return fmt.Errorf("server console unavailable")
 	}
-	return s.console.WriteCommand(cmd)
+	return s.Console.writeCommand(cmd)
 }
 
-func (s *managedServer) WriteConsoleAndCapture(cmd string, maxWait, idleWait time.Duration) (string, error) {
-	return s.WriteConsoleAndCaptureFiltered(cmd, maxWait, idleWait, nil)
+func (s *managedServer) writeConsoleAndCapture(cmd string, maxWait, idleWait time.Duration) (string, error) {
+	return s.writeConsoleAndCaptureFiltered(cmd, maxWait, idleWait, nil)
 }
 
-func (s *managedServer) WriteConsoleAndCaptureFiltered(cmd string, maxWait, idleWait time.Duration, filter serverConsoleLineFilter) (string, error) {
-	if s == nil || s.console == nil {
+func (s *managedServer) writeConsoleAndCaptureFiltered(cmd string, maxWait, idleWait time.Duration, filter serverConsoleLineFilter) (string, error) {
+	if s.Console == nil {
 		return "", fmt.Errorf("server console unavailable")
 	}
-	return s.console.CaptureCommandOutputFiltered(cmd, maxWait, idleWait, filter)
+	return s.Console.captureCommandOutputFiltered(cmd, maxWait, idleWait, filter)
 }
 
+// serverRecord tracks one server slot in the nexus registry.
 type serverRecord struct {
 	id     int
-	launch serverLaunch
+	Launch serverLaunch
 	spec   *serverSpec
 
 	resolvedPortKnown  bool
 	resolvedPort       int
 	resolvedSearchPath []string
 
-	running   *managedServer
+	Running   *managedServer
 	lastError string
 
-	// Best-effort observed info from CCREP_SERVER_INFO polling (used for slist
-	// aggregation and for `rcon nexus slist` output).
-	hostname   string
-	mapName    string
-	players    byte
-	maxPlayers byte
-	lastSeen   time.Time
+	Hostname   string
+	MapName    string
+	Players    byte
+	MaxPlayers byte
+	LastSeen   time.Time
 
-	// Startup relay state for the currently running process.
 	relayConsoleReady   bool
 	awaitingServerInfo  bool
 	startupTimedOutOnce bool
@@ -94,6 +89,7 @@ type serverStateUpdate struct {
 	hasObservedInfo    bool
 }
 
+// ServerSnapshot is a point-in-time view of a server, used for display.
 type ServerSnapshot struct {
 	Slot       int
 	ListenPort int
@@ -107,13 +103,21 @@ type ServerSnapshot struct {
 	LastError  string
 }
 
+// ServerManager orchestrates all managed game servers.
 type ServerManager struct {
 	dataDir string
 	logsDir string
+	infof   func(string, ...any)
+	debugf  func(string, ...any)
+	warnf   func(string, ...any)
+	errorf  func(string, ...any)
+
+	consoleInfof  func(string, ...any)
+	formatLogLine func(string, time.Time) string
 
 	mu              sync.RWMutex
 	serversByID     map[int]*serverRecord
-	serverIDsByPort map[int][]int // listen port -> configured server IDs
+	serverIDsByPort map[int][]int
 
 	nextServerID   int
 	runtimeBasedir string
@@ -121,43 +125,41 @@ type ServerManager struct {
 
 func (m *ServerManager) serverConsoleLabel(rec *serverRecord) string {
 	if rec == nil {
-		return "server-0"
+		return "1-server"
 	}
-	if m != nil {
-		m.mu.RLock()
-		defer m.mu.RUnlock()
-	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return serverConsoleLabelFromRecord(rec)
 }
 
 func serverConsoleLabelFromRecord(rec *serverRecord) string {
 	if rec == nil {
-		return "server-0"
+		return "1-server"
 	}
 
 	hostname := "server"
-	if name := strings.TrimSpace(rec.hostname); name != "" {
+	if name := strings.TrimSpace(rec.Hostname); name != "" {
 		hostname = name
 	}
-	identifier := 0
+	identifier := 1
 	switch {
-	case rec.launch.slot >= 0:
-		identifier = rec.launch.slot
+	case rec.Launch.Slot >= 0:
+		identifier = rec.Launch.Slot + 1
 	case rec.id >= 0:
-		identifier = rec.id
+		identifier = rec.id + 1
 	}
-	return fmt.Sprintf("%s-%d", hostname, identifier)
+	return fmt.Sprintf("%d-%s", identifier, hostname)
 }
 
 func (m *ServerManager) serverConsoleRelayEnabled(rec *serverRecord, console *serverConsole) bool {
-	if m == nil || rec == nil || console == nil {
+	if rec == nil || console == nil {
 		return false
 	}
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if rec.running == nil || rec.running.console != console {
+	if rec.Running == nil || rec.Running.Console != console {
 		return false
 	}
 	return rec.relayConsoleReady
@@ -171,6 +173,9 @@ func shouldRelayServerConsoleLine(line string) bool {
 
 	lower := strings.ToLower(trimmed)
 	if strings.Contains(lower, "packfile:") {
+		return false
+	}
+	if strings.Contains(lower, "findfile: can't find maps/") && strings.HasSuffix(lower, ".ent") {
 		return false
 	}
 	if strings.Contains(lower, "findfile:") && !strings.Contains(lower, "can't find") {
@@ -193,7 +198,7 @@ func (m *ServerManager) relayServerConsoleToNexus(rec *serverRecord, console *se
 		return
 	}
 
-	lines, cancel := console.SubscribeFiltered(1024, func(line string) (string, bool) {
+	lines, cancel := console.subscribeFiltered(1024, func(line string) (string, bool) {
 		if console.consumeSuppressedRelayEchoLine(line) {
 			return "", false
 		}
@@ -205,14 +210,49 @@ func (m *ServerManager) relayServerConsoleToNexus(rec *serverRecord, console *se
 	defer cancel()
 
 	for formatted := range lines {
-		infofNoTail("%s", formatted)
+		m.consoleInfof("%s", formatted)
 	}
 }
 
-func NewServerManager(dataDir, logsDir string) *ServerManager {
+func noopLogf(string, ...any) {}
+
+func identityLogLine(line string, _ time.Time) string {
+	return line
+}
+
+// NewServerManager creates a new server manager with injected logging.
+func NewServerManager(
+	dataDir, logsDir string,
+	infof, consoleInfof, debugf, warnf, errorf func(string, ...any),
+	formatLogLine func(string, time.Time) string,
+) *ServerManager {
+	if infof == nil {
+		infof = noopLogf
+	}
+	if consoleInfof == nil {
+		consoleInfof = infof
+	}
+	if debugf == nil {
+		debugf = noopLogf
+	}
+	if warnf == nil {
+		warnf = noopLogf
+	}
+	if errorf == nil {
+		errorf = noopLogf
+	}
+	if formatLogLine == nil {
+		formatLogLine = identityLogLine
+	}
 	return &ServerManager{
 		dataDir:         dataDir,
 		logsDir:         logsDir,
+		infof:           infof,
+		debugf:          debugf,
+		warnf:           warnf,
+		errorf:          errorf,
+		consoleInfof:    consoleInfof,
+		formatLogLine:   formatLogLine,
 		serversByID:     make(map[int]*serverRecord),
 		serverIDsByPort: make(map[int][]int),
 	}
@@ -220,7 +260,7 @@ func NewServerManager(dataDir, logsDir string) *ServerManager {
 
 func cloneServerLaunch(launch serverLaunch) serverLaunch {
 	cloned := launch
-	cloned.args = append([]string(nil), launch.args...)
+	cloned.Args = append([]string(nil), launch.Args...)
 	return cloned
 }
 
@@ -256,16 +296,13 @@ func normalizeSearchPath(searchPath []string) []string {
 }
 
 // RegisterServerLaunch adds a new server to nexus runtime state.
-//
-// The server is tracked immediately (seen by nexus), but not started. This is
-// the primitive future `rcon nexus add`/`start` commands will build on.
 func (m *ServerManager) RegisterServerLaunch(launch serverLaunch) *serverRecord {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	rec := &serverRecord{
 		id:     m.nextServerID,
-		launch: cloneServerLaunch(launch),
+		Launch: cloneServerLaunch(launch),
 	}
 	m.nextServerID++
 	m.serversByID[rec.id] = rec
@@ -278,12 +315,12 @@ func (m *ServerManager) applyResolvedSpecLocked(rec *serverRecord) {
 		return
 	}
 	rec.spec = &serverSpec{
-		Slot:       rec.launch.slot,
+		Slot:       rec.Launch.Slot,
 		ListenPort: rec.resolvedPort,
 		SearchPath: append([]string(nil), rec.resolvedSearchPath...),
 	}
-	if rec.running != nil {
-		rec.running.spec = *rec.spec
+	if rec.Running != nil {
+		rec.Running.spec = *rec.spec
 	}
 }
 
@@ -342,38 +379,39 @@ func (m *ServerManager) updateServerState(update serverStateUpdate) {
 		if rec == nil {
 			continue
 		}
-		rec.hostname = update.observedHostname
-		rec.mapName = update.observedMapName
-		rec.players = update.observedPlayers
-		rec.maxPlayers = update.observedMaxPlayers
-		rec.lastSeen = now
-		if rec.running == nil || !rec.awaitingServerInfo {
+		rec.Hostname = update.observedHostname
+		rec.MapName = update.observedMapName
+		rec.Players = update.observedPlayers
+		rec.MaxPlayers = update.observedMaxPlayers
+		rec.LastSeen = now
+		if rec.Running == nil || !rec.awaitingServerInfo {
 			continue
 		}
 		rec.awaitingServerInfo = false
 		rec.relayConsoleReady = true
 		onlineCommands = append(onlineCommands, startupOnlineCommand{
 			label:   serverConsoleLabelFromRecord(rec),
-			console: rec.running.console,
+			console: rec.Running.Console,
 		})
 	}
 	m.mu.Unlock()
 
 	for _, cmd := range onlineCommands {
 		if cmd.console == nil {
-			errorf("server %s online marker failed: server console unavailable", cmd.label)
+			m.errorf("server %s online marker failed: server console unavailable", cmd.label)
 			continue
 		}
-		if err := cmd.console.WriteCommandWithOptions(
+		if err := cmd.console.writeCommandWithOptions(
 			"echo online and accepting clients",
 			serverConsoleWriteOptions{SuppressRelayEcho: true},
 		); err != nil {
-			errorf("server %s online marker failed: %v", cmd.label, err)
+			m.errorf("server %s online marker failed: %v", cmd.label, err)
 		}
 	}
 }
 
-func (m *ServerManager) updatePort(rec *serverRecord, port int) {
+// UpdatePort updates the resolved listen port for a server record.
+func (m *ServerManager) UpdatePort(rec *serverRecord, port int) {
 	m.updateServerState(serverStateUpdate{
 		hasResolvedPort: true,
 		rec:             rec,
@@ -381,7 +419,8 @@ func (m *ServerManager) updatePort(rec *serverRecord, port int) {
 	})
 }
 
-func (m *ServerManager) updateSearchPath(rec *serverRecord, searchPath []string) {
+// UpdateSearchPath updates the resolved search path for a server record.
+func (m *ServerManager) UpdateSearchPath(rec *serverRecord, searchPath []string) {
 	searchPath = normalizeSearchPath(searchPath)
 	m.updateServerState(serverStateUpdate{
 		rec:                rec,
@@ -389,7 +428,8 @@ func (m *ServerManager) updateSearchPath(rec *serverRecord, searchPath []string)
 	})
 }
 
-func (m *ServerManager) ServerByListenPort(port int) *managedServer {
+// ServerByListenPort returns the running server on a given port.
+func (m *ServerManager) serverByListenPort(port int) *managedServer {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -398,11 +438,11 @@ func (m *ServerManager) ServerByListenPort(port int) *managedServer {
 		if rec == nil {
 			continue
 		}
-		s := rec.running
+		s := rec.Running
 		if s == nil {
 			continue
 		}
-		if s.cmd == nil || s.cmd.Process == nil || !isProcessAlive(s.cmd.Process) {
+		if s.Cmd == nil || s.Cmd.Process == nil || !isProcessAlive(s.Cmd.Process) {
 			continue
 		}
 		return s
@@ -432,10 +472,10 @@ func (m *ServerManager) runningServers() []runningServerEntry {
 
 	var out []runningServerEntry
 	for _, rec := range m.serversByID {
-		if rec == nil || rec.running == nil {
+		if rec == nil || rec.Running == nil {
 			continue
 		}
-		out = append(out, runningServerEntry{rec: rec, srv: rec.running})
+		out = append(out, runningServerEntry{rec: rec, srv: rec.Running})
 	}
 	return out
 }
@@ -448,13 +488,13 @@ func buildServerSnapshot(rec *serverRecord) ServerSnapshot {
 	snap := ServerSnapshot{
 		State:      "stopped",
 		LastError:  rec.lastError,
-		Hostname:   rec.hostname,
-		MapName:    rec.mapName,
-		Players:    rec.players,
-		MaxPlayers: rec.maxPlayers,
+		Hostname:   rec.Hostname,
+		MapName:    rec.MapName,
+		Players:    rec.Players,
+		MaxPlayers: rec.MaxPlayers,
 	}
 
-	snap.Slot = rec.launch.slot
+	snap.Slot = rec.Launch.Slot
 	if rec.resolvedPortKnown {
 		snap.ListenPort = rec.resolvedPort
 	}
@@ -468,9 +508,9 @@ func buildServerSnapshot(rec *serverRecord) ServerSnapshot {
 		snap.GameDir = activeGameDir(rec.spec.SearchPath)
 	}
 
-	s := rec.running
-	if s != nil && s.cmd != nil && s.cmd.Process != nil && isProcessAlive(s.cmd.Process) {
-		snap.PID = s.cmd.Process.Pid
+	s := rec.Running
+	if s != nil && s.Cmd != nil && s.Cmd.Process != nil && isProcessAlive(s.Cmd.Process) {
+		snap.PID = s.Cmd.Process.Pid
 		if rec.awaitingServerInfo {
 			snap.State = "starting"
 		} else {
@@ -484,6 +524,7 @@ func buildServerSnapshot(rec *serverRecord) ServerSnapshot {
 	return snap
 }
 
+// Snapshots returns a point-in-time view of all managed servers.
 func (m *ServerManager) Snapshots() []ServerSnapshot {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -499,6 +540,7 @@ func (m *ServerManager) Snapshots() []ServerSnapshot {
 	return out
 }
 
+// StartAll launches all servers from the servers.ini plan.
 func (m *ServerManager) StartAll() error {
 	if m.dataDir == "" {
 		return fmt.Errorf("DATA_DIR is empty")
@@ -517,9 +559,9 @@ func (m *ServerManager) StartAll() error {
 	if err != nil {
 		return err
 	}
-	infof("Launching %d servers...", len(launches))
+	m.infof("Launching %d servers...", len(launches))
 
-	runtimeBasedir, err := prepareRuntimeBasedir(m.dataDir, mods)
+	runtimeBasedir, err := gamedata.PrepareRuntimeBasedir(m.dataDir, mods)
 	if err != nil {
 		return err
 	}
@@ -543,7 +585,7 @@ func (m *ServerManager) StartAll() error {
 }
 
 func (m *ServerManager) startServer(runtimeBasedir string, launch serverLaunch, onPort func(int), onSearchPath func([]string)) (*managedServer, error) {
-	logDirName := launch.logDir
+	logDirName := launch.LogDir
 	logDir := filepath.Join(m.logsDir, logDirName)
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir %s: %w", logDir, err)
@@ -555,45 +597,43 @@ func (m *ServerManager) startServer(runtimeBasedir string, launch serverLaunch, 
 		return nil, fmt.Errorf("open %s: %w", logPath, err)
 	}
 
-	cmd := exec.Command(launch.binary, launch.args...)
+	cmd := exec.Command(launch.Binary, launch.Args...)
 	cmd.Dir = runtimeBasedir
 
-	// Without a tty, nqserver's stdio is fully-buffered and may never flush (especially if terminated by SIGTERM),
-	// resulting in empty logs. A pty makes it line-buffered so logs are written as they happen.
 	ptyParent, ptyChild, err := pty.Open()
 	if err != nil {
 		_ = logFile.Close()
-		return nil, fmt.Errorf("open pty for server slot=%d bin=%q: %w", launch.slot, launch.binary, err)
+		return nil, fmt.Errorf("open pty for server slot=%d bin=%q: %w", launch.Slot, launch.Binary, err)
 	}
 	cmd.Stdin = ptyChild
 	cmd.Stdout = ptyChild
 	cmd.Stderr = ptyChild
 
-	debugf("Starting server slot=%d bin=%q args=%q", launch.slot, launch.binary, launch.args)
+	m.debugf("Starting server slot=%d bin=%q args=%q", launch.Slot, launch.Binary, launch.Args)
 
 	if err := cmd.Start(); err != nil {
 		_ = ptyParent.Close()
 		_ = ptyChild.Close()
 		_ = logFile.Close()
-		return nil, fmt.Errorf("start server slot=%d bin=%q: %w", launch.slot, launch.binary, err)
+		return nil, fmt.Errorf("start server slot=%d bin=%q: %w", launch.Slot, launch.Binary, err)
 	}
 
-	// Parent closes its copy of the child-side FD after spawn.
 	_ = ptyChild.Close()
 
 	console := newServerConsole(ptyParent)
 	srv := &managedServer{
-		cmd:     cmd,
-		console: console,
+		Cmd:     cmd,
+		Console: console,
 		done:    make(chan error, 1),
 	}
 
+	formatLogLine := m.formatLogLine
 	go func() {
 		go monitorServerStartup(console, true, onPort, onSearchPath)
 
 		copyDone := make(chan struct{})
 		go func() {
-			console.Run(logFile)
+			console.run(logFile, formatLogLine)
 			close(copyDone)
 		}()
 
@@ -604,33 +644,32 @@ func (m *ServerManager) startServer(runtimeBasedir string, launch serverLaunch, 
 		_ = logFile.Close()
 	}()
 
-	// If the process dies immediately, surface that now to avoid confusing startup failures.
 	time.Sleep(50 * time.Millisecond)
 	if !isProcessAlive(cmd.Process) {
 		err := <-srv.done
 		if err == nil {
 			err = errors.New("process exited")
 		}
-		return nil, fmt.Errorf("server slot=%d bin=%q exited immediately: %w (see %s)", launch.slot, launch.binary, err, logPath)
+		return nil, fmt.Errorf("server slot=%d bin=%q exited immediately: %w (see %s)", launch.Slot, launch.Binary, err, logPath)
 	}
 
 	return srv, nil
 }
 
+// StopAll gracefully stops all running servers.
 func (m *ServerManager) StopAll(ctx context.Context, killAfter time.Duration) error {
 	var errs []error
 	running := m.runningServers()
 
-	// Ask all servers to stop.
 	for _, entry := range running {
 		s := entry.srv
-		if s == nil || s.cmd == nil || s.cmd.Process == nil {
+		if s == nil || s.Cmd == nil || s.Cmd.Process == nil {
 			continue
 		}
-		if !isProcessAlive(s.cmd.Process) {
+		if !isProcessAlive(s.Cmd.Process) {
 			continue
 		}
-		_ = s.cmd.Process.Signal(syscall.SIGTERM)
+		_ = s.Cmd.Process.Signal(syscall.SIGTERM)
 	}
 
 	for _, entry := range running {
@@ -643,8 +682,6 @@ func (m *ServerManager) StopAll(ctx context.Context, killAfter time.Duration) er
 		}
 	}
 
-	// Cleanup the ephemeral runtime basedir after all servers have exited (or after
-	// we have attempted to stop them).
 	if m.runtimeBasedir != "" {
 		_ = os.RemoveAll(m.runtimeBasedir)
 		m.runtimeBasedir = ""
@@ -657,6 +694,49 @@ func isProcessAlive(p *os.Process) bool {
 	if p == nil {
 		return false
 	}
-	// Signal 0 checks for existence without sending a real signal.
 	return p.Signal(syscall.Signal(0)) == nil
+}
+
+// ResolveManifestGameDirs resolves the full search path for a given game directory,
+// including fallback directories from running servers.
+func (m *ServerManager) ResolveManifestGameDirs(gameDir string) []string {
+	gameDir = strings.TrimSpace(gameDir)
+	if gameDir == "" {
+		return nil
+	}
+
+	resolved := []string{gameDir}
+	seen := map[string]struct{}{gameDir: {}}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	ids := make([]int, 0, len(m.serversByID))
+	for id := range m.serversByID {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+
+	for _, id := range ids {
+		rec := m.serversByID[id]
+		if rec.spec == nil {
+			continue
+		}
+		idx := slices.Index(rec.spec.SearchPath, gameDir)
+		if idx < 0 {
+			continue
+		}
+		for _, fallback := range rec.spec.SearchPath[idx+1:] {
+			fallback = strings.TrimSpace(fallback)
+			if fallback == "" {
+				continue
+			}
+			if _, ok := seen[fallback]; ok {
+				continue
+			}
+			seen[fallback] = struct{}{}
+			resolved = append(resolved, fallback)
+		}
+	}
+	return resolved
 }

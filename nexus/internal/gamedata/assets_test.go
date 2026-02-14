@@ -1,4 +1,4 @@
-package main
+package gamedata
 
 import (
 	"archive/zip"
@@ -10,14 +10,20 @@ import (
 	"testing"
 )
 
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 func TestBootstrapGameData_Smoke(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	quake106 := filepath.Clean(filepath.Join(wd, "..", "assets", "quake106.zip"))
-	lqpak1 := filepath.Clean(filepath.Join(wd, "..", "assets", "lq-pak1.zip"))
+	// internal/gamedata is two levels deeper than src/nexus
+	quake106 := filepath.Clean(filepath.Join(wd, "..", "..", "..", "assets", "quake106.zip"))
+	lqpak1 := filepath.Clean(filepath.Join(wd, "..", "..", "..", "assets", "lq-pak1.zip"))
 
 	if !fileExists(quake106) || !fileExists(lqpak1) {
 		t.Skip("assets not present in this checkout")
@@ -40,8 +46,8 @@ func TestBootstrapGameData_Smoke(t *testing.T) {
 
 	t.Setenv("QUICKSTART", "minimal")
 
-	if err := bootstrapGameData(context.Background(), dataDir); err != nil {
-		t.Fatalf("bootstrapGameData: %v", err)
+	if err := BootstrapGameData(context.Background(), dataDir, nil); err != nil {
+		t.Fatalf("BootstrapGameData: %v", err)
 	}
 
 	root := filepath.Join(dataDir, "id1", "common")

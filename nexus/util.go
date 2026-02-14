@@ -276,7 +276,7 @@ func resetNexusLogHistoryForTest() {
 // These are set at build time via -ldflags.
 // Example:
 //
-//	-X github.com/brstm/NexQuake/nexus.gitSHA=$GITHUB_SHA -X github.com/brstm/NexQuake/nexus.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+//	-X github.com/0xBrsm/NexQuake/nexus.gitSHA=$GITHUB_SHA -X github.com/0xBrsm/NexQuake/nexus.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 var (
 	gitSHA    = "dev"
 	buildTime = ""

@@ -1,4 +1,4 @@
-package main
+package orch
 
 import (
 	"io"
@@ -8,6 +8,10 @@ import (
 	"testing"
 	"time"
 )
+
+func testFormatLogLine(line string, ts time.Time) string {
+	return ts.Format("2006/01/02 15:04:05") + " " + line
+}
 
 func TestShouldSkipConsoleLine(t *testing.T) {
 	tests := []struct {
@@ -111,7 +115,7 @@ func TestParseSearchPathConsoleLine(t *testing.T) {
 
 func TestSubscribeFiltered_AppliesFilter(t *testing.T) {
 	c := newServerConsole(nil)
-	lines, cancel := c.SubscribeFiltered(8, func(line string) (string, bool) {
+	lines, cancel := c.subscribeFiltered(8, func(line string) (string, bool) {
 		if strings.Contains(line, "drop") {
 			return "", false
 		}
@@ -163,14 +167,14 @@ func TestCaptureCommandOutputFiltered_AppliesFilter(t *testing.T) {
 		c.publishLine("hostname is \"fragfest\"\n")
 	}()
 
-	out, err := c.CaptureCommandOutputFiltered(
+	out, err := c.captureCommandOutputFiltered(
 		"hostname",
 		120*time.Millisecond,
 		10*time.Millisecond,
 		filterServerCommandReplyLine,
 	)
 	if err != nil {
-		t.Fatalf("CaptureCommandOutputFiltered error = %v", err)
+		t.Fatalf("captureCommandOutputFiltered error = %v", err)
 	}
 	if strings.Contains(out, "FindFile: maps/e1m1.bsp") {
 		t.Fatalf("expected FindFile noise to be filtered, got %q", out)
@@ -187,7 +191,7 @@ func TestServerConsoleTail_ReturnsMostRecentFilteredLines(t *testing.T) {
 	c.publishLine("line two\n")
 	c.publishLine("line three\n")
 
-	lines := c.Tail(2, nil)
+	lines := c.tail(2, nil)
 	if len(lines) != 2 {
 		t.Fatalf("expected 2 lines, got %d (%q)", len(lines), strings.Join(lines, ""))
 	}
@@ -195,7 +199,7 @@ func TestServerConsoleTail_ReturnsMostRecentFilteredLines(t *testing.T) {
 		t.Fatalf("expected last two lines, got %q", strings.Join(lines, ""))
 	}
 
-	filtered := c.Tail(3, filterServerCommandReplyLine)
+	filtered := c.tail(3, filterServerCommandReplyLine)
 	joined := strings.Join(filtered, "")
 	if strings.Contains(joined, "FindFile: maps/e1m1.bsp") {
 		t.Fatalf("expected noisy FindFile line filtered from tail, got %q", joined)
@@ -221,7 +225,7 @@ func TestServerConsoleRun_WritesTimestampedLogLines(t *testing.T) {
 	c := newServerConsole(ptyRead)
 	done := make(chan struct{})
 	go func() {
-		c.Run(logFile)
+		c.run(logFile, testFormatLogLine)
 		close(done)
 	}()
 
@@ -261,11 +265,11 @@ func TestWriteCommandWithOptions_SuppressRelayEchoConsumesOnce(t *testing.T) {
 	})
 
 	c := newServerConsole(ptyWrite)
-	if err := c.WriteCommandWithOptions(
+	if err := c.writeCommandWithOptions(
 		"echo online and accepting clients",
 		serverConsoleWriteOptions{SuppressRelayEcho: true},
 	); err != nil {
-		t.Fatalf("WriteCommandWithOptions: %v", err)
+		t.Fatalf("writeCommandWithOptions: %v", err)
 	}
 
 	buf := make([]byte, 128)

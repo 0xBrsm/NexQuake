@@ -1,4 +1,4 @@
-package main
+package nqnet
 
 import (
 	"crypto/sha256"
@@ -15,24 +15,37 @@ import (
 
 const maxClientIPProbeAttempts = 4096
 
-const wsClientIdentityMagic = "NQIP"
+// IPAllocator deterministically maps client source keys to 127.x.x.x
+// virtual IP addresses used for the Quake relay.
+type IPAllocator struct {
+	serverIP net.IP
 
-type hashedClientIPAllocator struct {
 	mu            sync.Mutex
 	used          map[uint32]struct{}
 	reserved      map[uint32]struct{}
 	blockedSource map[string]struct{}
 }
 
-func newHashedClientIPAllocator() *hashedClientIPAllocator {
-	return &hashedClientIPAllocator{
+// NewIPAllocator creates an allocator that avoids collisions with serverIP.
+func NewIPAllocator(serverIP net.IP) *IPAllocator {
+	return &IPAllocator{
+		serverIP:      serverIP.To4(),
 		used:          make(map[uint32]struct{}),
 		reserved:      make(map[uint32]struct{}),
 		blockedSource: make(map[string]struct{}),
 	}
 }
 
-func (a *hashedClientIPAllocator) alloc(sourceKey string) ([4]byte, bool) {
+// alloc allocates a unique virtual IP for the given source key.
+func (a *IPAllocator) alloc(sourceKey string) ([4]byte, error) {
+	ip4, ok := a.tryAlloc(sourceKey)
+	if !ok {
+		return [4]byte{}, fmt.Errorf("failed to allocate relay source ip for %q", sourceKey)
+	}
+	return ip4, nil
+}
+
+func (a *IPAllocator) tryAlloc(sourceKey string) ([4]byte, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -44,18 +57,16 @@ func (a *hashedClientIPAllocator) alloc(sourceKey string) ([4]byte, bool) {
 		return [4]byte{}, false
 	}
 
-	serverIP := nqServerIP.To4()
-
 	for probe := 0; probe < maxClientIPProbeAttempts; probe++ {
 		seed := "NQ:client-ip:v1|" + base + "|" + strconv.Itoa(probe)
 		sum := sha256.Sum256([]byte(seed))
 
 		candidate := [4]byte{127, sum[0], sum[1], sum[2]}
-		if serverIP != nil &&
-			candidate[0] == serverIP[0] &&
-			candidate[1] == serverIP[1] &&
-			candidate[2] == serverIP[2] &&
-			candidate[3] == serverIP[3] {
+		if a.serverIP != nil &&
+			candidate[0] == a.serverIP[0] &&
+			candidate[1] == a.serverIP[1] &&
+			candidate[2] == a.serverIP[2] &&
+			candidate[3] == a.serverIP[3] {
 			continue
 		}
 
@@ -74,7 +85,8 @@ func (a *hashedClientIPAllocator) alloc(sourceKey string) ([4]byte, bool) {
 	return [4]byte{}, false
 }
 
-func (a *hashedClientIPAllocator) release(ip4 [4]byte) {
+// release returns a virtual IP to the pool.
+func (a *IPAllocator) release(ip4 [4]byte) {
 	if ip4[0] != 127 {
 		return
 	}
@@ -86,7 +98,9 @@ func (a *hashedClientIPAllocator) release(ip4 [4]byte) {
 	a.mu.Unlock()
 }
 
-func (a *hashedClientIPAllocator) reserveAndBlock(ip4 [4]byte, sourceKey string) {
+// ReserveAndBlock permanently reserves ip4 and blocks sourceKey from future
+// allocations. Used for banning.
+func (a *IPAllocator) ReserveAndBlock(ip4 [4]byte, sourceKey string) {
 	if ip4[0] != 127 {
 		return
 	}
@@ -102,7 +116,8 @@ func (a *hashedClientIPAllocator) reserveAndBlock(ip4 [4]byte, sourceKey string)
 	a.mu.Unlock()
 }
 
-func (a *hashedClientIPAllocator) isBlockedSource(sourceKey string) bool {
+// IsBlocked reports whether sourceKey has been banned.
+func (a *IPAllocator) IsBlocked(sourceKey string) bool {
 	sourceKey = normalizeSourceKey(sourceKey)
 	if sourceKey == "" {
 		return false
@@ -117,42 +132,9 @@ func normalizeSourceKey(sourceKey string) string {
 	return strings.TrimSpace(sourceKey)
 }
 
-var globalClientIPv4Allocator = newHashedClientIPAllocator()
-
-func allocateRelaySourceIPv4(sourceKey string) ([4]byte, error) {
-	ip4, ok := globalClientIPv4Allocator.alloc(sourceKey)
-	if !ok {
-		return [4]byte{}, fmt.Errorf("failed to allocate relay source ip for %q", sourceKey)
-	}
-	return ip4, nil
-}
-
-func releaseRelaySourceIPv4(ip4 [4]byte) {
-	globalClientIPv4Allocator.release(ip4)
-}
-
-func reserveRelayClientIdentity(ip4 [4]byte, sourceKey string) {
-	globalClientIPv4Allocator.reserveAndBlock(ip4, sourceKey)
-}
-
-func isBlockedRelaySource(sourceKey string) bool {
-	return globalClientIPv4Allocator.isBlockedSource(sourceKey)
-}
-
-func buildWSClientIdentityFrame(clientIP [4]byte) []byte {
-	if clientIP[0] == 0 {
-		return nil
-	}
-
-	frame := make([]byte, wsPortHeaderSize+len(wsClientIdentityMagic)+len(clientIP))
-	frame[0] = 0
-	frame[1] = 0
-	copy(frame[wsPortHeaderSize:], wsClientIdentityMagic)
-	copy(frame[wsPortHeaderSize+len(wsClientIdentityMagic):], clientIP[:])
-	return frame
-}
-
-func parseClientIP(raw string) (netip.Addr, bool) {
+// ParseClientIP extracts an IP address from a raw header value or remote addr
+// string, handling Forwarded/X-Forwarded-For formats and port stripping.
+func ParseClientIP(raw string) (netip.Addr, bool) {
 	value := strings.TrimSpace(raw)
 	if value == "" {
 		return netip.Addr{}, false
@@ -178,18 +160,19 @@ func parseClientIP(raw string) (netip.Addr, bool) {
 	return ip.Unmap(), true
 }
 
-func resolveClientSourceKey(r *http.Request) string {
+// ResolveClientSourceKey derives a stable identity key from an HTTP request.
+func ResolveClientSourceKey(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
 
 	if headerName := strings.TrimSpace(os.Getenv("AUTH_CLIENT_IP_HEADER")); headerName != "" {
-		if ip, ok := parseClientIP(r.Header.Get(headerName)); ok {
+		if ip, ok := ParseClientIP(r.Header.Get(headerName)); ok {
 			return "ip:" + ip.String()
 		}
 	}
 
-	if ip, ok := parseClientIP(r.RemoteAddr); ok {
+	if ip, ok := ParseClientIP(r.RemoteAddr); ok {
 		return "ip:" + ip.String()
 	}
 

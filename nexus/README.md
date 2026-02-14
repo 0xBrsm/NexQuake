@@ -4,30 +4,31 @@ Go HTTP server that ties everything together: serves the WASM client, serves gam
 
 ## Files
 
-### Core
+### Entry
 
 | File | Purpose |
 |------|---------|
-| `main.go` | **Entry point.** HTTP server setup, route registration, auth initialization, server manager startup, signal handling, graceful shutdown. |
-| `websock.go` | **WebSocket handler.** Upgrades `/ws` to WebSocket, reads/writes binary frames, manages per-connection state, tracks admin connections. |
-| `udp.go` | **UDP relay.** Bidirectional relay between WebSocket frames and backend UDP sockets. Routes strictly by UDP port. |
-| `protocol.go` | **Tunnel protocol helpers.** Defines WebSocket port-header constants and Quake control-packet encode/decode helpers. Implements `slist` control-plane and aggregated `CCREP_SERVER_INFO` responses from cache. |
+| `main.go` | **Entry point.** HTTP server setup, route registration, auth init, server manager startup, signal handling, graceful shutdown. |
+| `util.go` | **Shared helpers.** Logging, env parsing, misc utilities. |
 
-### Server Management
+### Packages
 
-| File | Purpose |
-|------|---------|
-| `servers.go` | **Server orchestrator.** Loads launch entries from `${DATA_DIR}/servers.ini` (or defaults to one default `nqserver` if missing), spawns dedicated server processes, and manages lifecycle (start, stop, signal). Builds merged runtime basedirs when data is read-only. |
-| `slist.go` | **Server-info cache.** Polls running servers with connectionless `CCREQ_SERVER_INFO` on a round-robin schedule (one server every 500ms). Caches replies for fast `slist` responses. |
-| `udp_addr.go` | **Relay addressing helpers.** Uses per-client hashed loopback source binds (`127.x.y.z:0`) and loopback server destinations (`127.0.0.1:<port>`). |
+Most nexus logic lives in internal packages:
+
+| Dir | Purpose |
+|-----|---------|
+| `internal/nqnet/` | **Networking.** WebSocket upgrader, WebSocket<->UDP router, session registry, virtual IP allocator, tunnel frame helpers. |
+| `internal/orch/` | **Orchestration.** Dedicated server launch planning, process lifecycle, server console capture/tail, server-info poller for `slist`. |
+| `internal/admin/` | **Admin.** Auth (RCON password + OIDC JWT), admin frame handler (`rcon`), nexus command dispatcher. |
+| `internal/gamedata/` | **Game data.** Bootstrap manifests, VFS manifest builder, PAK indexing and on-demand extraction handlers. |
 
 ### Game Data
 
 | File | Purpose |
 |------|---------|
-| `vfs.go` | **Manifest builder.** Scans `${DATA_DIR}/<mod>/common` and `${DATA_DIR}/<mod>/client`, builds a JSON manifest with per-file URLs. Implements Quake-like precedence (loose > PAK, higher PAK number wins). |
-| `pak.go` | **PAK parser.** Reads PAK file headers, indexes entries, streams individual files via `/pak-extract/<mod>/<layer>/<pak>/<file>`. No pre-extraction needed. |
-| `assets.go` | **Bootstrap.** Downloads game data on first run from a quickstart manifest (e.g., `minimal.json`). Only activates when `${DATA_DIR}` is writable. |
+| `internal/gamedata/vfs.go` | **Manifest builder.** Scans `${DATA_DIR}/<mod>/common` + `${DATA_DIR}/<mod>/client`, builds JSON manifests with Quake-like precedence (loose > PAK, higher PAK number wins). |
+| `internal/gamedata/pak.go` | **PAK parser.** Indexes PAK headers and streams files via `/pak-extract/<mod>/<layer>/<pak>/<file>`. |
+| `internal/gamedata/assets.go` | **Bootstrap.** Downloads game data on first run from a quickstart manifest (e.g. `minimal.json`). Only activates when `${DATA_DIR}` is writable. |
 
 ### Quake 1.06 Extraction (`quake106/`)
 
@@ -66,4 +67,4 @@ CGO_ENABLED=0 go build -o nexus .
 
 ## Dependencies
 
-Go 1.25+. Standard library only (no external dependencies except `golang.org/x/net` for WebSocket).
+Go 1.25+. Primary deps: `github.com/gorilla/websocket` (WebSocket), `github.com/creack/pty` (server console PTY), `github.com/google/shlex` (admin command splitting).

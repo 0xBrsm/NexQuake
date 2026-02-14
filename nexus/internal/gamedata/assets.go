@@ -1,4 +1,4 @@
-package main
+package gamedata
 
 import (
 	"archive/zip"
@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brstm/NexQuake/nexus/quake106"
+	"github.com/0xBrsm/NexQuake/nexus/quake106"
 )
 
 type gameDataEntry struct {
@@ -26,7 +26,13 @@ type gameDataEntry struct {
 	Force  bool     `json:"force,omitempty"`
 }
 
-func bootstrapGameData(ctx context.Context, dataDir string) error {
+// BootstrapGameData installs game data from quickstart manifests.
+// logf is used for informational log messages (may be nil).
+func BootstrapGameData(ctx context.Context, dataDir string, logf func(string, ...any)) error {
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
+
 	entries, src, err := loadGameDataEntries(dataDir)
 	if err != nil {
 		return err
@@ -37,7 +43,7 @@ func bootstrapGameData(ctx context.Context, dataDir string) error {
 
 	if !dirWritable(dataDir) {
 		if strings.TrimSpace(os.Getenv("QUICKSTART")) != "" {
-			infof("Game data bootstrap skipped (not writable): %s", dataDir)
+			logf("Game data bootstrap skipped (not writable): %s", dataDir)
 		}
 		return nil
 	}
@@ -216,8 +222,6 @@ func loadGameDataEntries(dataDir string) ([]gameDataEntry, string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			// Default QUICKSTART is "minimal". If the user bind-mounts a data dir or
-			// otherwise doesn't have the stock manifests present, treat as disabled.
 			return nil, path, nil
 		}
 		return nil, path, fmt.Errorf("read config: %w", err)

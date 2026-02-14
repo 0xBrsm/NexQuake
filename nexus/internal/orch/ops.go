@@ -1,4 +1,4 @@
-package main
+package orch
 
 import (
 	"cmp"
@@ -34,14 +34,9 @@ func (m *ServerManager) findRecordByPortOrIndexLocked(target int) (*serverRecord
 		if rec == nil {
 			continue
 		}
-		if rec.resolvedPort == target {
-			if byPort != nil && byPort != rec {
-				return nil, fmt.Errorf("ambiguous port %d", target)
-			}
-			byPort = rec
-			continue
-		}
-		if rec.spec != nil && rec.spec.ListenPort == target {
+
+		isMatch := (rec.resolvedPort == target) || (rec.spec != nil && rec.spec.ListenPort == target)
+		if isMatch {
 			if byPort != nil && byPort != rec {
 				return nil, fmt.Errorf("ambiguous port %d", target)
 			}
@@ -60,7 +55,7 @@ func (m *ServerManager) findRecordByPortOrIndexLocked(target int) (*serverRecord
 		records = append(records, rec)
 	}
 	slices.SortFunc(records, func(a, b *serverRecord) int {
-		return cmp.Compare(a.launch.slot, b.launch.slot)
+		return cmp.Compare(a.Launch.Slot, b.Launch.Slot)
 	})
 	index := target - 1
 	if index >= 0 && index < len(records) {
@@ -76,8 +71,8 @@ func (m *ServerManager) nextLaunchSlotLocked() int {
 		if rec == nil {
 			continue
 		}
-		if rec.launch.slot > maxSlot {
-			maxSlot = rec.launch.slot
+		if rec.Launch.Slot > maxSlot {
+			maxSlot = rec.Launch.Slot
 		}
 	}
 	return maxSlot + 1
@@ -114,12 +109,12 @@ func (m *ServerManager) startRecord(rec *serverRecord) error {
 		m.mu.Unlock()
 		return fmt.Errorf("runtime not initialized")
 	}
-	if rec.running != nil && rec.running.cmd != nil && rec.running.cmd.Process != nil && isProcessAlive(rec.running.cmd.Process) {
+	if rec.Running != nil && rec.Running.Cmd != nil && rec.Running.Cmd.Process != nil && isProcessAlive(rec.Running.Cmd.Process) {
 		m.mu.Unlock()
 		return ErrAlreadyRunning
 	}
 	runtimeBasedir := m.runtimeBasedir
-	launch := cloneServerLaunch(rec.launch)
+	launch := cloneServerLaunch(rec.Launch)
 
 	// Clear stale resolved-port state from any previous run so that
 	// assignPortLocked will accept the new port the OS hands out
@@ -139,19 +134,19 @@ func (m *ServerManager) startRecord(rec *serverRecord) error {
 		runtimeBasedir,
 		launch,
 		func(port int) {
-			m.updatePort(rec, port)
-			debugf("Resolved server listen port (slot=%d port=%d)", rec.launch.slot, port)
+			m.UpdatePort(rec, port)
+			m.debugf("Resolved server listen port (slot=%d port=%d)", rec.Launch.Slot, port)
 		},
 		func(searchPath []string) {
 			searchPath = normalizeSearchPath(searchPath)
-			m.updateSearchPath(rec, searchPath)
-			debugf("Resolved server search path (slot=%d active=%q paths=%q)",
-				rec.launch.slot, activeGameDir(searchPath), searchPath)
+			m.UpdateSearchPath(rec, searchPath)
+			m.debugf("Resolved server search path (slot=%d active=%q paths=%q)",
+				rec.Launch.Slot, activeGameDir(searchPath), searchPath)
 		},
 	)
 	if err != nil {
 		m.mu.Lock()
-		rec.running = nil
+		rec.Running = nil
 		resetRecordStartupState(rec)
 		rec.lastError = err.Error()
 		m.mu.Unlock()
@@ -159,29 +154,29 @@ func (m *ServerManager) startRecord(rec *serverRecord) error {
 	}
 
 	m.mu.Lock()
-	rec.running = srv
+	rec.Running = srv
 	if rec.spec != nil {
-		rec.running.spec = *rec.spec
+		rec.Running.spec = *rec.spec
 	}
 	rec.relayConsoleReady = false
 	rec.awaitingServerInfo = true
 	rec.startupTimedOutOnce = false
 	rec.lastError = ""
-	rec.hostname = ""
-	rec.mapName = ""
-	rec.players = 0
-	rec.maxPlayers = 0
-	rec.lastSeen = time.Time{}
+	rec.Hostname = ""
+	rec.MapName = ""
+	rec.Players = 0
+	rec.MaxPlayers = 0
+	rec.LastSeen = time.Time{}
 	m.mu.Unlock()
 
-	go m.relayServerConsoleToNexus(rec, srv.console)
+	go m.relayServerConsoleToNexus(rec, srv.Console)
 	go m.monitorServerStartupTimeout(rec, srv, serverStartupCCREPTimeout)
 
 	return nil
 }
 
 func (m *ServerManager) monitorServerStartupTimeout(rec *serverRecord, srv *managedServer, timeout time.Duration) {
-	if m == nil || rec == nil || srv == nil || timeout <= 0 {
+	if rec == nil || srv == nil || timeout <= 0 {
 		return
 	}
 
@@ -190,15 +185,15 @@ func (m *ServerManager) monitorServerStartupTimeout(rec *serverRecord, srv *mana
 	<-timer.C
 
 	m.mu.Lock()
-	if rec.running != srv || !rec.awaitingServerInfo || rec.startupTimedOutOnce {
+	if rec.Running != srv || !rec.awaitingServerInfo || rec.startupTimedOutOnce {
 		m.mu.Unlock()
 		return
 	}
 	rec.startupTimedOutOnce = true
-	slot := rec.launch.slot
+	slot := rec.Launch.Slot
 	m.mu.Unlock()
 
-	warnf("server %d failed to start in %d seconds", slot, int(timeout/time.Second))
+	m.warnf("server %d failed to start in %d seconds", slot, int(timeout/time.Second))
 }
 
 func (m *ServerManager) LaunchServer(binary string, args []string) error {
@@ -223,11 +218,11 @@ func (m *ServerManager) LaunchServer(binary string, args []string) error {
 	slot := m.nextLaunchSlotLocked()
 	rec := &serverRecord{
 		id: m.nextServerID,
-		launch: serverLaunch{
-			slot:   slot,
-			logDir: fmt.Sprintf("%d-%s-%s", slot, filepath.Base(binary), startTag),
-			binary: binary,
-			args:   append([]string(nil), args...),
+		Launch: serverLaunch{
+			Slot:   slot,
+			LogDir: fmt.Sprintf("%d-%s-%s", slot, filepath.Base(binary), startTag),
+			Binary: binary,
+			Args:   append([]string(nil), args...),
 		},
 	}
 	m.nextServerID++
@@ -263,13 +258,13 @@ func (m *ServerManager) StopServer(ctx context.Context, target int, killAfter ti
 		m.mu.RUnlock()
 		return err
 	}
-	s := rec.running
+	s := rec.Running
 	m.mu.RUnlock()
 
-	if s == nil || s.cmd == nil || s.cmd.Process == nil || !isProcessAlive(s.cmd.Process) {
+	if s == nil || s.Cmd == nil || s.Cmd.Process == nil || !isProcessAlive(s.Cmd.Process) {
 		m.mu.Lock()
-		if rec.running == s {
-			rec.running = nil
+		if rec.Running == s {
+			rec.Running = nil
 			resetRecordStartupState(rec)
 		}
 		m.mu.Unlock()
@@ -290,17 +285,17 @@ func (m *ServerManager) RestartServer(ctx context.Context, target int, killAfter
 		m.mu.RUnlock()
 		return err
 	}
-	s := rec.running
+	s := rec.Running
 	m.mu.RUnlock()
 
-	if s != nil && s.cmd != nil && s.cmd.Process != nil && isProcessAlive(s.cmd.Process) {
+	if s != nil && s.Cmd != nil && s.Cmd.Process != nil && isProcessAlive(s.Cmd.Process) {
 		if err := m.stopServer(ctx, rec, s, killAfter, true); err != nil {
 			return err
 		}
 	} else {
 		m.mu.Lock()
-		if rec.running == s {
-			rec.running = nil
+		if rec.Running == s {
+			rec.Running = nil
 			resetRecordStartupState(rec)
 		}
 		m.mu.Unlock()
@@ -315,9 +310,9 @@ func (m *ServerManager) stopServer(ctx context.Context, rec *serverRecord, s *ma
 	}
 	waitAfterSignal := killAfter
 
-	if sendSignal && s.cmd != nil && s.cmd.Process != nil && isProcessAlive(s.cmd.Process) {
+	if sendSignal && s.Cmd != nil && s.Cmd.Process != nil && isProcessAlive(s.Cmd.Process) {
 		// Graceful path first: ask the server to quit via console.
-		_ = s.WriteConsole("quit")
+		_ = s.writeConsole("quit")
 
 		quitGrace := 750 * time.Millisecond
 		if killAfter > 0 && killAfter < quitGrace {
@@ -333,8 +328,8 @@ func (m *ServerManager) stopServer(ctx context.Context, rec *serverRecord, s *ma
 			return ctx.Err()
 		case err := <-s.done:
 			m.mu.Lock()
-			if rec != nil && rec.running == s {
-				rec.running = nil
+			if rec != nil && rec.Running == s {
+				rec.Running = nil
 				resetRecordStartupState(rec)
 				rec.lastError = ""
 			}
@@ -343,8 +338,8 @@ func (m *ServerManager) stopServer(ctx context.Context, rec *serverRecord, s *ma
 		case <-time.After(quitGrace):
 		}
 
-		if isProcessAlive(s.cmd.Process) {
-			_ = s.cmd.Process.Signal(syscall.SIGTERM)
+		if isProcessAlive(s.Cmd.Process) {
+			_ = s.Cmd.Process.Signal(syscall.SIGTERM)
 		}
 	}
 
@@ -353,22 +348,22 @@ func (m *ServerManager) stopServer(ctx context.Context, rec *serverRecord, s *ma
 		return ctx.Err()
 	case err := <-s.done:
 		m.mu.Lock()
-		if rec != nil && rec.running == s {
-			rec.running = nil
+		if rec != nil && rec.Running == s {
+			rec.Running = nil
 			resetRecordStartupState(rec)
 			rec.lastError = ""
 		}
 		m.mu.Unlock()
 		return err
 	case <-time.After(waitAfterSignal):
-		if s.cmd != nil && s.cmd.Process != nil && isProcessAlive(s.cmd.Process) {
-			_ = s.cmd.Process.Kill()
+		if s.Cmd != nil && s.Cmd.Process != nil && isProcessAlive(s.Cmd.Process) {
+			_ = s.Cmd.Process.Kill()
 		}
 		select {
 		case err := <-s.done:
 			m.mu.Lock()
-			if rec != nil && rec.running == s {
-				rec.running = nil
+			if rec != nil && rec.Running == s {
+				rec.Running = nil
 				resetRecordStartupState(rec)
 				rec.lastError = ""
 			}
@@ -379,10 +374,10 @@ func (m *ServerManager) stopServer(ctx context.Context, rec *serverRecord, s *ma
 			gameDir := ""
 			m.mu.Lock()
 			if rec != nil {
-				if rec.running == s {
+				if rec.Running == s {
 					rec.lastError = "did not exit after kill"
 				}
-				slot = rec.launch.slot
+				slot = rec.Launch.Slot
 				if rec.spec != nil {
 					gameDir = activeGameDir(rec.spec.SearchPath)
 				}
@@ -407,11 +402,11 @@ func (m *ServerManager) RemoveServer(target int) error {
 	if err != nil {
 		return err
 	}
-	if rec.running != nil && rec.running.cmd != nil && rec.running.cmd.Process != nil && isProcessAlive(rec.running.cmd.Process) {
+	if rec.Running != nil && rec.Running.Cmd != nil && rec.Running.Cmd.Process != nil && isProcessAlive(rec.Running.Cmd.Process) {
 		return fmt.Errorf("server is running; stop server first")
 	}
-	if rec.running != nil {
-		rec.running = nil
+	if rec.Running != nil {
+		rec.Running = nil
 		resetRecordStartupState(rec)
 	}
 

@@ -1,4 +1,4 @@
-package main
+package admin
 
 import (
 	"context"
@@ -8,11 +8,26 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/0xBrsm/NexQuake/nexus/internal/nqnet"
+	"github.com/0xBrsm/NexQuake/nexus/internal/orch"
+	"github.com/google/shlex"
 )
 
-type banTarget struct {
-	Port      int
-	VirtualIP string
+// Env provides all external dependencies for admin command execution.
+type Env struct {
+	ServerSnapshots func() []orch.ServerSnapshot
+	StartServer     func(target int) error
+	StopServer      func(ctx context.Context, target int, killAfter time.Duration) error
+	RestartServer   func(ctx context.Context, target int, killAfter time.Duration) error
+	RemoveServer    func(target int) error
+	LaunchServer    func(binary string, args []string) error
+	ExecServerCmd   func(port int, cmd string) (string, error)
+	TailNexusLog    func(n int) []string
+
+	SessionSnapshots func() []nqnet.SessionSnapshot
+	SnapshotByVIP    func(vip string) ([]*nqnet.Router, []nqnet.BanTarget)
+	ReserveAndBlock  func(ip [4]byte, sourceKey string)
 }
 
 type adminCommandSpec struct {
@@ -33,7 +48,7 @@ var adminCommandSpecs = []adminCommandSpec{
 	{Form: "ban <idx|NQIP>", Description: "ban a session/NQIP from all servers until Nexus restart"},
 }
 
-func formatNexusServerList(servers []ServerSnapshot) string {
+func formatNexusServerList(servers []orch.ServerSnapshot) string {
 	if len(servers) == 0 {
 		return "\nNo Quake servers found.\n\n"
 	}
@@ -69,13 +84,9 @@ type nexusClientRow struct {
 	Server  string
 }
 
-func hostnameByListenPort(mgr *ServerManager) map[int]string {
-	if mgr == nil {
-		return nil
-	}
-	snaps := mgr.Snapshots()
-	out := make(map[int]string, len(snaps))
-	for _, snap := range snaps {
+func hostnameByListenPort(snapshots []orch.ServerSnapshot) map[int]string {
+	out := make(map[int]string, len(snapshots))
+	for _, snap := range snapshots {
 		if snap.ListenPort < 1 || snap.ListenPort > 65535 {
 			continue
 		}
@@ -92,31 +103,21 @@ func hostnameByListenPort(mgr *ServerManager) map[int]string {
 }
 
 func compareClientIPText(a, b string) int {
-	ipa, oka := parseClientIP(a)
-	ipb, okb := parseClientIP(b)
-	if oka && okb && ipa.Is4() && ipb.Is4() {
-		ab := ipa.As4()
-		bb := ipb.As4()
-		for i := range ab {
-			if ab[i] < bb[i] {
-				return -1
-			}
-			if ab[i] > bb[i] {
-				return 1
-			}
-		}
-		return 0
+	ipa, oka := nqnet.ParseClientIP(a)
+	ipb, okb := nqnet.ParseClientIP(b)
+	if oka && okb {
+		return ipa.Compare(ipb)
 	}
 	return strings.Compare(a, b)
 }
 
-func queryNexusClientRows(mgr *ServerManager) []nexusClientRow {
-	sessions := globalClientSessions.SnapshotAll()
+func queryNexusClientRows(env *Env) []nexusClientRow {
+	sessions := env.SessionSnapshots()
 	if len(sessions) == 0 {
 		return nil
 	}
 
-	serverByPort := hostnameByListenPort(mgr)
+	serverByPort := hostnameByListenPort(env.ServerSnapshots())
 	out := make([]nexusClientRow, 0, len(sessions))
 	for _, session := range sessions {
 		nqip := strings.TrimSpace(session.VirtualIP)
@@ -235,12 +236,12 @@ func formatAdminCommandHelp() string {
 	return b.String()
 }
 
-func (r *Router) applyServerBanTargets(targets []banTarget) (applied int, errs []error) {
+func applyServerBanTargets(targets []nqnet.BanTarget, env *Env) (applied int, errs []error) {
 	for _, target := range targets {
 		if target.Port < 1 || target.Port > 65535 || strings.TrimSpace(target.VirtualIP) == "" {
 			continue
 		}
-		if _, err := r.execServerCommand(target.Port, fmt.Sprintf("ban %s", target.VirtualIP)); err != nil {
+		if _, err := env.ExecServerCmd(target.Port, fmt.Sprintf("ban %s", target.VirtualIP)); err != nil {
 			errs = append(errs, fmt.Errorf("server %d: %w", target.Port, err))
 			continue
 		}
@@ -249,24 +250,24 @@ func (r *Router) applyServerBanTargets(targets []banTarget) (applied int, errs [
 	return applied, errs
 }
 
-func (r *Router) executeBanCommand(rawTarget string) (string, error) {
-	virtualIP, err := resolveBanVirtualIP(rawTarget)
+func executeBanCommand(rawTarget string, env *Env) (string, error) {
+	virtualIP, err := resolveBanVirtualIP(rawTarget, env)
 	if err != nil {
 		return "", err
 	}
 
-	routers, targets := globalClientSessions.SnapshotByVirtualIP(virtualIP)
+	routers, targets := env.SnapshotByVIP(virtualIP)
 	if len(routers) == 0 {
 		return "", fmt.Errorf("unknown active client ip %q", virtualIP)
 	}
 	for _, router := range routers {
-		if router != nil && router.isAdmin {
+		if router.IsAdmin() {
 			return "", fmt.Errorf("cannot ban admin sessions")
 		}
 	}
-	applied, applyErrs := r.applyServerBanTargets(targets)
+	applied, applyErrs := applyServerBanTargets(targets, env)
 	for _, router := range routers {
-		reserveRelayClientIdentity(router.clientIP, router.SourceKey())
+		env.ReserveAndBlock(router.ClientIP(), router.SourceKey())
 		router.Close()
 	}
 
@@ -287,7 +288,7 @@ func (r *Router) executeBanCommand(rawTarget string) (string, error) {
 }
 
 func normalizeVirtualClientIP(raw string) (string, error) {
-	ip, ok := parseClientIP(raw)
+	ip, ok := nqnet.ParseClientIP(raw)
 	if !ok {
 		return "", fmt.Errorf("invalid client ip %q", strings.TrimSpace(raw))
 	}
@@ -301,7 +302,7 @@ func normalizeVirtualClientIP(raw string) (string, error) {
 	return ip.String(), nil
 }
 
-func resolveBanVirtualIP(raw string) (string, error) {
+func resolveBanVirtualIP(raw string, env *Env) (string, error) {
 	target := strings.TrimSpace(raw)
 	if target == "" {
 		return "", fmt.Errorf("missing ban target")
@@ -310,7 +311,7 @@ func resolveBanVirtualIP(raw string) (string, error) {
 		if idx <= 0 {
 			return "", fmt.Errorf("invalid session index %q", target)
 		}
-		rows := queryNexusClientRows(globalServerManager)
+		rows := queryNexusClientRows(env)
 		if idx > len(rows) {
 			return "", fmt.Errorf("unknown session index %d", idx)
 		}
@@ -319,8 +320,9 @@ func resolveBanVirtualIP(raw string) (string, error) {
 	return normalizeVirtualClientIP(target)
 }
 
-func (r *Router) execNexusCommand(args string) (string, error) {
-	if globalServerManager == nil {
+// execNexusCommand dispatches a nexus admin command and returns its reply.
+func execNexusCommand(args string, env *Env) (string, error) {
+	if env == nil {
 		return "", fmt.Errorf("server manager not available")
 	}
 
@@ -338,7 +340,7 @@ func (r *Router) execNexusCommand(args string) (string, error) {
 		return nil
 	}
 
-	parts, splitErr := splitCommandLine(strings.TrimSpace(args))
+	parts, splitErr := shlex.Split(strings.TrimSpace(args))
 	if splitErr != nil {
 		return formatAdminCommandHelp(), nil
 	}
@@ -364,20 +366,20 @@ func (r *Router) execNexusCommand(args string) (string, error) {
 		if err := requireArgs(cmdArgs, 0, form); err != nil {
 			return "", err
 		}
-		return formatNexusTailReply(tailNexusLogLines(defaultServerTailLines)), nil
+		return formatNexusTailReply(env.TailNexusLog(defaultServerTailLines)), nil
 
 	case "slist":
 		if err := requireArgs(cmdArgs, 0, "slist"); err != nil {
 			return "", err
 		}
-		return formatNexusServerList(globalServerManager.Snapshots()), nil
+		return formatNexusServerList(env.ServerSnapshots()), nil
 
 	case "sessions":
 		form := "sessions"
 		if err := requireArgs(cmdArgs, 0, form); err != nil {
 			return "", err
 		}
-		return formatNexusClientList(queryNexusClientRows(globalServerManager)), nil
+		return formatNexusClientList(queryNexusClientRows(env)), nil
 
 	case "launch":
 		form := "launch <binary> [args...]"
@@ -386,7 +388,7 @@ func (r *Router) execNexusCommand(args string) (string, error) {
 		}
 		binary := cmdArgs[0]
 		launchArgs := append([]string(nil), cmdArgs[1:]...)
-		if err := globalServerManager.LaunchServer(binary, launchArgs); err != nil {
+		if err := env.LaunchServer(binary, launchArgs); err != nil {
 			return "", withUsage(err, form)
 		}
 		return "ok\n", nil
@@ -400,7 +402,7 @@ func (r *Router) execNexusCommand(args string) (string, error) {
 		if parseErr != nil {
 			return "", withUsage(parseErr, form)
 		}
-		if err := globalServerManager.RemoveServer(target); err != nil {
+		if err := env.RemoveServer(target); err != nil {
 			return "", withUsage(err, form)
 		}
 		return "ok\n", nil
@@ -410,7 +412,7 @@ func (r *Router) execNexusCommand(args string) (string, error) {
 		if err := requireArgs(cmdArgs, 1, form); err != nil {
 			return "", err
 		}
-		reply, err := r.executeBanCommand(cmdArgs[0])
+		reply, err := executeBanCommand(cmdArgs[0], env)
 		if err != nil {
 			return "", withUsage(err, form)
 		}
@@ -423,19 +425,19 @@ func (r *Router) execNexusCommand(args string) (string, error) {
 		}
 		runOne := func(target int) error {
 			if cmd == "start" {
-				return globalServerManager.StartServer(target)
+				return env.StartServer(target)
 			}
 			if cmd == "stop" {
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				defer cancel()
-				return globalServerManager.StopServer(ctx, target, 2*time.Second)
+				return env.StopServer(ctx, target, 2*time.Second)
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			return globalServerManager.RestartServer(ctx, target, 2*time.Second)
+			return env.RestartServer(ctx, target, 2*time.Second)
 		}
 		runAll := func() error {
-			servers := globalServerManager.Snapshots()
+			servers := env.ServerSnapshots()
 			var errs []error
 			for i := range servers {
 				target := i + 1
@@ -443,10 +445,10 @@ func (r *Router) execNexusCommand(args string) (string, error) {
 				if err == nil {
 					continue
 				}
-				if cmd == "start" && errors.Is(err, ErrAlreadyRunning) {
+				if cmd == "start" && errors.Is(err, orch.ErrAlreadyRunning) {
 					continue
 				}
-				if cmd == "stop" && errors.Is(err, ErrAlreadyStopped) {
+				if cmd == "stop" && errors.Is(err, orch.ErrAlreadyStopped) {
 					continue
 				}
 				errs = append(errs, fmt.Errorf("target %d: %w", target, err))
@@ -472,28 +474,4 @@ func (r *Router) execNexusCommand(args string) (string, error) {
 	}
 
 	return formatAdminCommandHelp(), nil
-}
-
-func sortedUniqueTargets(in []banTarget) []banTarget {
-	if len(in) == 0 {
-		return nil
-	}
-	seen := make(map[string]banTarget, len(in))
-	for _, t := range in {
-		if t.Port < 1 || t.Port > 65535 || t.VirtualIP == "" {
-			continue
-		}
-		seen[fmt.Sprintf("%d|%s", t.Port, t.VirtualIP)] = t
-	}
-	out := make([]banTarget, 0, len(seen))
-	for _, target := range seen {
-		out = append(out, target)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Port != out[j].Port {
-			return out[i].Port < out[j].Port
-		}
-		return out[i].VirtualIP < out[j].VirtualIP
-	})
-	return out
 }

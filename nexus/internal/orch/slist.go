@@ -1,4 +1,4 @@
-package main
+package orch
 
 import (
 	"context"
@@ -9,23 +9,26 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/0xBrsm/NexQuake/nexus/internal/nqnet"
 )
 
 const serverInfoPollStep = 500 * time.Millisecond
 
-type ServerInfoPoller struct {
-	mgr *ServerManager
+type serverInfoPoller struct {
+	mgr      *ServerManager
+	serverIP net.IP
 
 	pollConn *net.UDPConn
 	stopOnce sync.Once
 }
 
-func NewServerInfoPoller(mgr *ServerManager) *ServerInfoPoller {
-	return &ServerInfoPoller{mgr: mgr}
+func NewServerInfoPoller(mgr *ServerManager, serverIP net.IP) *serverInfoPoller {
+	return &serverInfoPoller{mgr: mgr, serverIP: serverIP}
 }
 
-func (p *ServerInfoPoller) Start(ctx context.Context) error {
-	udpConn, err := net.ListenUDP("udp4", relayListenAddr())
+func (p *serverInfoPoller) Start(ctx context.Context) error {
+	udpConn, err := net.ListenUDP("udp4", nqnet.RelayListenAddr())
 	if err != nil {
 		return fmt.Errorf("server info poller: listen udp: %w", err)
 	}
@@ -38,7 +41,7 @@ func (p *ServerInfoPoller) Start(ctx context.Context) error {
 	return nil
 }
 
-func (p *ServerInfoPoller) Stop() {
+func (p *serverInfoPoller) Stop() {
 	p.stopOnce.Do(func() {
 		if p.pollConn != nil {
 			_ = p.pollConn.Close()
@@ -48,9 +51,6 @@ func (p *ServerInfoPoller) Stop() {
 
 func fillRunningPorts(mgr *ServerManager, dst []int) []int {
 	dst = dst[:0]
-	if mgr == nil {
-		return dst
-	}
 
 	mgr.mu.RLock()
 	defer mgr.mu.RUnlock()
@@ -61,10 +61,10 @@ func fillRunningPorts(mgr *ServerManager, dst []int) []int {
 		}
 		for _, serverID := range ids {
 			rec := mgr.serversByID[serverID]
-			if rec == nil || rec.running == nil || rec.running.cmd == nil || rec.running.cmd.Process == nil {
+			if rec == nil || rec.Running == nil || rec.Running.Cmd == nil || rec.Running.Cmd.Process == nil {
 				continue
 			}
-			if !isProcessAlive(rec.running.cmd.Process) {
+			if !isProcessAlive(rec.Running.Cmd.Process) {
 				continue
 			}
 			dst = append(dst, port)
@@ -83,26 +83,22 @@ func staleAfterForTargets(targetCount int) time.Duration {
 	return staleAfter
 }
 
-func snapshotForSlist(mgr *ServerManager) []serverListEntry {
-	if mgr == nil {
-		return nil
-	}
-
+func SnapshotForSlist(mgr *ServerManager) []nqnet.ServerListEntry {
 	ports := fillRunningPorts(mgr, nil)
 	staleAfter := staleAfterForTargets(len(ports))
 	now := time.Now()
 
 	mgr.mu.RLock()
-	out := make([]serverListEntry, 0, len(ports))
+	out := make([]nqnet.ServerListEntry, 0, len(ports))
 	for _, port := range ports {
 		ids := mgr.serverIDsByPort[port]
 		var rec *serverRecord
 		for _, serverID := range ids {
 			r := mgr.serversByID[serverID]
-			if r == nil || r.running == nil || r.running.cmd == nil || r.running.cmd.Process == nil {
+			if r == nil || r.Running == nil || r.Running.Cmd == nil || r.Running.Cmd.Process == nil {
 				continue
 			}
-			if !isProcessAlive(r.running.cmd.Process) {
+			if !isProcessAlive(r.Running.Cmd.Process) {
 				continue
 			}
 			rec = r
@@ -111,7 +107,7 @@ func snapshotForSlist(mgr *ServerManager) []serverListEntry {
 		if rec == nil {
 			continue
 		}
-		if now.Sub(rec.lastSeen) > staleAfter {
+		if now.Sub(rec.LastSeen) > staleAfter {
 			continue
 		}
 
@@ -119,13 +115,13 @@ func snapshotForSlist(mgr *ServerManager) []serverListEntry {
 			continue
 		}
 
-		out = append(out, serverListEntry{
+		out = append(out, nqnet.ServerListEntry{
 			ListenPort: port,
-			Hostname:   rec.hostname,
-			MapName:    rec.mapName,
+			Hostname:   rec.Hostname,
+			MapName:    rec.MapName,
 			GameDir:    activeGameDir(rec.spec.SearchPath),
-			Players:    rec.players,
-			MaxPlayers: rec.maxPlayers,
+			Players:    rec.Players,
+			MaxPlayers: rec.MaxPlayers,
 		})
 	}
 	mgr.mu.RUnlock()
@@ -149,22 +145,22 @@ func snapshotForSlist(mgr *ServerManager) []serverListEntry {
 	return out
 }
 
-func (p *ServerInfoPoller) pollLoop(ctx context.Context, conn *net.UDPConn) {
-	req := buildCCREQServerInfo()
+func (p *serverInfoPoller) pollLoop(ctx context.Context, conn *net.UDPConn) {
+	req := nqnet.BuildCCREQServerInfo()
 
 	var ports []int
 
 	// Prime quickly at startup.
 	ports = fillRunningPorts(p.mgr, ports)
 	for _, port := range ports {
-		dst := serverUDPAddr(port)
+		dst := nqnet.ServerUDPAddr(p.serverIP, port)
 		if _, err := conn.WriteToUDP(req, dst); err != nil && errors.Is(err, net.ErrClosed) {
 			return
 		}
 	}
 
 	pollOne := func(port int) bool {
-		dst := serverUDPAddr(port)
+		dst := nqnet.ServerUDPAddr(p.serverIP, port)
 		if _, err := conn.WriteToUDP(req, dst); err != nil {
 			return !errors.Is(err, net.ErrClosed)
 		}
@@ -174,7 +170,7 @@ func (p *ServerInfoPoller) pollLoop(ctx context.Context, conn *net.UDPConn) {
 	ticker := time.NewTicker(serverInfoPollStep)
 	defer ticker.Stop()
 
-	debugf("Server info poller: polling %d targets every %s (round-robin step %s)",
+	p.mgr.debugf("Server info poller: polling %d targets every %s (round-robin step %s)",
 		len(ports), time.Duration(len(ports))*serverInfoPollStep, serverInfoPollStep)
 
 	rrNext := 0
@@ -199,7 +195,7 @@ func (p *ServerInfoPoller) pollLoop(ctx context.Context, conn *net.UDPConn) {
 	}
 }
 
-func (p *ServerInfoPoller) readLoop(ctx context.Context, conn *net.UDPConn) {
+func (p *serverInfoPoller) readLoop(ctx context.Context, conn *net.UDPConn) {
 	buf := make([]byte, 2048)
 	for {
 		_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
@@ -214,22 +210,19 @@ func (p *ServerInfoPoller) readLoop(ctx context.Context, conn *net.UDPConn) {
 			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
 				continue
 			}
-			// On shutdown the socket will close and return an error.
 			continue
 		}
 
-		srcPort, ok := serverSourcePortFromAddr(src)
+		srcPort, ok := nqnet.ServerSourcePortFromAddr(src)
 		if !ok {
 			continue
 		}
 
-		hostname, mapName, players, maxPlayers, _, ok := parseCCREPServerInfo(buf[:n])
+		hostname, mapName, players, maxPlayers, _, ok := nqnet.ParseCCREPServerInfo(buf[:n])
 		if !ok {
 			continue
 		}
 
-		if p.mgr != nil {
-			p.mgr.updateGameState(srcPort, hostname, mapName, players, maxPlayers)
-		}
+		p.mgr.updateGameState(srcPort, hostname, mapName, players, maxPlayers)
 	}
 }

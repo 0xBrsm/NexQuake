@@ -1,4 +1,4 @@
-package main
+package gamedata
 
 import (
 	"bytes"
@@ -13,7 +13,8 @@ import (
 	"sync"
 )
 
-type PakFileEntry struct {
+// pakFileEntry describes a single file inside a Quake .pak archive.
+type pakFileEntry struct {
 	Name   string
 	Offset int64
 	Size   int64
@@ -21,7 +22,7 @@ type PakFileEntry struct {
 
 // readPakContents reads a Quake .pak file and returns directory entries.
 // It validates offsets/sizes against the underlying file to avoid out-of-bounds reads.
-func readPakContents(pakPath string) ([]PakFileEntry, error) {
+func readPakContents(pakPath string) ([]pakFileEntry, error) {
 	f, err := os.Open(pakPath)
 	if err != nil {
 		return nil, err
@@ -67,7 +68,7 @@ func readPakContents(pakPath string) ([]PakFileEntry, error) {
 		return nil, err
 	}
 
-	out := make([]PakFileEntry, 0, dirLen/64)
+	out := make([]pakFileEntry, 0, dirLen/64)
 	for i := int64(0); i < dirLen; i += 64 {
 		chunk := dirBytes[i : i+64]
 		rawName := chunk[0:56]
@@ -92,7 +93,7 @@ func readPakContents(pakPath string) ([]PakFileEntry, error) {
 			return nil, fmt.Errorf("entry out of bounds for %q: off=%d size=%d file=%d", name, off, sz, fileSize)
 		}
 
-		out = append(out, PakFileEntry{Name: name, Offset: off, Size: sz})
+		out = append(out, pakFileEntry{Name: name, Offset: off, Size: sz})
 	}
 
 	return out, nil
@@ -101,19 +102,22 @@ func readPakContents(pakPath string) ([]PakFileEntry, error) {
 type pakIndex struct {
 	modTimeUnixNano int64
 	fileSize        int64
-	entries         map[string]PakFileEntry // keyed by normalized (lowercased) name
+	entries         map[string]pakFileEntry // keyed by normalized (lowercased) name
 }
 
-type pakIndexCache struct {
+// PakIndexCache is a thread-safe cache of parsed pak directory indices.
+type PakIndexCache struct {
 	mu     sync.Mutex
 	byPath map[string]*pakIndex
 }
 
-func newPakIndexCache() *pakIndexCache {
-	return &pakIndexCache{byPath: make(map[string]*pakIndex)}
+// NewPakIndexCache creates a new pak index cache.
+func NewPakIndexCache() *PakIndexCache {
+	return &PakIndexCache{byPath: make(map[string]*pakIndex)}
 }
 
-func (c *pakIndexCache) Get(pakPath string) (*pakIndex, error) {
+// Get returns a cached pak index, re-reading the pak if the file has changed.
+func (c *PakIndexCache) Get(pakPath string) (*pakIndex, error) {
 	st, err := os.Stat(pakPath)
 	if err != nil {
 		return nil, err
@@ -132,7 +136,7 @@ func (c *pakIndexCache) Get(pakPath string) (*pakIndex, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := make(map[string]PakFileEntry, len(contents))
+	m := make(map[string]pakFileEntry, len(contents))
 	for _, e := range contents {
 		key := normalizeVFSKey(e.Name)
 		if key == "" {
@@ -153,7 +157,9 @@ func (c *pakIndexCache) Get(pakPath string) (*pakIndex, error) {
 	return idx, nil
 }
 
-func newPakExtractHandler(dataDir string, pakCache *pakIndexCache) http.HandlerFunc {
+// NewPakExtractHandler returns an HTTP handler that extracts single files
+// from pak archives on demand.
+func NewPakExtractHandler(dataDir string, pakCache *PakIndexCache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.WriteHeader(http.StatusMethodNotAllowed)

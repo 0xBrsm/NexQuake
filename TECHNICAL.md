@@ -101,7 +101,7 @@ Two bytes of routing header, then the exact bytes that would go over UDP. Nexus 
 
 NetQuake's connection handshake switches ports mid-connect: the server replies to a connect request with a per-client "game port." Traditional proxies need to track this state. NexQuake avoids it by including the port in every frame, so the client tells Nexus where to send and Nexus tells the client where the reply came from.
 
-Because Nexus never parses the datagram payload, it has no knowledge of whether a packet is a connect request, a position update, or a chat message. This keeps the relay free of game-specific bugs, decoupled from protocol versions, and small (the entire tunnel is ~200 lines of Go).
+Because Nexus never parses the datagram payload, it has no knowledge of whether a packet is a connect request, a position update, or a chat message. This keeps the relay free of game-specific bugs, decoupled from protocol versions, and small.
 
 ### Multi-Server Routing
 
@@ -115,9 +115,9 @@ NexQuake routes exclusively by UDP port:
 
 - Browser frames carry destination port in the 2-byte WS header
 - Nexus forwards to `${NQSERVER_IP}:<port>` (default `127.13.37.9`)
-- Client-facing Quake addresses are virtualized as `0.0.0.0:<port>` (IP is ignored by the overlay)
+- Client-facing Quake addresses are virtualized as `0.0.0.0:<port>` (routing keys only on the port)
 
-There is no client IP emulation and no LAN-style per-client subnet allocation.
+To keep stock Quake behavior and server-side IP semantics, nexus still assigns each WebSocket client a stable virtual loopback IP (`127.x.y.z`) and binds that client's UDP relay socket to it. On WebSocket open, nexus sends a small control frame so the browser client can set its local NQIP for Quake address APIs. Routing still remains port-only.
 
 ## Build Architecture
 

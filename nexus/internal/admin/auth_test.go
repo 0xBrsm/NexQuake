@@ -1,4 +1,4 @@
-package main
+package admin
 
 import (
 	"encoding/base64"
@@ -16,27 +16,18 @@ func TestDeriveRconTokenFromPassword(t *testing.T) {
 }
 
 func TestIsAdminBase64PasswordToken(t *testing.T) {
-	oldPw := rconPassword
-	oldValidator := globalValidator
-	defer func() {
-		rconPassword = oldPw
-		globalValidator = oldValidator
-	}()
-
-	rconPassword = "testpw"
-	globalValidator = nil
-
-	token := deriveRconTokenFromPassword(rconPassword)
+	auth := &Auth{rconPassword: "testpw"}
+	token := deriveRconTokenFromPassword(auth.rconPassword)
 
 	reqA := httptest.NewRequest("GET", "http://quake-a.local:1337/ws?token="+token, nil)
 	reqA.Host = "quake-a.local:1337"
-	if !IsAdmin(reqA) {
+	if !auth.IsAdmin(reqA) {
 		t.Fatalf("expected IsAdmin() true for matching base64 token")
 	}
 
 	reqB := httptest.NewRequest("GET", "http://quake-b.local:1337/ws?token="+base64.StdEncoding.EncodeToString([]byte("wrong")), nil)
 	reqB.Host = "quake-b.local:1337"
-	if IsAdmin(reqB) {
+	if auth.IsAdmin(reqB) {
 		t.Fatalf("expected IsAdmin() false for non-matching token")
 	}
 }

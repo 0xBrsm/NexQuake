@@ -1,4 +1,4 @@
-package main
+package admin
 
 import (
 	"context"
@@ -11,38 +11,55 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 )
 
-const (
-	adminMatchEmail = "email"
-)
+const adminMatchEmail = "email"
 
-var (
-	globalValidator *OIDCValidator
-	rconPassword    string // AUTH_RCON_PASSWORD, token is base64(password)
-)
+// Auth holds authentication state for admin access control.
+type Auth struct {
+	rconPassword string
+	validator    *oidcValidator
+	debugf       func(string, ...any)
+}
 
-type OIDCValidator struct {
+type oidcValidator struct {
 	verifier      *oidc.IDTokenVerifier
 	headerName    string
 	adminMatchers map[string][]string
 }
 
-func initAuth() error {
-	rconPassword = strings.TrimSpace(os.Getenv("AUTH_RCON_PASSWORD"))
+// InitAuth initializes admin authentication from environment variables and
+// returns the Auth configuration. infof and debugf are used for log output.
+func InitAuth(ctx context.Context, infof, debugf func(string, ...any)) (*Auth, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if infof == nil {
+		infof = func(string, ...any) {}
+	}
+	if debugf == nil {
+		debugf = func(string, ...any) {}
+	}
+
+	rconPassword := strings.TrimSpace(os.Getenv("AUTH_RCON_PASSWORD"))
 
 	issuer := strings.TrimSpace(os.Getenv("AUTH_ISSUER"))
 	audience := strings.TrimSpace(os.Getenv("AUTH_AUDIENCE"))
 	headerName := strings.TrimSpace(os.Getenv("AUTH_JWT_HEADER"))
 	adminMatchers := parseAdminMatchers(os.Getenv("AUTH_ADMIN_ID"))
 
+	auth := &Auth{
+		rconPassword: rconPassword,
+		debugf:       debugf,
+	}
+
 	if issuer != "" && audience != "" {
 		if headerName == "" {
 			headerName = "Authorization"
 		}
-		provider, err := oidc.NewProvider(context.Background(), issuer)
+		provider, err := oidc.NewProvider(ctx, issuer)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		globalValidator = &OIDCValidator{
+		auth.validator = &oidcValidator{
 			verifier:      provider.Verifier(&oidc.Config{ClientID: audience}),
 			headerName:    headerName,
 			adminMatchers: adminMatchers,
@@ -53,7 +70,7 @@ func initAuth() error {
 	if rconPassword != "" {
 		methods = append(methods, "rcon_password")
 	}
-	if globalValidator != nil {
+	if auth.validator != nil {
 		if len(adminMatchers) > 0 {
 			methods = append(methods, "IdP (admin_id)")
 		} else {
@@ -66,7 +83,37 @@ func initAuth() error {
 		infof("Admin access enabled via: %s", strings.Join(methods, ", "))
 	}
 
-	return nil
+	return auth, nil
+}
+
+// RconPassword returns the configured rcon password (may be empty).
+func (a *Auth) rconPasswordValue() string {
+	if a == nil {
+		return ""
+	}
+	return a.rconPassword
+}
+
+// IsAdmin checks whether the HTTP request carries valid admin credentials.
+func (a *Auth) IsAdmin(r *http.Request) bool {
+	if a == nil {
+		return false
+	}
+	k := requestKey(r)
+
+	// Static shared secret token.
+	if a.rconPassword != "" && k != "" {
+		expected := deriveRconTokenFromPassword(a.rconPassword)
+		if subtle.ConstantTimeCompare([]byte(k), []byte(expected)) == 1 {
+			return true
+		}
+	}
+
+	// OIDC JWT.
+	if a.validator != nil {
+		return a.validator.check(r, a.debugf)
+	}
+	return false
 }
 
 // requestKey extracts a credential from ?token= query param or Authorization header.
@@ -81,29 +128,12 @@ func requestKey(r *http.Request) string {
 	return strings.TrimSpace(h)
 }
 
-func IsAdmin(r *http.Request) bool {
-	k := requestKey(r)
-
-	// Static shared secret token.
-	if rconPassword != "" && k != "" {
-		expected := deriveRconTokenFromPassword(rconPassword)
-		if subtle.ConstantTimeCompare([]byte(k), []byte(expected)) == 1 {
-			return true
-		}
-	}
-
-	// OIDC JWT.
-	if globalValidator != nil {
-		return globalValidator.check(r)
-	}
-	return false
-}
-
+// deriveRconTokenFromPassword derives the connection token from the rcon password.
 func deriveRconTokenFromPassword(password string) string {
 	return base64.StdEncoding.EncodeToString([]byte(password))
 }
 
-func (v *OIDCValidator) check(r *http.Request) bool {
+func (v *oidcValidator) check(r *http.Request, debugf func(string, ...any)) bool {
 	raw := r.Header.Get(v.headerName)
 	if strings.EqualFold(v.headerName, "Authorization") && len(raw) > 7 && strings.EqualFold(raw[:7], "Bearer ") {
 		raw = strings.TrimSpace(raw[7:])

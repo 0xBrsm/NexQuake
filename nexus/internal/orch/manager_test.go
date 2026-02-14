@@ -1,4 +1,4 @@
-package main
+package orch
 
 import (
 	"os"
@@ -37,11 +37,11 @@ func TestParsePortConsoleLine(t *testing.T) {
 }
 
 func TestUpdatePort_AssignsResolvedPortBucket(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir())
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 
 	rec := m.RegisterServerLaunch(serverLaunch{})
 
-	m.updatePort(rec, 26001)
+	m.UpdatePort(rec, 26001)
 
 	if rec.resolvedPort != 26001 {
 		t.Fatalf("expected resolved port updated to 26001, got %d", rec.resolvedPort)
@@ -59,18 +59,18 @@ func TestUpdatePort_AssignsResolvedPortBucket(t *testing.T) {
 }
 
 func TestUpdateSearchPath_FinalizesSpecWhenPortKnown(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir())
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 
 	rec := &serverRecord{
-		launch:            serverLaunch{slot: 3},
+		Launch:            serverLaunch{Slot: 3},
 		resolvedPortKnown: true,
 		resolvedPort:      26001,
-		running: &managedServer{
+		Running: &managedServer{
 			spec: serverSpec{},
 		},
 	}
 
-	m.updateSearchPath(rec, []string{"ctf", "id1"})
+	m.UpdateSearchPath(rec, []string{"ctf", "id1"})
 
 	if rec.spec == nil {
 		t.Fatalf("expected resolved spec after port and search path are known")
@@ -84,21 +84,21 @@ func TestUpdateSearchPath_FinalizesSpecWhenPortKnown(t *testing.T) {
 	if !slices.Equal(rec.spec.SearchPath, []string{"ctf", "id1"}) {
 		t.Fatalf("expected resolved search path [ctf id1], got %v", rec.spec.SearchPath)
 	}
-	if !slices.Equal(rec.running.spec.SearchPath, []string{"ctf", "id1"}) {
-		t.Fatalf("expected running search path [ctf id1], got %v", rec.running.spec.SearchPath)
+	if !slices.Equal(rec.Running.spec.SearchPath, []string{"ctf", "id1"}) {
+		t.Fatalf("expected running search path [ctf id1], got %v", rec.Running.spec.SearchPath)
 	}
 }
 
 func TestUpdateSearchPath_DedupesConsolePathEntries(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir())
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 
 	rec := &serverRecord{
-		launch:            serverLaunch{slot: 7},
+		Launch:            serverLaunch{Slot: 7},
 		resolvedPortKnown: true,
 		resolvedPort:      26007,
 	}
 
-	m.updateSearchPath(rec, []string{"arena", "arena", "id1", "id1", "id1"})
+	m.UpdateSearchPath(rec, []string{"arena", "arena", "id1", "id1", "id1"})
 
 	want := []string{"arena", "id1"}
 	if !slices.Equal(rec.resolvedSearchPath, want) {
@@ -110,15 +110,15 @@ func TestUpdateSearchPath_DedupesConsolePathEntries(t *testing.T) {
 }
 
 func TestUpdateSearchPath_IgnoresPathFragmentsAndPakNames(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir())
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 
 	rec := &serverRecord{
-		launch:            serverLaunch{slot: 8},
+		Launch:            serverLaunch{Slot: 8},
 		resolvedPortKnown: true,
 		resolvedPort:      26008,
 	}
 
-	m.updateSearchPath(rec, []string{"arena", "arena/pak0.pak", "/tmp/id1", "id1"})
+	m.UpdateSearchPath(rec, []string{"arena", "arena/pak0.pak", "/tmp/id1", "id1"})
 
 	want := []string{"arena", "id1"}
 	if !slices.Equal(rec.resolvedSearchPath, want) {
@@ -130,7 +130,7 @@ func TestUpdateSearchPath_IgnoresPathFragmentsAndPakNames(t *testing.T) {
 }
 
 func TestLaunchServer_RegistersNewEntry(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir())
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 	m.runtimeBasedir = t.TempDir()
 
 	if err := m.LaunchServer("definitely-not-a-real-binary", []string{"-dedicated"}); err == nil {
@@ -150,15 +150,15 @@ func TestLaunchServer_RegistersNewEntry(t *testing.T) {
 }
 
 func TestRemoveServer_RemovesStoppedRecordAndPortIndex(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir())
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 
-	recA := m.RegisterServerLaunch(serverLaunch{slot: 0})
-	m.updatePort(recA, 26001)
-	m.updateSearchPath(recA, []string{"id1"})
+	recA := m.RegisterServerLaunch(serverLaunch{Slot: 0})
+	m.UpdatePort(recA, 26001)
+	m.UpdateSearchPath(recA, []string{"id1"})
 
-	recB := m.RegisterServerLaunch(serverLaunch{slot: 1})
-	m.updatePort(recB, 26002)
-	m.updateSearchPath(recB, []string{"ctf", "id1"})
+	recB := m.RegisterServerLaunch(serverLaunch{Slot: 1})
+	m.UpdatePort(recB, 26002)
+	m.UpdateSearchPath(recB, []string{"ctf", "id1"})
 
 	if err := m.RemoveServer(26001); err != nil {
 		t.Fatalf("RemoveServer(port) error = %v", err)
@@ -179,15 +179,15 @@ func TestRemoveServer_RemovesStoppedRecordAndPortIndex(t *testing.T) {
 }
 
 func TestRemoveServer_RunningServerMustBeStoppedFirst(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir())
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 
 	process, err := os.FindProcess(os.Getpid())
 	if err != nil {
 		t.Fatalf("FindProcess(self): %v", err)
 	}
 
-	rec := m.RegisterServerLaunch(serverLaunch{slot: 0})
-	rec.running = &managedServer{cmd: &exec.Cmd{Process: process}}
+	rec := m.RegisterServerLaunch(serverLaunch{Slot: 0})
+	rec.Running = &managedServer{Cmd: &exec.Cmd{Process: process}}
 
 	err = m.RemoveServer(1)
 	if err == nil {
@@ -202,44 +202,44 @@ func TestRemoveServer_RunningServerMustBeStoppedFirst(t *testing.T) {
 }
 
 func TestServerConsoleLabel_UsesHostnameAndSlot(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir())
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 	rec := &serverRecord{
 		id:       7,
-		launch:   serverLaunch{slot: 3},
-		hostname: "fragfest",
+		Launch:   serverLaunch{Slot: 3},
+		Hostname: "fragfest",
 	}
 
 	got := m.serverConsoleLabel(rec)
-	if got != "fragfest-3" {
-		t.Fatalf("expected label fragfest-3, got %q", got)
+	if got != "4-fragfest" {
+		t.Fatalf("expected label 4-fragfest, got %q", got)
 	}
 }
 
 func TestServerConsoleLabel_FallbacksWhenHostnameMissing(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir())
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 	rec := &serverRecord{
 		id:     5,
-		launch: serverLaunch{slot: -1},
+		Launch: serverLaunch{Slot: -1},
 	}
 
 	got := m.serverConsoleLabel(rec)
-	if got != "server-5" {
-		t.Fatalf("expected fallback label server-5, got %q", got)
+	if got != "6-server" {
+		t.Fatalf("expected fallback label 6-server, got %q", got)
 	}
 }
 
 func TestFormatServerConsoleRelayLine_PrefixesAndTrims(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir())
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 	rec := &serverRecord{
-		launch:   serverLaunch{slot: 2},
-		hostname: "quake-a",
+		Launch:   serverLaunch{Slot: 2},
+		Hostname: "quake-a",
 	}
 
 	got, ok := m.formatServerConsoleRelayLine(rec, "hello from server\r\n")
 	if !ok {
 		t.Fatalf("expected formatted console line")
 	}
-	if got != "[quake-a-2] hello from server" {
+	if got != "[3-quake-a] hello from server" {
 		t.Fatalf("expected prefixed relay line, got %q", got)
 	}
 
@@ -249,10 +249,10 @@ func TestFormatServerConsoleRelayLine_PrefixesAndTrims(t *testing.T) {
 }
 
 func TestFormatServerConsoleRelayLine_FiltersFindAndPackNoise(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir())
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 	rec := &serverRecord{
-		launch:   serverLaunch{slot: 1},
-		hostname: "quake-b",
+		Launch:   serverLaunch{Slot: 1},
+		Hostname: "quake-b",
 	}
 
 	if _, ok := m.formatServerConsoleRelayLine(rec, "PackFile: id1/pak0.pak : maps/e1m1.bsp\n"); ok {
@@ -261,25 +261,28 @@ func TestFormatServerConsoleRelayLine_FiltersFindAndPackNoise(t *testing.T) {
 	if _, ok := m.formatServerConsoleRelayLine(rec, "FindFile: maps/e1m1.bsp\n"); ok {
 		t.Fatalf("expected successful FindFile line to be filtered")
 	}
+	if _, ok := m.formatServerConsoleRelayLine(rec, "FindFile: can't find maps/e1m1.ent\n"); ok {
+		t.Fatalf("expected missing .ent FindFile line to be filtered")
+	}
 
 	got, ok := m.formatServerConsoleRelayLine(rec, "FindFile: can't find progs.dat\n")
 	if !ok {
 		t.Fatalf("expected FindFile miss to be retained")
 	}
-	if got != "[quake-b-1] FindFile: can't find progs.dat" {
+	if got != "[2-quake-b] FindFile: can't find progs.dat" {
 		t.Fatalf("expected retained FindFile miss with prefix, got %q", got)
 	}
 }
 
 func TestServerConsoleRelayEnabled_GatedUntilFirstServerInfo(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir())
-	rec := m.RegisterServerLaunch(serverLaunch{slot: 2})
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	rec := m.RegisterServerLaunch(serverLaunch{Slot: 2})
 
 	console := newServerConsole(nil)
-	srv := &managedServer{console: console}
+	srv := &managedServer{Console: console}
 
 	m.mu.Lock()
-	rec.running = srv
+	rec.Running = srv
 	rec.awaitingServerInfo = true
 	rec.relayConsoleReady = false
 	m.mu.Unlock()
@@ -288,7 +291,7 @@ func TestServerConsoleRelayEnabled_GatedUntilFirstServerInfo(t *testing.T) {
 		t.Fatalf("expected relay to stay disabled before first CCREP")
 	}
 
-	m.updatePort(rec, 26002)
+	m.UpdatePort(rec, 26002)
 	m.updateGameState(26002, "fragfest", "dm6", 1, 8)
 
 	m.mu.RLock()
@@ -302,8 +305,8 @@ func TestServerConsoleRelayEnabled_GatedUntilFirstServerInfo(t *testing.T) {
 }
 
 func TestUpdateServerState_FirstServerInfoWritesOnlineEchoCommand(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir())
-	rec := m.RegisterServerLaunch(serverLaunch{slot: 6})
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	rec := m.RegisterServerLaunch(serverLaunch{Slot: 6})
 
 	ptyRead, ptyWrite, err := os.Pipe()
 	if err != nil {
@@ -315,15 +318,15 @@ func TestUpdateServerState_FirstServerInfoWritesOnlineEchoCommand(t *testing.T) 
 	})
 
 	console := newServerConsole(ptyWrite)
-	srv := &managedServer{console: console}
+	srv := &managedServer{Console: console}
 
 	m.mu.Lock()
-	rec.running = srv
+	rec.Running = srv
 	rec.awaitingServerInfo = true
 	rec.relayConsoleReady = false
 	m.mu.Unlock()
 
-	m.updatePort(rec, 26006)
+	m.UpdatePort(rec, 26006)
 	m.updateGameState(26006, "fragfest", "e1m1", 0, 8)
 
 	buf := make([]byte, 256)
@@ -345,10 +348,10 @@ func TestBuildServerSnapshot_UsesServerInfoReadinessForState(t *testing.T) {
 	}
 
 	rec := &serverRecord{
-		launch:             serverLaunch{slot: 0},
+		Launch:             serverLaunch{Slot: 0},
 		awaitingServerInfo: true,
-		running: &managedServer{
-			cmd: &exec.Cmd{Process: process},
+		Running: &managedServer{
+			Cmd: &exec.Cmd{Process: process},
 		},
 	}
 
@@ -365,12 +368,12 @@ func TestBuildServerSnapshot_UsesServerInfoReadinessForState(t *testing.T) {
 }
 
 func TestMonitorServerStartupTimeout_MarksTimedOutWhenStillStarting(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir())
-	rec := m.RegisterServerLaunch(serverLaunch{slot: 4})
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	rec := m.RegisterServerLaunch(serverLaunch{Slot: 4})
 	srv := &managedServer{}
 
 	m.mu.Lock()
-	rec.running = srv
+	rec.Running = srv
 	rec.awaitingServerInfo = true
 	rec.startupTimedOutOnce = false
 	m.mu.Unlock()
@@ -385,12 +388,12 @@ func TestMonitorServerStartupTimeout_MarksTimedOutWhenStillStarting(t *testing.T
 }
 
 func TestMonitorServerStartupTimeout_IgnoresAlreadyOnlineServer(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir())
-	rec := m.RegisterServerLaunch(serverLaunch{slot: 5})
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	rec := m.RegisterServerLaunch(serverLaunch{Slot: 5})
 	srv := &managedServer{}
 
 	m.mu.Lock()
-	rec.running = srv
+	rec.Running = srv
 	rec.awaitingServerInfo = false
 	rec.startupTimedOutOnce = false
 	m.mu.Unlock()

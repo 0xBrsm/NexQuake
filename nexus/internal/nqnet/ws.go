@@ -1,0 +1,60 @@
+package nqnet
+
+import (
+	"net/http"
+	"time"
+
+	"github.com/gorilla/websocket"
+)
+
+// Upgrader is the WebSocket upgrader shared by all connections.
+var Upgrader = websocket.Upgrader{
+	HandshakeTimeout:  10 * time.Second,
+	ReadBufferSize:    4096,
+	WriteBufferSize:   4096,
+	Subprotocols:      []string{"binary"},
+	CheckOrigin:       func(r *http.Request) bool { return true },
+	EnableCompression: false,
+}
+
+// wsReadLoop reads WebSocket messages and dispatches them.
+func (r *Router) wsReadLoop() {
+	for {
+		messageType, data, err := r.ws.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				r.debugf("WebSocket read error: %v", err)
+			}
+			r.Close()
+			return
+		}
+
+		if messageType != websocket.BinaryMessage {
+			r.debugf("Unexpected message type: %d", messageType)
+			continue
+		}
+
+		r.handleWSFrame(data)
+	}
+}
+
+// wsWriteLoop writes queued frames to the WebSocket.
+func (r *Router) wsWriteLoop() {
+	for {
+		select {
+		case <-r.ctx.Done():
+			return
+		case packet := <-r.wsTx:
+			if len(packet) == 0 || r.ctx.Err() != nil {
+				continue
+			}
+			if err := r.ws.WriteMessage(websocket.BinaryMessage, packet); err != nil {
+				if r.ctx.Err() == nil {
+					r.debugf("WebSocket write error: %v", err)
+				}
+				r.Close()
+				return
+			}
+		}
+	}
+}

@@ -1,4 +1,4 @@
-package main
+package gamedata
 
 import (
 	"cmp"
@@ -17,15 +17,19 @@ import (
 	"strings"
 )
 
-type VFSManifestEntry struct {
+// vfsManifestEntry describes a single file in the virtual file system manifest.
+type vfsManifestEntry struct {
 	Path string `json:"path"`
 	URL  string `json:"url"`
 	Size int64  `json:"size,omitempty"`
 }
 
+// headerVFSPrefetchConcurrency is the HTTP header name for VFS prefetch concurrency.
 const headerVFSPrefetchConcurrency = "X-NQ-VFS-Prefetch-Concurrency"
 
-func newDataManifestHandler(dataDir string, mgr *ServerManager, pakCache *pakIndexCache, prefetchConcurrency int) http.HandlerFunc {
+// NewDataManifestHandler returns an HTTP handler that serves VFS manifests.
+// resolveGameDirs maps a requested game directory to its ordered search path.
+func NewDataManifestHandler(dataDir string, resolveGameDirs func(string) []string, pakCache *PakIndexCache, prefetchConcurrency int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -43,7 +47,7 @@ func newDataManifestHandler(dataDir string, mgr *ServerManager, pakCache *pakInd
 			return
 		}
 
-		manifest, err := buildVFSManifest(dataDir, resolveManifestGameDirs(mgr, gameDir), pakCache)
+		manifest, err := buildVFSManifest(dataDir, resolveGameDirs(gameDir), pakCache)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -59,58 +63,13 @@ func newDataManifestHandler(dataDir string, mgr *ServerManager, pakCache *pakInd
 	}
 }
 
-func resolveManifestGameDirs(mgr *ServerManager, gameDir string) []string {
-	gameDir = strings.TrimSpace(gameDir)
-	if gameDir == "" {
-		return nil
-	}
-
-	// Always include the requested gamedir so GAMENAME can boot even when no
-	// running server currently has it as the active search-path head.
-	resolved := []string{gameDir}
-	seen := map[string]struct{}{gameDir: {}}
-	if mgr == nil {
-		return resolved
-	}
-
-	mgr.mu.RLock()
-	defer mgr.mu.RUnlock()
-
-	ids := make([]int, 0, len(mgr.serversByID))
-	for id := range mgr.serversByID {
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
-
-	for _, id := range ids {
-		rec := mgr.serversByID[id]
-		if rec.spec == nil {
-			continue
-		}
-		idx := slices.Index(rec.spec.SearchPath, gameDir)
-		if idx < 0 {
-			continue
-		}
-		for _, fallback := range rec.spec.SearchPath[idx+1:] {
-			fallback = strings.TrimSpace(fallback)
-			if fallback == "" {
-				continue
-			}
-			if _, ok := seen[fallback]; ok {
-				continue
-			}
-			seen[fallback] = struct{}{}
-			resolved = append(resolved, fallback)
-		}
-	}
-	return resolved
-}
-
-func buildVFSManifest(dataDir string, gameDirs []string, pakCache *pakIndexCache) ([]VFSManifestEntry, error) {
+// buildVFSManifest produces a sorted manifest of all files available for the
+// given ordered list of game directories.
+func buildVFSManifest(dataDir string, gameDirs []string, pakCache *PakIndexCache) ([]vfsManifestEntry, error) {
 	layers := []string{"common", "client"}
 
 	// Later layers overwrite earlier ones.
-	byKey := make(map[string]VFSManifestEntry)
+	byKey := make(map[string]vfsManifestEntry)
 
 	// path output is ordered highest priority -> lowest priority.
 	for i := len(gameDirs) - 1; i >= 0; i-- {
@@ -122,17 +81,17 @@ func buildVFSManifest(dataDir string, gameDirs []string, pakCache *pakIndexCache
 		}
 	}
 
-	out := make([]VFSManifestEntry, 0, len(byKey))
+	out := make([]vfsManifestEntry, 0, len(byKey))
 	for _, v := range byKey {
 		out = append(out, v)
 	}
-	slices.SortFunc(out, func(a, b VFSManifestEntry) int { return cmp.Compare(a.Path, b.Path) })
+	slices.SortFunc(out, func(a, b vfsManifestEntry) int { return cmp.Compare(a.Path, b.Path) })
 	return out, nil
 }
 
 var pakNumberRE = regexp.MustCompile(`(?i)^pak(\d+)\.pak$`)
 
-func overlayLayerIntoManifest(byKey map[string]VFSManifestEntry, dataDir, mod, layer string, pakCache *pakIndexCache) error {
+func overlayLayerIntoManifest(byKey map[string]vfsManifestEntry, dataDir, mod, layer string, pakCache *PakIndexCache) error {
 	root := filepath.Join(dataDir, mod, layer)
 	st, err := os.Stat(root)
 	if err != nil || !st.IsDir() {
@@ -195,7 +154,7 @@ func overlayLayerIntoManifest(byKey map[string]VFSManifestEntry, dataDir, mod, l
 			size = info.Size()
 		}
 
-		byKey[key] = VFSManifestEntry{
+		byKey[key] = vfsManifestEntry{
 			Path: key,
 			URL:  "/data/" + escapeURLPathPreserveSlashes(filepath.ToSlash(filepath.Join(mod, layer, rel))),
 			Size: size,
@@ -256,9 +215,9 @@ func pakSortKey(name string) pakKey {
 	return pakKey{group: 1, name: lower}
 }
 
-func explodePakIntoManifest(byKey map[string]VFSManifestEntry, mod, layer, pakPath, pakRel string, pakCache *pakIndexCache) error {
+func explodePakIntoManifest(byKey map[string]vfsManifestEntry, mod, layer, pakPath, pakRel string, pakCache *PakIndexCache) error {
 	if pakCache == nil {
-		pakCache = newPakIndexCache()
+		pakCache = NewPakIndexCache()
 	}
 	idx, err := pakCache.Get(pakPath)
 	if err != nil {
@@ -271,7 +230,7 @@ func explodePakIntoManifest(byKey map[string]VFSManifestEntry, mod, layer, pakPa
 		if key == "" {
 			continue
 		}
-		byKey[key] = VFSManifestEntry{
+		byKey[key] = vfsManifestEntry{
 			Path: key,
 			URL:  "/pak-extract/" + escapeURLPathPreserveSlashes(mod) + "/" + escapeURLPathPreserveSlashes(layer) + "/" + escapeURLPathPreserveSlashes(pakRel) + "/" + escapeURLPathPreserveSlashes(entry.Name),
 			Size: entry.Size,
@@ -280,6 +239,7 @@ func explodePakIntoManifest(byKey map[string]VFSManifestEntry, mod, layer, pakPa
 	return nil
 }
 
+// normalizeVFSKey cleans and lowercases a VFS path.
 func normalizeVFSKey(p string) string {
 	clean, err := cleanVFSPath(p)
 	if err != nil {
@@ -288,6 +248,7 @@ func normalizeVFSKey(p string) string {
 	return strings.ToLower(clean)
 }
 
+// cleanVFSPath validates and cleans a VFS path, rejecting traversals and absolute paths.
 func cleanVFSPath(p string) (string, error) {
 	p = strings.TrimSpace(p)
 	if p == "" {
@@ -318,7 +279,9 @@ func escapeURLPathPreserveSlashes(p string) string {
 
 // ---- Server runtime filesystem layout ----
 
-func listMods(dataDir string) ([]string, error) {
+// ListMods returns the game directory names found under dataDir that contain
+// at least one layer directory (common, client, or server).
+func ListMods(dataDir string) ([]string, error) {
 	ents, err := os.ReadDir(dataDir)
 	if err != nil {
 		return nil, fmt.Errorf("read DATA_DIR: %w", err)
@@ -373,11 +336,9 @@ func dirHasAnyLayer(modDir string) bool {
 	return false
 }
 
-func prepareRuntimeBasedir(sourceDataDir string, mods []string) (string, error) {
-	// The data dir is typically bind-mounted read-only. nqserver expects a writable basedir
-	// containing per-mod directories; create an ephemeral overlay basedir and
-	// populate it with symlinks into DATA_DIR (and allow the server to write
-	// transient files alongside).
+// PrepareRuntimeBasedir creates an ephemeral overlay basedir with symlinks into
+// sourceDataDir for each mod. The returned directory is writable for the server.
+func PrepareRuntimeBasedir(sourceDataDir string, mods []string) (string, error) {
 	runtimeRoot, err := os.MkdirTemp("", "nexquake-nexus-basedir-")
 	if err != nil {
 		return "", fmt.Errorf("create runtime basedir: %w", err)
