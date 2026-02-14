@@ -66,7 +66,8 @@ func main() {
 		logArtifactFingerprints(cfg)
 	}
 
-	// Default QUICKSTART is "minimal"; missing manifest is a no-op.
+	// Default QUICKSTART is "minimal"; supports CSV (e.g. "ctf,arena,tf").
+	// Missing manifests are silently skipped.
 	if err := gamedata.BootstrapGameData(runCtx, cfg.dataDir, infof); err != nil {
 		fatalf("Game data bootstrap failed: %v", err)
 	}

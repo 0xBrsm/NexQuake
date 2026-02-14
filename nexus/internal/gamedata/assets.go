@@ -210,27 +210,57 @@ func copyToFile(path string, r io.Reader) error {
 }
 
 func loadGameDataEntries(dataDir string) ([]gameDataEntry, string, error) {
-	quickstart := strings.TrimSpace(os.Getenv("QUICKSTART"))
-	if quickstart == "" {
-		quickstart = "minimal"
-	}
-	if strings.Contains(quickstart, "..") || strings.ContainsAny(quickstart, `/\`) {
-		return nil, "env:QUICKSTART", fmt.Errorf("invalid QUICKSTART: %q", quickstart)
+	raw := strings.TrimSpace(os.Getenv("QUICKSTART"))
+	if raw == "" {
+		raw = "minimal"
 	}
 
-	path := filepath.Join(dataDir, quickstart+".json")
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, path, nil
+	names := splitCSV(raw)
+
+	var allEntries []gameDataEntry
+	var sources []string
+
+	for _, name := range names {
+		if strings.Contains(name, "..") || strings.ContainsAny(name, `/\`) {
+			return nil, "env:QUICKSTART", fmt.Errorf("invalid QUICKSTART name: %q", name)
 		}
-		return nil, path, fmt.Errorf("read config: %w", err)
+
+		path := filepath.Join(dataDir, name+".json")
+		b, err := os.ReadFile(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				// For single-value QUICKSTART, missing manifest is a silent no-op
+				// (preserves backward compatibility). For multi-value, skip silently
+				// so partial manifests still work.
+				if len(names) == 1 {
+					return nil, path, nil
+				}
+				continue
+			}
+			return nil, path, fmt.Errorf("read config %q: %w", name, err)
+		}
+		var entries []gameDataEntry
+		if err := json.Unmarshal(b, &entries); err != nil {
+			return nil, path, fmt.Errorf("parse config %q: %w", name, err)
+		}
+		allEntries = append(allEntries, entries...)
+		sources = append(sources, path)
 	}
-	var entries []gameDataEntry
-	if err := json.Unmarshal(b, &entries); err != nil {
-		return nil, path, fmt.Errorf("parse config: %w", err)
+
+	src := strings.Join(sources, ", ")
+	return allEntries, src, nil
+}
+
+// splitCSV splits a comma-separated string into trimmed, non-empty parts.
+func splitCSV(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
 	}
-	return entries, path, nil
+	return out
 }
 
 func downloadToTemp(ctx context.Context, urlStr string) (string, func(), error) {

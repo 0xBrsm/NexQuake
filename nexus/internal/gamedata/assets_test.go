@@ -161,3 +161,112 @@ func TestExtractZipGeneric_KeepsPathsWhenMultipleRoots(t *testing.T) {
 		t.Fatalf("missing ctf/pak0.pak")
 	}
 }
+
+func TestSplitCSV(t *testing.T) {
+	tests := []struct {
+		input string
+		want  []string
+	}{
+		{"minimal", []string{"minimal"}},
+		{"ctf,arena,tf", []string{"ctf", "arena", "tf"}},
+		{" ctf , arena , tf ", []string{"ctf", "arena", "tf"}},
+		{"ctf,,arena", []string{"ctf", "arena"}},
+		{"", nil},
+		{",,,", nil},
+		{"single", []string{"single"}},
+	}
+	for _, tt := range tests {
+		got := splitCSV(tt.input)
+		if len(got) != len(tt.want) {
+			t.Errorf("splitCSV(%q) = %v, want %v", tt.input, got, tt.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("splitCSV(%q)[%d] = %q, want %q", tt.input, i, got[i], tt.want[i])
+			}
+		}
+	}
+}
+
+func TestLoadGameDataEntries_CSV(t *testing.T) {
+	dataDir := t.TempDir()
+
+	// Create two manifest files.
+	m1 := `[{"game":"ctf","common":["file:///fake/ctf.zip"]}]`
+	m2 := `[{"game":"arena","server":["file:///fake/arena.zip"]}]`
+	if err := os.WriteFile(filepath.Join(dataDir, "ctf.json"), []byte(m1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "arena.json"), []byte(m2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("QUICKSTART", "ctf,arena")
+
+	entries, src, err := loadGameDataEntries(dataDir)
+	if err != nil {
+		t.Fatalf("loadGameDataEntries: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+	if entries[0].Game != "ctf" {
+		t.Errorf("entries[0].Game = %q, want %q", entries[0].Game, "ctf")
+	}
+	if entries[1].Game != "arena" {
+		t.Errorf("entries[1].Game = %q, want %q", entries[1].Game, "arena")
+	}
+	if !strings.Contains(src, "ctf.json") || !strings.Contains(src, "arena.json") {
+		t.Errorf("source string missing manifest paths: %q", src)
+	}
+}
+
+func TestLoadGameDataEntries_CSV_SkipsMissing(t *testing.T) {
+	dataDir := t.TempDir()
+
+	// Only create one of the two manifests.
+	m1 := `[{"game":"ctf","common":["file:///fake/ctf.zip"]}]`
+	if err := os.WriteFile(filepath.Join(dataDir, "ctf.json"), []byte(m1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("QUICKSTART", "ctf,nonexistent")
+
+	entries, _, err := loadGameDataEntries(dataDir)
+	if err != nil {
+		t.Fatalf("loadGameDataEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry (missing skipped), got %d", len(entries))
+	}
+	if entries[0].Game != "ctf" {
+		t.Errorf("entries[0].Game = %q, want %q", entries[0].Game, "ctf")
+	}
+}
+
+func TestLoadGameDataEntries_SingleMissingIsNoOp(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("QUICKSTART", "nonexistent")
+
+	entries, _, err := loadGameDataEntries(dataDir)
+	if err != nil {
+		t.Fatalf("loadGameDataEntries: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("single missing manifest should return 0 entries, got %d", len(entries))
+	}
+}
+
+func TestLoadGameDataEntries_InvalidName(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("QUICKSTART", "ctf,../escape")
+
+	_, _, err := loadGameDataEntries(dataDir)
+	if err == nil {
+		t.Fatal("expected error for path-traversal name, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid QUICKSTART name") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
