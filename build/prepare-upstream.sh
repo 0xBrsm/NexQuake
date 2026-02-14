@@ -105,7 +105,7 @@ if [[ "${kind}" == "client" ]]; then
   echo "Applying client (WASM) overlays + patches ..."
   cp "${ROOT}/client/net_bsd.c" "${ROOT}/client/net_ws_transport.c" "${ROOT}/client/net_ws_vnet.c" "${ROOT}/client/cmd_rcon.c" "${ROOT}/client/net_ws_transport.h" "${ROOT}/client/net_ws_vnet.h" "${OUT_DIR}/"
   cp "${ROOT}/client/sys_wasm.c" "${ROOT}/client/vid_wasm.c" "${ROOT}/client/snd_wasm.c" "${OUT_DIR}/"
-  cp "${ROOT}/client/Makefile.emscripten" "${ROOT}/client/shell.html" "${OUT_DIR}/"
+  cp "${ROOT}/client/Makefile.emscripten" "${ROOT}/client/shell.html" "${ROOT}/../VERSION" "${OUT_DIR}/"
 
   apply_patch "${ROOT}/client/net.h.patch"
   apply_patch "${ROOT}/client/common.h.patch"
@@ -125,6 +125,9 @@ if [[ "${kind}" == "client" ]]; then
 
   client_gamename_escaped="$(printf '%s' "${client_gamename}" | sed -e 's/[\/&]/\\&/g')"
   sed -i "s/__NEXQUAKE_GAMENAME__/${client_gamename_escaped}/g" "${OUT_DIR}/shell.html"
+
+  client_version="$(cat "${OUT_DIR}/VERSION" 2>/dev/null || echo "unknown")"
+  sed -i "s/__NEXQUAKE_VERSION__/${client_version}/g" "${OUT_DIR}/shell.html"
 
   mkdir -p "${OUT_DIR}/${client_gamename}"
 fi

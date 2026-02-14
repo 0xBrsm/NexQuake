@@ -202,7 +202,7 @@ int main(int c, char **v) {
 	parms.cachedir = NULL;
 
 	Host_Init(&parms);
-	Con_Printf("NexQuake WebAssembly -- Version %s\n", NEXQUAKE_VERSION);
+	Con_Printf("NexQuake WebAssembly v%s\n", NEXQUAKE_VERSION);
 	oldtime = Sys_FloatTime() - 0.1;
 	restore_busy = true;
 #ifdef WASM_BENCHMARK

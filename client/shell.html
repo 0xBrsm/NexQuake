@@ -37,55 +37,406 @@
         outline: none;
       }
 
-      .spinner {
-        height: 50px;
-        width: 50px;
-        margin: 0px auto;
-        animation: rotation 0.8s linear infinite;
-        border-left: 10px solid rgb(96,96,96);
-        border-right: 10px solid rgb(96,96,96);
-        border-bottom: 10px solid rgb(96,96,96);
-        border-top: 10px solid rgb(255,255,255);
-        border-radius: 100%;
-        background-color: rgb(32,32,32);
+      /* NexQuake Loading Screen */
+      #nq-loader {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(180deg, #0a0a0a 0%, #1a1410 50%, #0a0a0a 100%);
+        z-index: 9000;
       }
-      @keyframes rotation {
-        from {transform: rotate(0deg);}
-        to {transform: rotate(360deg);}
+      #nq-loader.hidden { display: none; }
+      #nq-loader-logo {
+        font-family: 'Courier New', monospace;
+        font-size: 42px;
+        font-weight: bold;
+        letter-spacing: 2px;
+        margin-bottom: 8px;
+        text-shadow: 0 0 20px rgba(200, 112, 32, 0.4);
+      }
+      #nq-loader-logo .nex { color: #f0a830; }
+      #nq-loader-logo .quake { color: #888; }
+      #nq-loader-sub {
+        font-family: monospace;
+        font-size: 11px;
+        color: #555;
+        letter-spacing: 3px;
+        text-transform: uppercase;
+        margin-bottom: 40px;
+      }
+      #nq-loader-ring {
+        width: 64px;
+        height: 64px;
+        position: relative;
+      }
+      #nq-loader-ring::before, #nq-loader-ring::after {
+        content: '';
+        position: absolute;
+        border-radius: 50%;
+      }
+      #nq-loader-ring::before {
+        top: 0; left: 0; right: 0; bottom: 0;
+        border: 2px solid #333;
+      }
+      #nq-loader-ring::after {
+        top: 0; left: 0; right: 0; bottom: 0;
+        border: 2px solid transparent;
+        border-top-color: #c87020;
+        animation: nq-spin 1s ease-in-out infinite;
+      }
+      @keyframes nq-spin {
+        to { transform: rotate(360deg); }
+      }
+      #nq-loader-status {
+        margin-top: 24px;
+        font-family: monospace;
+        font-size: 12px;
+        color: #666;
+      }
+      #nq-loader-progress {
+        width: 200px;
+        height: 2px;
+        background: #222;
+        margin-top: 12px;
+        overflow: hidden;
+      }
+      #nq-loader-progress-bar {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #c87020, #f0a830);
+        transition: width 0.2s ease;
       }
 
+      /* NexQuake Settings Overlay */
+      #nq-overlay-toggle {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        z-index: 10000;
+        width: 36px;
+        height: 36px;
+        border: none;
+        border-radius: 6px;
+        background: rgba(60, 60, 60, 0.7);
+        color: #ccc;
+        font-size: 20px;
+        cursor: pointer;
+        line-height: 36px;
+        text-align: center;
+        padding: 0;
+        transition: background 0.15s;
+      }
+      #nq-overlay-toggle:hover { background: rgba(80, 80, 80, 0.9); color: #fff; }
+      #nq-overlay-panel {
+        display: none;
+        position: fixed;
+        top: 0; right: 0;
+        width: 340px;
+        height: 100vh;
+        z-index: 9999;
+        background: rgba(20, 20, 20, 0.92);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        color: #ddd;
+        font-family: monospace;
+        font-size: 13px;
+        box-shadow: -2px 0 12px rgba(0,0,0,0.5);
+        box-sizing: border-box;
+      }
+      #nq-overlay-panel.open { display: flex; }
+      #nq-overlay-panel h3 { margin: 0 0 10px; color: #fff; font-size: 14px; border-bottom: 1px solid #444; padding-bottom: 6px; }
+      /* Vertical tabs sidebar - collapses, expands on hover */
+      .nq-tabs-wrap {
+        position: relative;
+        width: 54px;
+        min-width: 54px;
+        flex-shrink: 0;
+        z-index: 1;
+      }
+      .nq-tabs {
+        position: absolute;
+        top: 0; left: 0; bottom: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        width: 54px;
+        background: rgba(10, 10, 10, 0.6);
+        border-right: 1px solid #333;
+        padding: 8px 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        transition: width 0.15s ease;
+      }
+      .nq-tabs:hover {
+        width: auto;
+        min-width: 54px;
+        max-width: 180px;
+        box-shadow: 2px 0 8px rgba(0,0,0,0.4);
+      }
+      .nq-tabs .nq-tab {
+        display: block;
+        width: 100%;
+        padding: 7px 10px;
+        font-size: 11px;
+        font-family: monospace;
+        color: #999;
+        background: none;
+        border: none;
+        border-left: 2px solid transparent;
+        cursor: pointer;
+        text-align: left;
+        transition: color 0.12s, border-color 0.12s, background 0.12s;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .nq-tabs .nq-tab:hover { color: #ddd; background: rgba(60, 60, 60, 0.4); }
+      .nq-tabs .nq-tab.active {
+        color: #f0a830;
+        border-left-color: #c87020;
+        background: rgba(200, 112, 32, 0.1);
+      }
+      /* Main content area */
+      #nq-panel-content {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        padding: 15px;
+      }
+      #nq-vfs-list {
+        list-style: none;
+        padding: 0;
+        margin: 5px 0 0;
+        flex: 1;
+        overflow-y: auto;
+      }
+      #nq-vfs-list li {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 3px 4px;
+        border-bottom: 1px solid #333;
+        word-break: break-all;
+      }
+      #nq-vfs-list li .nq-fname { flex: 1; margin-right: 6px; }
+      #nq-vfs-list li button {
+        background: none;
+        border: none;
+        color: #999;
+        cursor: pointer;
+        padding: 2px 4px;
+        margin-left: 2px;
+        border-radius: 3px;
+        display: flex;
+        align-items: center;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.12s ease;
+      }
+      #nq-vfs-list li:hover button,
+      #nq-vfs-list li:focus-within button {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      #nq-vfs-list li button:hover { color: #fff; background: rgba(120,120,120,0.3); }
+      #nq-vfs-list li button.nq-del:hover { color: #f66; background: rgba(180,60,60,0.2); }
+      #nq-vfs-list li button svg { width: 14px; height: 14px; }
+      .nq-btn {
+        background: rgba(70,70,70,0.7);
+        border: 1px solid #555;
+        color: #ccc;
+        padding: 5px 12px;
+        cursor: pointer;
+        border-radius: 4px;
+        font-size: 12px;
+        font-family: monospace;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .nq-btn:hover { background: rgba(100,100,100,0.8); color: #fff; }
+      .nq-btn:active, #nq-overlay-toggle:active, #nq-vfs-list li button:active {
+        transform: scale(0.95);
+      }
+      .nq-btn svg { width: 14px; height: 14px; }
+      .nq-status { font-size: 11px; color: #888; margin-top: 4px; }
+      /* Panel footer */
+      #nq-panel-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        padding-top: 10px;
+        margin-top: auto;
+        border-top: 1px solid #333;
+      }
+      #nq-branding {
+        font-size: 10px;
+        color: #8c8c8c;
+        letter-spacing: 0.5px;
+      }
+      #nq-branding span { color: #c87020; }
+      #nq-branding em { color: #8c8c8c; }
+      #nq-upload-wrap {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+      }
+      #nq-vfs-upload { align-self: flex-end; }
+      #nq-vfs-status {
+        position: absolute;
+        right: 0;
+        bottom: calc(100% + 6px);
+        margin: 0;
+        padding: 3px 6px;
+        max-width: 220px;
+        border-radius: 4px;
+        background: rgba(0, 0, 0, 0.55);
+        color: #c0c0c0;
+        text-align: right;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        pointer-events: none;
+      }
+      #nq-vfs-status:empty { display: none; }
+      /* Editor overlay - 40% width, right-aligned */
+      #nq-editor {
+        display: none;
+        position: fixed;
+        top: 0; right: 0; bottom: 0;
+        width: 40%;
+        min-width: 420px;
+        max-width: 800px;
+        z-index: 10001;
+        background: rgba(16, 16, 16, 0.96);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        flex-direction: column;
+        padding: 16px;
+        box-sizing: border-box;
+        box-shadow: -4px 0 20px rgba(0,0,0,0.5);
+      }
+      #nq-editor.open { display: flex; }
+      #nq-editor-path {
+        font-size: 13px;
+        color: #f0a830;
+        font-family: monospace;
+        margin-bottom: 8px;
+        flex-shrink: 0;
+      }
+      #nq-editor-text {
+        flex: 1;
+        width: 100%;
+        resize: none;
+        background: rgba(0,0,0,0.5);
+        border: 1px solid #444;
+        color: #ddd;
+        font-family: monospace;
+        font-size: 13px;
+        padding: 10px;
+        box-sizing: border-box;
+        line-height: 1.4;
+        tab-size: 4;
+      }
+      #nq-editor-text:focus { outline: 1px solid #c87020; border-color: #c87020; }
+      #nq-editor-btns {
+        margin-top: 10px;
+        display: flex;
+        gap: 8px;
+        flex-shrink: 0;
+      }
     </style>
   </head>
   <body>
-    <figure style="overflow:visible;" id="spinner"><div class="spinner"></div><center style="margin-top:0.5em"><strong>NexQuake</strong></center></figure>
-    <div class="emscripten" id="status">Downloading...</div>
-    <div class="emscripten">
-      <progress value="0" max="100" id="progress" hidden=1></progress>
+    <!-- NexQuake Loading Screen -->
+    <div id="nq-loader">
+      <div id="nq-loader-logo"><span class="nex">Nex</span><span class="quake">Quake</span></div>
+      <div id="nq-loader-sub">WebAssembly</div>
+      <div id="nq-loader-ring"></div>
+      <div id="nq-loader-status">Initializing...</div>
+      <div id="nq-loader-progress"><div id="nq-loader-progress-bar"></div></div>
     </div>
+    <progress value="0" max="100" id="progress" hidden=1></progress>
     <textarea class="emscripten" id="output" readonly></textarea>
     <canvas class="emscripten" id="canvas" oncontextmenu="event.preventDefault()" tabindex=-1></canvas>
     <a id="exportFile" hidden=1></a>
 
+    <!-- NexQuake Settings Overlay -->
+    <button id="nq-overlay-toggle" title="NexQuake Settings">&#9881;</button>
+    <div id="nq-overlay-panel">
+      <div class="nq-tabs-wrap"><div class="nq-tabs" id="nq-vfs-tabs"></div></div>
+      <div id="nq-panel-content">
+        <h3>Configs &amp; Saves</h3>
+        <ul id="nq-vfs-list"></ul>
+        <div id="nq-panel-footer">
+          <div id="nq-branding"><span>Nex</span>Quake <em>v__NEXQUAKE_VERSION__</em></div>
+          <div id="nq-upload-wrap">
+            <button class="nq-btn" id="nq-vfs-upload"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Upload</button>
+            <input type="file" id="nq-vfs-file" accept=".cfg,.dem,.sav" style="display:none" multiple>
+            <div class="nq-status" id="nq-vfs-status"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Full-window cfg editor -->
+    <div id="nq-editor">
+      <div id="nq-editor-path"></div>
+      <textarea id="nq-editor-text" spellcheck="false"></textarea>
+      <div id="nq-editor-btns">
+        <button class="nq-btn" id="nq-editor-save"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save</button>
+        <button class="nq-btn" id="nq-editor-cancel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Cancel</button>
+      </div>
+    </div>
+
     <script type='text/javascript'>
-      var statusElement = document.getElementById('status');
+      var loaderElement = document.getElementById('nq-loader');
+      var loaderStatusElement = document.getElementById('nq-loader-status');
+      var loaderProgressBar = document.getElementById('nq-loader-progress-bar');
       var progressElement = document.getElementById('progress');
-      var spinnerElement = document.getElementById('spinner');
       var canvasElement = document.getElementById('canvas');
       var outputElement = document.getElementById('output');
       var exportElement = document.getElementById('exportFile');
       var NEXQUAKE_GAMENAME = '__NEXQUAKE_GAMENAME__';
 
+      function nqNormalizeGameName(name) {
+        name = String(name || '').trim();
+        return name || NEXQUAKE_GAMENAME;
+      }
+
+      function nqGetBaseGameName() {
+        return nqNormalizeGameName(Module.nexquakeBaseGameName || NEXQUAKE_GAMENAME);
+      }
+
+      function nqSafeReadDir(path) {
+        try { return FS.readdir(path); } catch (e) { return []; }
+      }
+
+      function nqSafeStat(path) {
+        try { return FS.stat(path); } catch (e) { return null; }
+      }
+
+      function nqSafeMkdirTree(path) {
+        try { FS.mkdirTree(path); } catch (e) {}
+      }
+
+      function nqSafeUnlink(path) {
+        try { FS.unlink(path); } catch (e) {}
+      }
+
+      function nqSafeSyncFS() {
+        try { FS.syncfs(false, function(){}); } catch (e) {}
+      }
+
       var Module = {
         nexquakeBaseGameName: NEXQUAKE_GAMENAME,
         preRun: [function() {
-          function normalizeGameName(name) {
-            name = String(name || '').trim();
-            return name || NEXQUAKE_GAMENAME;
-          }
-
-          function getBaseGameName() {
-            return normalizeGameName(Module.nexquakeBaseGameName || NEXQUAKE_GAMENAME);
-          }
+          var normalizeGameName = nqNormalizeGameName;
+          var getBaseGameName = nqGetBaseGameName;
 
           function ensureGameDir(mod) {
             mod = normalizeGameName(mod);
@@ -108,12 +459,10 @@
           // - avoid overwriting existing local files when installing remote nodes
           // - promote a remote node to a real writable file on first write attempt
           // - recreate a remote node on-demand when a read fails with ENOENT
-          try {
-            if (!Module.nexquakeRemoteFiles) Module.nexquakeRemoteFiles = Object.create(null);
-            if (!Module.nexquakeRemoteURLs) Module.nexquakeRemoteURLs = Object.create(null);
-            if (!Module.nexquakeInstalledManifests) Module.nexquakeInstalledManifests = Object.create(null);
-            Module.nexquakeActiveGame = normalizeGameName(Module.nexquakeActiveGame || getBaseGameName());
-          } catch (e) {}
+          if (!Module.nexquakeRemoteFiles) Module.nexquakeRemoteFiles = Object.create(null);
+          if (!Module.nexquakeRemoteURLs) Module.nexquakeRemoteURLs = Object.create(null);
+          if (!Module.nexquakeInstalledManifests) Module.nexquakeInstalledManifests = Object.create(null);
+          Module.nexquakeActiveGame = normalizeGameName(Module.nexquakeActiveGame || getBaseGameName());
 
           function resolveVFSPath(p) {
             p = String(p || '');
@@ -152,10 +501,9 @@
             node.nqRetryAfterMs = 0;
             node.nqLastLoadError = '';
             // Export a handle so we can prefetch into this node later.
-            if (!Module.nexquakeRemoteFiles) Module.nexquakeRemoteFiles = Object.create(null);
 
-          function ensureLoaded() {
-            if (node.contents) return;
+            function ensureLoaded() {
+              if (node.contents) return;
               if (node.nqRetryAfterMs && Date.now() < node.nqRetryAfterMs) {
                 throw new Error(node.nqLastLoadError || ('remote file fetch throttled for ' + node.url));
               }
@@ -168,14 +516,14 @@
                 try { xhr.overrideMimeType('text/plain; charset=x-user-defined'); } catch (e) {}
                 xhr.send(null);
               } catch (e) {
-                node.nqErrorCount = (node.nqErrorCount || 0) + 1;
+                node.nqErrorCount++;
                 node.nqRetryAfterMs = Date.now() + Math.min(15000, 500 * Math.pow(2, Math.min(node.nqErrorCount, 5)));
                 node.nqLastLoadError = String(e && e.message ? e.message : e);
                 throw e;
               }
 
               if (xhr.status !== 200 && xhr.status !== 0) {
-                node.nqErrorCount = (node.nqErrorCount || 0) + 1;
+                node.nqErrorCount++;
                 node.nqRetryAfterMs = Date.now() + Math.min(15000, 500 * Math.pow(2, Math.min(node.nqErrorCount, 5)));
                 node.nqLastLoadError = 'remote file fetch failed: ' + xhr.status + ' for ' + node.url;
                 throw new Error(node.nqLastLoadError);
@@ -479,22 +827,17 @@
           if (text === Module.setStatus.last.text) return;
           var m = text.match(/([^(]+)\((\d+(\.\d+)?)\/(\d+)\)/);
           var now = Date.now();
-          if (m && now - Module.setStatus.last.time < 30) return; // if this is a progress update, skip it if too soon
+          if (m && now - Module.setStatus.last.time < 30) return;
           Module.setStatus.last.time = now;
           Module.setStatus.last.text = text;
           if (m) {
-            text = m[1];
-            progressElement.value = parseInt(m[2])*100;
-            progressElement.max = parseInt(m[4])*100;
-            progressElement.hidden = false;
-            spinnerElement.hidden = false;
-          } else {
-            progressElement.value = null;
-            progressElement.max = null;
-            progressElement.hidden = true;
-            if (!text) spinnerElement.hidden = true;
+            text = m[1].trim();
+            var pct = Math.round((parseInt(m[2]) / parseInt(m[4])) * 100);
+            loaderProgressBar.style.width = pct + '%';
+          } else if (!text) {
+            loaderElement.classList.add('hidden');
           }
-          statusElement.innerHTML = text;
+          loaderStatusElement.textContent = text || 'Ready';
         },
         hideConsole: function() {
           outputElement.style.display = 'none';
@@ -550,43 +893,25 @@
         Module['arguments'] = args;
       })();
 
-      // Best-effort user file persistence when the tab/window is closed.
-      //
-      // Goal:
-      // - Persist *only* client-owned files (configs, saves, demos, screenshots) across reloads.
-      // - Do not persist server-provided game data (even if cached by the browser HTTP cache).
-      //
-      // Notes:
-      // - NetQuake writes config.cfg in Host_Shutdown(), not on every change.
-      // - We trigger a graceful shutdown on pagehide/beforeunload to flush config.cfg, then
-      //   copy eligible files into an IDBFS-backed folder and run syncfs().
+      // ---------------------------------------------------------------
+      // nq-persist: user file persistence (IDBFS backup/restore)
+      // ---------------------------------------------------------------
       (function() {
         var USERFS_ROOT = '/nexquake';
         var USER_EXTS = ['cfg', 'sav', 'dem', 'pcx'];
         var shutdownRequested = false;
 
-        function normalizeGameName(name) {
-          name = String(name || '').trim();
-          return name || NEXQUAKE_GAMENAME;
-        }
-
-        function getBaseGameName() {
-          try {
-            if (typeof Module !== 'undefined' && Module && Module.nexquakeBaseGameName) {
-              return normalizeGameName(Module.nexquakeBaseGameName);
-            }
-          } catch (e) {}
-          return normalizeGameName(NEXQUAKE_GAMENAME);
-        }
+        var normalizeGameName = nqNormalizeGameName;
+        var getBaseGameName = nqGetBaseGameName;
+        var safeReadDir = nqSafeReadDir;
+        var safeStat = nqSafeStat;
+        var safeMkdirTree = nqSafeMkdirTree;
+        var safeUnlink = nqSafeUnlink;
 
         function stripTrailingSlash(path) {
           path = String(path || '');
           if (path.length > 1 && path.endsWith('/')) return path.slice(0, -1);
           return path;
-        }
-
-        function ensureDir(path) {
-          try { FS.mkdirTree(path); } catch (e) {}
         }
 
         function isAllowedUserFile(fullPath) {
@@ -599,7 +924,6 @@
 
         function isRemoteNode(path) {
           try {
-            // Our lazy remote VFS nodes are tagged with `.url` in shell.html.
             var node = FS.lookupPath(path).node;
             return !!(node && node.url);
           } catch (e) {
@@ -613,43 +937,28 @@
           var dirs = Object.create(null);
           dirs[baseGameRoot] = true;
 
-          // Include any backed-up dirs that already exist on disk.
-          try {
-            if (typeof FS !== 'undefined') {
-              ensureDir(USERFS_ROOT);
-              var entries = FS.readdir(USERFS_ROOT);
-              entries.forEach(function(name) {
-                if (name === '.' || name === '..') return;
-                var p = '/' + name;
-                try {
-                  var st = FS.stat(USERFS_ROOT + p);
-                  if (FS.isDir(st.mode)) dirs[p] = true;
-                } catch (e) {}
-              });
+          safeMkdirTree(USERFS_ROOT);
+          safeReadDir(USERFS_ROOT).forEach(function(name) {
+            if (name === '.' || name === '..') return;
+            var p = '/' + name;
+            var st = safeStat(USERFS_ROOT + p);
+            if (st && FS.isDir(st.mode)) dirs[p] = true;
+          });
 
-              // If we've previously persisted per-mod dirs under /<base>/<mod>/..., include them too.
-              try {
-                FS.readdir(USERFS_ROOT + baseGameRoot).forEach(function(name) {
-                  if (name === '.' || name === '..') return;
-                  try {
-                    var st = FS.stat(USERFS_ROOT + baseGameRoot + '/' + name);
-                    if (FS.isDir(st.mode)) dirs[baseGameRoot + '/' + name] = true;
-                  } catch (e) {}
-                });
-              } catch (e) {}
-            }
-          } catch (e) {}
+          safeReadDir(USERFS_ROOT + baseGameRoot).forEach(function(name) {
+            if (name === '.' || name === '..') return;
+            var st = safeStat(USERFS_ROOT + baseGameRoot + '/' + name);
+            if (st && FS.isDir(st.mode)) dirs[baseGameRoot + '/' + name] = true;
+          });
 
-          // Derive from server-provided remote files (supports /<base> and top-level mod dirs).
-          var remotes = (typeof Module !== 'undefined' && Module && Module.nexquakeRemoteFiles) ? Module.nexquakeRemoteFiles : {};
-          Object.keys(remotes || {}).forEach(function(path) {
+          var remotes = Module.nexquakeRemoteFiles || {};
+          Object.keys(remotes).forEach(function(path) {
             path = String(path || '');
             var m = path.match(/^\/([^\/]+)\//);
             if (m && m[1] && m[1] !== 'nexquake') {
               dirs['/' + m[1]] = true;
             }
 
-            // Back-compat: remote assets may be installed under /<base>/<mod>/...
             var m2 = path.match(/^\/([^\/]+)\/([^\/]+)\/(pak[0-9]+\.pak|progs\.dat)$/i);
             if (m2 && m2[1] && m2[2]) {
               var prefix = String(m2[1]).toLowerCase();
@@ -666,36 +975,29 @@
 
         function collectUserFilesInDir(dir) {
           var results = [];
-          var entries;
-          try { entries = FS.readdir(dir); } catch (e) { return results; }
-          entries.forEach(function(name) {
+          safeReadDir(dir).forEach(function(name) {
             if (name === '.' || name === '..') return;
             var fullPath = dir + (dir === '/' ? '' : '/') + name;
-            try {
-              var stat = FS.stat(fullPath);
-              if (FS.isFile(stat.mode) && isAllowedUserFile(fullPath) && !isRemoteNode(fullPath)) {
-                results.push(fullPath);
-              }
-            } catch (e) {}
+            var stat = safeStat(fullPath);
+            if (stat && FS.isFile(stat.mode) && isAllowedUserFile(fullPath) && !isRemoteNode(fullPath)) {
+              results.push(fullPath);
+            }
           });
           return results;
         }
 
         function collectPersistedUserFiles(dir) {
           var results = [];
-          var entries;
-          try { entries = FS.readdir(dir); } catch (e) { return results; }
-          entries.forEach(function(name) {
+          safeReadDir(dir).forEach(function(name) {
             if (name === '.' || name === '..') return;
             var fullPath = dir + (dir === '/' ? '' : '/') + name;
-            try {
-              var stat = FS.stat(fullPath);
-              if (FS.isDir(stat.mode)) {
-                results = results.concat(collectPersistedUserFiles(fullPath));
-              } else if (FS.isFile(stat.mode) && isAllowedUserFile(fullPath)) {
-                results.push(fullPath);
-              }
-            } catch (e) {}
+            var stat = safeStat(fullPath);
+            if (!stat) return;
+            if (FS.isDir(stat.mode)) {
+              results = results.concat(collectPersistedUserFiles(fullPath));
+            } else if (FS.isFile(stat.mode) && isAllowedUserFile(fullPath)) {
+              results.push(fullPath);
+            }
           });
           return results;
         }
@@ -709,10 +1011,10 @@
             var destPath = backupPath.substring(USERFS_ROOT.length);
             if (!destPath || destPath === backupPath) return;
             var destDir = destPath.substring(0, destPath.lastIndexOf('/'));
-            try { if (destDir) FS.mkdirTree(destDir); } catch (e) {}
+            if (destDir) safeMkdirTree(destDir);
             try {
               var data = FS.readFile(backupPath);
-              try { FS.unlink(destPath); } catch (e) {}
+              safeUnlink(destPath);
               FS.writeFile(destPath, data);
             } catch (e) {}
           });
@@ -721,24 +1023,23 @@
         function persistUserFiles() {
           if (typeof FS === 'undefined') return;
           try {
-            ensureDir(USERFS_ROOT);
+            safeMkdirTree(USERFS_ROOT);
             var dirs = listCandidateGameDirs();
             dirs.forEach(function(d) {
               d = stripTrailingSlash(d);
               if (!d || d === '/' || d === USERFS_ROOT) return;
               var backupDir = USERFS_ROOT + d;
-              ensureDir(backupDir);
+              safeMkdirTree(backupDir);
               collectUserFilesInDir(d).forEach(function(fullPath) {
                 var name = fullPath.substring(fullPath.lastIndexOf('/') + 1);
                 if (!name) return;
                 try {
                   var data = FS.readFile(fullPath);
-                  try { FS.unlink(backupDir + '/' + name); } catch (e) {}
+                  safeUnlink(backupDir + '/' + name);
                   FS.writeFile(backupDir + '/' + name, data);
                 } catch (e) {}
               });
             });
-            // Sync to IndexedDB (fire and forget)
             FS.syncfs(false, function(err) {
               if (err) console.warn('User file syncfs error:', err);
             });
@@ -759,7 +1060,6 @@
             if (shutdownRequested) return;
             shutdownRequested = true;
             if (typeof Module !== 'undefined' && Module && typeof Module.ccall === 'function') {
-              // Writes config.cfg and shuts down subsystems (best-effort).
               Module.ccall('NexQuake_OnPageHide', 'void', [], []);
             }
             persistUserFiles();
@@ -767,15 +1067,346 @@
         }
         window.addEventListener('pagehide', requestShutdown);
         window.addEventListener('beforeunload', requestShutdown);
-
-        // Restoring user files must happen before Quake executes quake.rc/config.cfg at startup.
-        // sys_wasm.c waits for IDBFS sync to complete, then calls Module.nqRestoreUserFiles().
       })();
+
       Module.setStatus('Downloading...');
+
+      // nq-overlay: settings overlay (VFS explorer, upload, inline editor)
+      (function() {
+        var toggle = document.getElementById('nq-overlay-toggle');
+        var panel = document.getElementById('nq-overlay-panel');
+        if (!toggle || !panel) return;
+        var tabs = document.getElementById('nq-vfs-tabs');
+        var list = document.getElementById('nq-vfs-list');
+        var upload = document.getElementById('nq-vfs-upload');
+        var fileInput = document.getElementById('nq-vfs-file');
+        var status = document.getElementById('nq-vfs-status');
+        var editor = document.getElementById('nq-editor');
+        var editorPath = document.getElementById('nq-editor-path');
+        var editorText = document.getElementById('nq-editor-text');
+        var editorSave = document.getElementById('nq-editor-save');
+        var editorCancel = document.getElementById('nq-editor-cancel');
+
+        var USERFS = '/nexquake';
+        var USER_EXTS = ['cfg', 'sav', 'dem', 'pcx'];
+        var currentDir = '/id1/';
+        var editingFile = null;
+        var statusClearTimer = null;
+
+        function isUserFile(p) {
+          var ext = p.slice(p.lastIndexOf('.') + 1).toLowerCase();
+          return USER_EXTS.indexOf(ext) >= 0;
+        }
+
+        function isCfg(p) { return p.toLowerCase().endsWith('.cfg'); }
+
+        // Input isolation: stop events from reaching Emscripten
+        function isOverlayEl(el) {
+          return panel.contains(el) || editor.contains(el) || el === toggle;
+        }
+        ['mousedown','mouseup','mousemove','click','dblclick','wheel','contextmenu','keydown','keyup','keypress'].forEach(function(e) {
+          panel.addEventListener(e, function(ev) { ev.stopPropagation(); });
+          toggle.addEventListener(e, function(ev) { ev.stopPropagation(); });
+          editor.addEventListener(e, function(ev) { ev.stopPropagation(); });
+        });
+        ['keydown','keyup','keypress'].forEach(function(e) {
+          document.addEventListener(e, function(ev) {
+            if (!panel.classList.contains('open') && !editor.classList.contains('open')) return;
+            if (e === 'keydown' && ev.key === 'Escape') { closeEditor() || setPanelOpen(false); }
+            ev.stopImmediatePropagation();
+          }, true);
+        });
+        document.addEventListener('mousedown', function(ev) {
+          if (isOverlayEl(ev.target)) ev.stopImmediatePropagation();
+        }, true);
+        document.addEventListener('click', function(ev) {
+          if (ev.target === toggle || toggle.contains(ev.target)) {
+            ev.stopImmediatePropagation();
+            ev.preventDefault();
+            setPanelOpen(!panel.classList.contains('open'));
+          }
+        }, true);
+        canvasElement.addEventListener('mousedown', function() {
+          dismissOverlayForGameplay();
+        }, true);
+        document.addEventListener('pointerlockchange', function() {
+          if (document.pointerLockElement === canvasElement) {
+            dismissOverlayForGameplay();
+          }
+        });
+
+        function setPanelOpen(open) {
+          if (open) {
+            panel.classList.add('open');
+            if (document.pointerLockElement) document.exitPointerLock();
+            refresh();
+          } else {
+            panel.classList.remove('open');
+            closeEditor();
+          }
+        }
+
+        function dismissOverlayForGameplay() {
+          if (panel.classList.contains('open') || editor.classList.contains('open')) {
+            setPanelOpen(false);
+          }
+        }
+
+        function setStatus(msg, err) {
+          if (statusClearTimer) {
+            clearTimeout(statusClearTimer);
+            statusClearTimer = null;
+          }
+          status.textContent = msg || '';
+          status.style.color = err ? '#f88' : '#888';
+          if (err && msg) {
+            statusClearTimer = setTimeout(function() {
+              status.textContent = '';
+              statusClearTimer = null;
+            }, 5000);
+          }
+        }
+
+        var safeReadDir = nqSafeReadDir;
+        var safeStat = nqSafeStat;
+        var safeMkdirTree = nqSafeMkdirTree;
+        var safeUnlink = nqSafeUnlink;
+        var safeSyncFS = nqSafeSyncFS;
+
+        function maybePersistUserFiles() {
+          try { if (Module.nqPersistUserFiles) Module.nqPersistUserFiles(); } catch (e) {}
+        }
+
+        function forEachFile(files, fn) {
+          if (!files) return;
+          for (var i = 0; i < files.length; i++) fn(files[i]);
+        }
+
+        function getDirs() {
+          var dirs = ['/id1/'];
+          var seen = {'/id1/': true};
+          function add(d) {
+            if (!d || d === USERFS + '/' || seen[d]) return;
+            seen[d] = true;
+            dirs.push(d);
+          }
+          var remotes = Module.nexquakeRemoteFiles || {};
+          Object.keys(remotes).forEach(function(p) {
+            var m = p.match(/^\/([^\/]+)\//);
+            if (m) add('/' + m[1] + '/');
+          });
+          if (typeof FS !== 'undefined') {
+            safeReadDir(USERFS).forEach(function(n) {
+              if (n === '.' || n === '..') return;
+              var st = safeStat(USERFS + '/' + n);
+              if (st && FS.isDir(st.mode)) add('/' + n + '/');
+            });
+          }
+          dirs.sort(function(a,b) { return a === '/id1/' ? -1 : b === '/id1/' ? 1 : a.localeCompare(b); });
+          return dirs;
+        }
+
+        function buildTabs() {
+          var dirs = getDirs();
+          tabs.innerHTML = '';
+          var allBtn = document.createElement('button');
+          allBtn.className = 'nq-tab' + (currentDir === '__all__' ? ' active' : '');
+          allBtn.textContent = 'all';
+          allBtn.onclick = function() { currentDir = '__all__'; refresh(); };
+          tabs.appendChild(allBtn);
+          dirs.forEach(function(d) {
+            var btn = document.createElement('button');
+            btn.className = 'nq-tab' + (currentDir === d ? ' active' : '');
+            btn.textContent = d.replace(/^\/|\/$/g, '');
+            btn.onclick = function() { currentDir = d; refresh(); };
+            tabs.appendChild(btn);
+          });
+        }
+
+        function collectFiles(dir) {
+          var out = [];
+          safeReadDir(dir).forEach(function(n) {
+            if (n === '.' || n === '..') return;
+            var p = dir + (dir === '/' ? '' : '/') + n;
+            var st = safeStat(p);
+            if (!st) return;
+            if (FS.isDir(st.mode)) out = out.concat(collectFiles(p));
+            else if (FS.isFile(st.mode) && isUserFile(p)) out.push(p);
+          });
+          return out;
+        }
+
+        function refresh() {
+          buildTabs();
+          list.innerHTML = '';
+          closeEditor();
+          if (typeof FS === 'undefined') { list.innerHTML = '<li style="color:#888">FS not ready</li>'; return; }
+          maybePersistUserFiles();
+
+          var files = collectFiles(USERFS)
+            .map(function(p) { return p.indexOf(USERFS + '/') === 0 ? p.slice(USERFS.length) : p; })
+            .filter(function(p) { return p.startsWith('/'); });
+          if (currentDir !== '__all__') files = files.filter(function(p) { return p.indexOf(currentDir) === 0; });
+          files.sort();
+
+          if (!files.length) { list.innerHTML = '<li style="color:#888">No user files</li>'; return; }
+
+          files.forEach(function(displayPath) {
+            var backupPath = USERFS + displayPath;
+            var li = document.createElement('li');
+            var span = document.createElement('span');
+            span.className = 'nq-fname';
+            span.textContent = displayPath;
+            li.appendChild(span);
+
+            // Edit button for .cfg files only
+            if (isCfg(displayPath)) {
+              var editBtn = document.createElement('button');
+              editBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
+              editBtn.title = 'Edit';
+              editBtn.onclick = function() { openEditor(displayPath, backupPath); };
+              li.appendChild(editBtn);
+            }
+
+            // Download
+            var dlBtn = document.createElement('button');
+            dlBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+            dlBtn.title = 'Download';
+            dlBtn.onclick = function() { Module.exportFile(backupPath); };
+            li.appendChild(dlBtn);
+
+            // Delete
+            var delBtn = document.createElement('button');
+            delBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+            delBtn.className = 'nq-del';
+            delBtn.title = 'Delete';
+            delBtn.onclick = function() {
+              if (!confirm('Delete ' + displayPath + '?')) return;
+              safeUnlink(backupPath);
+              safeUnlink(displayPath);
+              safeSyncFS();
+              setStatus('Deleted ' + displayPath);
+              refresh();
+            };
+            li.appendChild(delBtn);
+
+            list.appendChild(li);
+          });
+        }
+
+        // Inline editor
+        function openEditor(displayPath, backupPath) {
+          try {
+            var data = FS.readFile(backupPath, {encoding: 'utf8'});
+            editingFile = {display: displayPath, backup: backupPath};
+            editorPath.textContent = displayPath;
+            editorText.value = data;
+            editor.classList.add('open');
+            editorText.setSelectionRange(0, 0);
+            editorText.scrollTop = 0;
+            editorText.focus();
+          } catch(e) {
+            setStatus('Failed to read file', true);
+          }
+        }
+
+        function closeEditor() {
+          if (!editor.classList.contains('open')) return false;
+          editor.classList.remove('open');
+          editingFile = null;
+          editorText.value = '';
+          return true;
+        }
+
+        editorSave.onclick = function() {
+          if (!editingFile) return;
+          var content = editorText.value;
+          var data = new TextEncoder().encode(content);
+          try {
+            FS.writeFile(editingFile.backup, data);
+            FS.writeFile(editingFile.display, data);
+            safeSyncFS();
+            setStatus('Saved ' + editingFile.display);
+            closeEditor();
+            refresh();
+          } catch(e) {
+            setStatus('Save failed', true);
+          }
+        };
+
+        editorCancel.onclick = closeEditor;
+
+        // Upload
+        function getUploadDir() {
+          return (currentDir === '__all__') ? '/id1/' : currentDir;
+        }
+
+        var UPLOAD_EXTS = ['cfg', 'dem', 'sav'];
+        function isValidUpload(name) {
+          var ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase();
+          return UPLOAD_EXTS.indexOf(ext) >= 0;
+        }
+
+        function uploadFile(file) {
+          if (!file || !isValidUpload(file.name)) {
+            setStatus('Quake .cfg, .dem, .sav only.', true);
+            return;
+          }
+          var dir = getUploadDir();
+          var dirPath = dir.replace(/\/$/, '');
+          var backupDir = USERFS + dirPath;
+          var reader = new FileReader();
+          reader.onload = function(e) {
+            var data = new Uint8Array(e.target.result);
+            var name = file.name.toLowerCase();
+            try {
+              safeMkdirTree(dirPath);
+              safeMkdirTree(backupDir);
+              safeUnlink(dir + name);
+              safeUnlink(backupDir + '/' + name);
+              FS.createDataFile(dirPath, name, data, true, true, true);
+              FS.writeFile(backupDir + '/' + name, data);
+              safeSyncFS();
+              setStatus(name + ' \u2192 ' + dir);
+              refresh();
+            } catch(err) {
+              setStatus('Upload failed', true);
+            }
+          };
+          reader.readAsArrayBuffer(file);
+        }
+
+        function processUploads(files) {
+          forEachFile(files, uploadFile);
+        }
+
+        upload.onclick = function() { fileInput.click(); };
+        fileInput.onchange = function(e) {
+          processUploads(e.target.files);
+          fileInput.value = '';
+        };
+
+        // Drag-drop
+        list.addEventListener('dragover', function(e) { e.preventDefault(); list.style.background = 'rgba(80,80,80,0.4)'; });
+        list.addEventListener('dragleave', function(e) { e.preventDefault(); list.style.background = ''; });
+        list.addEventListener('drop', function(e) {
+          e.preventDefault();
+          list.style.background = '';
+          processUploads(e.dataTransfer && e.dataTransfer.files);
+        });
+
+        // Init
+        var origInit = Module.onRuntimeInitialized;
+        Module.onRuntimeInitialized = function() {
+          if (origInit) origInit.call(Module);
+          refresh();
+        };
+        Module.nqOverlayUpdateDirs = function() { refresh(); };
+      })();
 
       window.onerror = function() {
         Module.setStatus('Exception thrown, see JavaScript console');
-        spinnerElement.style.display = 'none';
+        loaderElement.classList.add('hidden');
         Module.setStatus = function(text) {
           if (text) console.error('[post-exception status] ' + text);
         };
