@@ -1,0 +1,18 @@
+--- host.c
++++ host.c
+@@ -66,6 +66,7 @@
+ 
+ cvar_t	samelevel = {"samelevel","0"};
+ cvar_t	noexit = {"noexit","0",false,true};
++cvar_t	mapcycle = {"mapcycle",""};
+ 
+ #ifdef QUAKE2
+ cvar_t	developer = {"developer","1"};	// should be 0 for release!
+@@ -221,6 +222,7 @@
+ 	Cvar_RegisterVariable (&teamplay);
+ 	Cvar_RegisterVariable (&samelevel);
+ 	Cvar_RegisterVariable (&noexit);
++	Cvar_RegisterVariable (&mapcycle);
+ 	Cvar_RegisterVariable (&skill);
+ 	Cvar_RegisterVariable (&developer);
+ 	Cvar_RegisterVariable (&deathmatch);

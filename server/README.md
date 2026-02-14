@@ -15,6 +15,8 @@ Builds the **complete WinQuake engine for Linux** with null drivers for graphics
 | `bugfix/common.c.patch` | **Archived pointer underflow fix.** Preserves a prior `COM_FileBase()` hardening patch for reference/testing, but is not applied by current build scripts. | Kept to allow regression testing and quick re-enable if needed. |
 | `sv_main.c.patch` | **Entity overrides.** Allows the server to load `maps/<map>.ent` files to override entity placement in BSP maps. Optional quality-of-life feature. | Lets server admins customize spawn points, item placement, and other entities without modifying the BSP file. |
 | `net_udp.c.patch` | **Ephemeral port fix.** Updates `net_hostport` after bind when the server starts with `-port 0`. | Enables dynamic UDP port assignment while still reporting a reachable non-zero port to Nexus and operators. |
+| `host.c.patch` | **Map-cycle cvar registration.** Adds the `mapcycle` cvar declaration and registers it during host init. | Makes `mapcycle` available at startup and in configs. |
+| `pr_cmds.c.patch` | **Map-cycle changelevel hook.** Intercepts QuakeC-driven `changelevel` and applies map selection from `mapcycle` (CSV or file). | Decouples rotation from map-authored slipgates while keeping default behavior when unset. |
 | `64bit/*.64bit.patch` | **64-bit patches.** Fix `string_t` pointer-subtraction truncation and related issues for 64-bit builds. Applied only when building with `BITS=64`. | QuakeC uses 32-bit offsets for string references. On 64-bit, pointer arithmetic overflows. These patches widen the affected paths. |
 
 ## Building
@@ -30,6 +32,8 @@ cp /path/to/server/Makefile.dedicated .
 # Apply required patches
 patch -p0 < /path/to/server/sv_main.c.patch
 patch -p0 < /path/to/server/net_udp.c.patch
+patch -p0 < /path/to/server/host.c.patch
+patch -p0 < /path/to/server/pr_cmds.c.patch
 
 # Append stub
 cat /path/to/server/sys_linux_stub.c >> sys_linux.c
@@ -53,6 +57,17 @@ The automated build script (`build/build-server.sh`) handles all of this.
 ```bash
 ./nqserver -dedicated -port 26000
 ```
+
+### Map Cycle
+
+`mapcycle` supports two formats:
+
+- Filename (preferred when the path exists): `mapcycle mapcycle.txt`
+- Inline list fallback: `mapcycle dm2,dm3,dm4`
+- Inline list fallback with spaces: `mapcycle "dm2 dm3 dm4"`
+
+The engine tries to load the cvar value as a file first; if not found, it tokenizes the value itself.
+Parsing uses Quake token rules (`COM_Parse`): commas/newlines/tabs are treated as separators and `//` comments are ignored.
 
 ## Why 32-Bit by Default
 

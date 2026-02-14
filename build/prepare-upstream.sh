@@ -82,6 +82,8 @@ if [[ "${kind}" == "server" ]]; then
 
   apply_patch "${ROOT}/server/sv_main.c.patch"
   apply_patch "${ROOT}/server/net_udp.c.patch"
+  apply_patch "${ROOT}/server/host.c.patch"
+  apply_patch "${ROOT}/server/pr_cmds.c.patch"
 
   if [[ "${server_bits}" == "64" ]]; then
     echo "Applying 64-bit portability patches ..."
