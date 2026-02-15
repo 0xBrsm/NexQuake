@@ -107,7 +107,9 @@ if [[ "${kind}" == "client" ]]; then
   echo "Applying client (WASM) overlays + patches ..."
   cp "${ROOT}/client/net_bsd.c" "${ROOT}/client/net_ws_transport.c" "${ROOT}/client/net_ws_vnet.c" "${ROOT}/client/cmd_rcon.c" "${ROOT}/client/net_ws_transport.h" "${ROOT}/client/net_ws_vnet.h" "${OUT_DIR}/"
   cp "${ROOT}/client/sys_wasm.c" "${ROOT}/client/vid_wasm.c" "${ROOT}/client/snd_wasm.c" "${OUT_DIR}/"
-  cp "${ROOT}/client/Makefile.emscripten" "${ROOT}/client/shell.html" "${ROOT}/../VERSION" "${OUT_DIR}/"
+  cp "${ROOT}/client/Makefile.emscripten" "${ROOT}/client/shell/shell.html" "${ROOT}/client/shell/shell.css" "${ROOT}/../VERSION" "${OUT_DIR}/"
+  mkdir -p "${OUT_DIR}/shell"
+  cp "${ROOT}/client/shell/"*.js "${OUT_DIR}/shell/"
 
   apply_patch "${ROOT}/client/net.h.patch"
   apply_patch "${ROOT}/client/common.h.patch"
@@ -118,6 +120,7 @@ if [[ "${kind}" == "client" ]]; then
   apply_patch "${ROOT}/client/net_dgrm.c.patch"
   apply_patch "${ROOT}/client/chase.c.patch"
   apply_patch "${ROOT}/client/cl_parse.c.patch"
+  apply_patch "${ROOT}/client/cl_main.c.patch"
 
   client_gamename="$(sed -n 's/^[[:space:]]*#define[[:space:]]*GAMENAME[[:space:]]*"\([^"]\+\)".*/\1/p' "${OUT_DIR}/quakedef.h" | head -n1)"
   if [[ -z "${client_gamename}" ]]; then
@@ -130,6 +133,14 @@ if [[ "${kind}" == "client" ]]; then
 
   client_version="$(cat "${OUT_DIR}/VERSION" 2>/dev/null || echo "unknown")"
   sed -i "s/__NEXQUAKE_VERSION__/${client_version}/g" "${OUT_DIR}/shell.html"
+
+  mapfile -t client_pre_js_files < <(find "${OUT_DIR}/shell" -maxdepth 1 -type f -name '*.js' | sort)
+  if [[ "${#client_pre_js_files[@]}" -eq 0 ]]; then
+    echo "failed to assemble client pre-js bundle: no module files found under ${OUT_DIR}/shell" >&2
+    exit 1
+  fi
+  cat "${client_pre_js_files[@]}" > "${OUT_DIR}/nq-pre.js"
+  sed -i "s/__NEXQUAKE_GAMENAME__/${client_gamename_escaped}/g" "${OUT_DIR}/nq-pre.js"
 
   mkdir -p "${OUT_DIR}/${client_gamename}"
 fi

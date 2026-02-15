@@ -1,0 +1,13 @@
+--- cl_main.c
++++ cl_main.c
+@@ -87,6 +87,10 @@
+ 
+ 	cls.demoplayback = cls.timedemo = false;
+ 	cls.signon = 0;
++
++#ifdef __EMSCRIPTEN__
++	COM_SwitchGame(NULL);
++#endif
+ }
+ 
+ void CL_Disconnect_f (void)

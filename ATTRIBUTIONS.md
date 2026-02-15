@@ -44,6 +44,12 @@ This file records upstream sources that NexQuake derives from or incorporates.
   - Repository: https://github.com/lavenderdotpet/LibreQuake
   - Notes: Open-source PAK1 prepared for NexQuake. Fileset matches retail PAK1 exactly; sounds resampled to match PAK0 shareware quality. Art assets under BSD-3-Clause (LibreQuake contributors). `pop.lmp` under GPL-2.0 (derived from id Software Quake source via [pop.lmp generator](https://github.com/lavenderdotpet/pop.lmp_generator)).
 
+## UI Typography
+
+- **DpQuake font**
+  - Creator metadata embedded in original TTF: `Dead Pete [deadpete@iname.com - http://deadpete.tripod.com]`
+  - Notes: NexQuake embeds this font directly in `client/shell/shell.css` via `@font-face` data URI for the UI branding treatment.
+
 ## Acknowledgements
 
 The following projects provided inspiration and reference during NexQuake's development but are not direct code ancestors of the current codebase:

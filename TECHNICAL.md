@@ -139,7 +139,7 @@ The production Dockerfile builds all three components in isolated stages:
 ```
 Stage 1: Go builder    -> Nexus binary (CGO_ENABLED=0, static)
 Stage 2: C builder     -> nqserver (32-bit by default)
-Stage 3: WASM builder  -> index.html + index.js + index.wasm
+Stage 3: WASM builder  -> index.html + shell.css + index.js + index.wasm
 Stage 4: Runtime       -> chainguard/wolfi-base + all artifacts
 ```
 

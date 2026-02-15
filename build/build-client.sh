@@ -23,6 +23,7 @@ make -f Makefile.emscripten
 popd >/dev/null
 
 cp -f "${CLIENT_BUILD_DIR}/index.html" "${OUT_DIR}/"
+cp -f "${CLIENT_BUILD_DIR}/shell.css" "${OUT_DIR}/"
 cp -f "${CLIENT_BUILD_DIR}/index.js" "${OUT_DIR}/"
 cp -f "${CLIENT_BUILD_DIR}/index.wasm" "${OUT_DIR}/"
 if [[ -f "${CLIENT_BUILD_DIR}/index.data" ]]; then

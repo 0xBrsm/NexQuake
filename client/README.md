@@ -2,7 +2,7 @@
 
 The browser client: Quake compiled to WebAssembly with direct Emscripten APIs and WebSocket multiplayer.
 
-These files overlay the upstream id Software Quake source during build. The build system clones `id-Software/Quake`, applies patches, copies these overlays in, and compiles with Emscripten. The output is `index.html`, `index.js`, and `index.wasm`.
+These files overlay the upstream id Software Quake source during build. The build system clones `id-Software/Quake`, applies patches, copies these overlays in, and compiles with Emscripten. The output is `index.html`, `shell.css`, `index.js`, and `index.wasm`.
 
 ## Files
 
@@ -151,13 +151,13 @@ patch -p0 < /path/to/client/net_main.c.patch
 
 # 3. Copy overlay files
 cp /path/to/client/*.c /path/to/client/*.h .
-cp /path/to/client/Makefile.emscripten /path/to/client/shell.html .
+cp /path/to/client/Makefile.emscripten /path/to/client/shell/shell.html /path/to/client/shell/shell.css .
 
 # 4. Build
 make -f Makefile.emscripten
 ```
 
-Output: `index.html`, `index.js`, `index.wasm`
+Output: `index.html`, `shell.css`, `index.js`, `index.wasm`
 
 The automated build scripts (`build/build-client.sh`) handle all of this.
 

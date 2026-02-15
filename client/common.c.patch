@@ -15,7 +15,7 @@
  
  typedef struct searchpath_s
  {
-@@ -1249,6 +1250,17 @@
+@@ -1249,6 +1250,18 @@
  
  searchpath_t    *com_searchpaths;
  
@@ -29,11 +29,12 @@
 +static int com_gamecache_next_replace = 1;
 +static char com_active_game[16] = GAMENAME;
 +extern int fs_hunklevel;
++extern void Host_WriteConfiguration(void);
 +
  /*
  ============
  COM_Path_f
-@@ -1753,6 +1762,9 @@
+@@ -1753,6 +1763,9 @@
  			basedir[j-1] = 0;
  	}
  
@@ -43,7 +44,7 @@
  //
  // -cachedir <path>
  // Overrides the system supplied cache directory (NULL or /qcache)
-@@ -1822,5 +1834,95 @@
+@@ -1822,5 +1835,109 @@
  
  	if (COM_CheckParm ("-proghack"))
  		proghack = true;
@@ -83,6 +84,18 @@
 +	if (Q_strcasecmp(mod, com_active_game) == 0)
 +		return;
 +
++	// Save config before switching.  In per-mod mode the save targets the
++	// outgoing mod directory (com_gamedir); in unified mode it targets the
++	// base game directory so no mod-specific config.cfg is ever created.
++#ifdef __EMSCRIPTEN__
++	if (!EM_ASM_INT({ return Module.nqPerModConfig ? 1 : 0; }))
++	{
++		Q_strncpy(com_gamedir, com_gamecache[0].gamedir, MAX_OSPATH - 1);
++		com_gamedir[MAX_OSPATH - 1] = 0;
++	}
++#endif
++	Host_WriteConfiguration();
++
 +#ifdef __EMSCRIPTEN__
 +	EM_ASM({
 +		if (typeof Module === 'undefined') return;
@@ -105,6 +118,7 @@
 +			com_gamedir[MAX_OSPATH - 1] = 0;
 +			Q_strncpy(com_active_game, mod, sizeof(com_active_game) - 1);
 +			com_active_game[sizeof(com_active_game) - 1] = 0;
++			Cbuf_InsertText("exec quake.rc\n");
 +			return;
 +		}
 +	}
@@ -137,5 +151,6 @@
 +
 +	Q_strncpy(com_active_game, mod, sizeof(com_active_game) - 1);
 +	com_active_game[sizeof(com_active_game) - 1] = 0;
++	Cbuf_InsertText("exec quake.rc\n");
  }
  

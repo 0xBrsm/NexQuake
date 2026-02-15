@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <title>NexQuake</title>
+    <link rel="stylesheet" href="shell.css">
+  </head>
+  <body>
+    <!-- NexQuake Loading Screen -->
+    <div id="nq-loader">
+      <div id="nq-loader-logo"><span class="nex"><span class="nq-n">N</span>ex</span><span class="quake"><span class="nq-q">Q</span>uake</span></div>
+      <div id="nq-loader-sub">WebAssembly</div>
+      <div id="nq-loader-ring"></div>
+      <div id="nq-loader-status">Initializing...</div>
+      <div id="nq-loader-progress"><div id="nq-loader-progress-bar"></div></div>
+    </div>
+    <textarea class="emscripten" id="output" readonly></textarea>
+    <canvas class="emscripten" id="canvas" oncontextmenu="event.preventDefault()" tabindex=-1></canvas>
+    <a id="exportFile" hidden=1></a>
+
+    <!-- NexQuake Settings Overlay -->
+    <button id="nq-overlay-toggle" title="NexQuake Settings">&#9881;</button>
+    <div id="nq-overlay-panel">
+      <button id="nq-tabs-toggle" type="button" title="Toggle game directories" aria-label="Toggle game directories" aria-expanded="false"></button>
+      <div class="nq-tabs-wrap" id="nq-tabs-wrap">
+        <div id="nq-tabs-title"><span>GAME</span></div>
+        <div class="nq-tabs" id="nq-vfs-tabs"></div>
+      </div>
+      <div id="nq-panel-content">
+        <h3>Configs &amp; Saves <span id="nq-dir-label"></span></h3>
+        <ul id="nq-vfs-list"></ul>
+        <div id="nq-panel-footer">
+          <div id="nq-config-row">
+            <label id="nq-config-label">
+              <span class="nq-toggle">
+                <input type="checkbox" id="nq-config-toggle" checked>
+                <span class="nq-toggle-track"></span>
+              </span>
+              Global config
+              <span id="nq-config-hint">Enable for a single global config.cfg shared by all mods. Disable for a separate config.cfg per mod.</span>
+            </label>
+            <div id="nq-upload-wrap">
+              <div id="nq-upload-error" aria-live="polite"></div>
+              <button class="nq-btn" id="nq-vfs-upload"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Upload</button>
+              <input type="file" id="nq-vfs-file" style="display:none" multiple>
+            </div>
+          </div>
+          <div id="nq-branding-row">
+            <div id="nq-branding"><span class="nq-nex"><span class="nq-n">N</span>ex</span><span class="nq-q">Q</span>uake</div>
+            <div id="nq-version">v__NEXQUAKE_VERSION__</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Full-window cfg editor -->
+    <div id="nq-editor">
+      <div id="nq-editor-path"></div>
+      <textarea id="nq-editor-text" spellcheck="false"></textarea>
+      <div id="nq-editor-btns">
+        <button class="nq-btn" id="nq-editor-save"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save</button>
+        <button class="nq-btn" id="nq-editor-cancel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Cancel</button>
+      </div>
+    </div>
+
+    {{{ SCRIPT }}}
+  </body>
+</html>
