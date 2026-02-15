@@ -15,18 +15,12 @@
  
  typedef struct searchpath_s
  {
-@@ -1249,6 +1250,18 @@
+@@ -1249,6 +1250,12 @@
  
  searchpath_t    *com_searchpaths;
  
-+#define MAX_GAMECACHE 64
-+static struct {
-+	char mod[16];
-+	searchpath_t *paths;
-+	char gamedir[MAX_OSPATH];
-+} com_gamecache[MAX_GAMECACHE];
-+static int com_gamecache_count;
-+static int com_gamecache_next_replace = 1;
++static searchpath_t *com_base_searchpaths;
++static char com_base_gamedir[MAX_OSPATH];
 +static char com_active_game[16] = GAMENAME;
 +extern int fs_hunklevel;
 +extern void Host_WriteConfiguration(void);
@@ -44,18 +38,16 @@
  //
  // -cachedir <path>
  // Overrides the system supplied cache directory (NULL or /qcache)
-@@ -1822,5 +1835,109 @@
+@@ -1822,5 +1835,74 @@
  
  	if (COM_CheckParm ("-proghack"))
  		proghack = true;
 +
-+	Q_strncpy(com_gamecache[0].mod, GAMENAME, sizeof(com_gamecache[0].mod) - 1);
-+	com_gamecache[0].mod[sizeof(com_gamecache[0].mod) - 1] = 0;
-+	com_gamecache[0].paths = com_searchpaths;
-+	Q_strncpy(com_gamecache[0].gamedir, com_gamedir, MAX_OSPATH - 1);
-+	com_gamecache[0].gamedir[MAX_OSPATH - 1] = 0;
-+	com_gamecache_count = 1;
-+	com_gamecache_next_replace = 1;
++	com_base_searchpaths = com_searchpaths;
++	Q_strncpy(com_base_gamedir, com_gamedir, MAX_OSPATH - 1);
++	com_base_gamedir[MAX_OSPATH - 1] = 0;
++	Q_strncpy(com_active_game, GAMENAME, sizeof(com_active_game) - 1);
++	com_active_game[sizeof(com_active_game) - 1] = 0;
 +	fs_hunklevel = Hunk_LowMark();
 +
 +#ifdef __EMSCRIPTEN__
@@ -69,7 +61,7 @@
 +void COM_SwitchGame(const char *gamedir)
 +{
 +	char mod[16];
-+	int i;
++	qboolean per_mod_config = true;
 +
 +	if (!gamedir || !gamedir[0])
 +	{
@@ -81,16 +73,14 @@
 +		Q_strncpy(mod, gamedir, sizeof(mod) - 1);
 +		mod[sizeof(mod) - 1] = 0;
 +	}
-+	if (Q_strcasecmp(mod, com_active_game) == 0)
-+		return;
-+
 +	// Save config before switching.  In per-mod mode the save targets the
 +	// outgoing mod directory (com_gamedir); in unified mode it targets the
 +	// base game directory so no mod-specific config.cfg is ever created.
 +#ifdef __EMSCRIPTEN__
-+	if (!EM_ASM_INT({ return Module.nqPerModConfig ? 1 : 0; }))
++	per_mod_config = EM_ASM_INT({ return Module.nqPerModConfig ? 1 : 0; });
++	if (!per_mod_config)
 +	{
-+		Q_strncpy(com_gamedir, com_gamecache[0].gamedir, MAX_OSPATH - 1);
++		Q_strncpy(com_gamedir, com_base_gamedir, MAX_OSPATH - 1);
 +		com_gamedir[MAX_OSPATH - 1] = 0;
 +	}
 +#endif
@@ -109,48 +99,17 @@
 +	}, mod);
 +#endif
 +
-+	for (i = 0; i < com_gamecache_count; i++)
-+	{
-+		if (Q_strcasecmp(mod, com_gamecache[i].mod) == 0)
-+		{
-+			com_searchpaths = com_gamecache[i].paths;
-+			Q_strncpy(com_gamedir, com_gamecache[i].gamedir, MAX_OSPATH - 1);
-+			com_gamedir[MAX_OSPATH - 1] = 0;
-+			Q_strncpy(com_active_game, mod, sizeof(com_active_game) - 1);
-+			com_active_game[sizeof(com_active_game) - 1] = 0;
-+			Cbuf_InsertText("exec quake.rc\n");
-+			return;
-+		}
-+	}
-+
 +	// Reset to baseline, then add the mod directory on top.
-+	com_searchpaths = com_gamecache[0].paths;
-+	Q_strncpy(com_gamedir, com_gamecache[0].gamedir, MAX_OSPATH - 1);
++	com_searchpaths = com_base_searchpaths;
++	Q_strncpy(com_gamedir, com_base_gamedir, MAX_OSPATH - 1);
 +	com_gamedir[MAX_OSPATH - 1] = 0;
 +
 +	if (Q_strcasecmp(mod, GAMENAME) != 0 && com_basedir[0])
-+	{
-+		int slot;
 +		COM_AddGameDirectory(va("%s/%s", com_basedir, mod));
-+		if (com_gamecache_count < MAX_GAMECACHE)
-+			slot = com_gamecache_count++;
-+		else
-+		{
-+			slot = com_gamecache_next_replace;
-+			com_gamecache_next_replace++;
-+			if (com_gamecache_next_replace >= MAX_GAMECACHE)
-+				com_gamecache_next_replace = 1;
-+		}
-+		Q_strncpy(com_gamecache[slot].mod, mod, sizeof(com_gamecache[slot].mod) - 1);
-+		com_gamecache[slot].mod[sizeof(com_gamecache[slot].mod) - 1] = 0;
-+		com_gamecache[slot].paths = com_searchpaths;
-+		Q_strncpy(com_gamecache[slot].gamedir, com_gamedir, MAX_OSPATH - 1);
-+		com_gamecache[slot].gamedir[MAX_OSPATH - 1] = 0;
-+		fs_hunklevel = Hunk_LowMark();
-+	}
 +
 +	Q_strncpy(com_active_game, mod, sizeof(com_active_game) - 1);
 +	com_active_game[sizeof(com_active_game) - 1] = 0;
-+	Cbuf_InsertText("exec quake.rc\n");
++	if (per_mod_config)
++		Cbuf_InsertText("exec quake.rc\n");
  }
  

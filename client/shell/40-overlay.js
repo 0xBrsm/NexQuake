@@ -27,7 +27,9 @@
   var USER_FILE_DESC = USER_EXTS.map(function(ext) { return '.' + ext; }).join(', ');
   var currentDir;
   var editingFile = null;
-  var uploadErrorTimer = null;
+  var uploadMessageTimer = null;
+  var uploadBusy = false;
+  var dragSourcePath = '';
 
   if (fileInput) fileInput.accept = USER_FILE_ACCEPT;
 
@@ -152,24 +154,65 @@
     for (var i = 0; i < files.length; i++) fn(files[i]);
   }
 
-  function clearUploadError() {
-    if (uploadErrorTimer) {
-      clearTimeout(uploadErrorTimer);
-      uploadErrorTimer = null;
+  function clearUploadMessage() {
+    if (uploadMessageTimer) {
+      clearTimeout(uploadMessageTimer);
+      uploadMessageTimer = null;
     }
-    if (uploadError) uploadError.textContent = '';
+    if (!uploadError) return;
+    uploadError.textContent = '';
+    uploadError.classList.remove('active', 'error');
+  }
+
+  function showUploadMessage(msg, kind, clearAfterMs) {
+    if (!uploadError) return;
+    clearUploadMessage();
+    uploadError.textContent = msg || '';
+    if (kind === 'active') uploadError.classList.add('active');
+    if (kind === 'error') uploadError.classList.add('error');
+    if (clearAfterMs && msg) {
+      uploadMessageTimer = setTimeout(function() {
+        clearUploadMessage();
+      }, clearAfterMs);
+    }
+  }
+
+  function clearUploadError() {
+    clearUploadMessage();
   }
 
   function showUploadError(msg) {
-    if (!uploadError) return;
-    clearUploadError();
-    uploadError.textContent = msg || '';
-    if (msg) {
-      uploadErrorTimer = setTimeout(function() {
-        uploadError.textContent = '';
-        uploadErrorTimer = null;
-      }, 3000);
-    }
+    showUploadMessage(msg, 'error', 3000);
+  }
+
+  function clearUploadStatus() {
+    clearUploadMessage();
+  }
+
+  function showUploadStatus(msg, kind, clearAfterMs) {
+    showUploadMessage(msg, kind, clearAfterMs);
+  }
+
+  function setUploadBusyState(busy) {
+    uploadBusy = !!busy;
+    if (upload) upload.disabled = uploadBusy;
+  }
+
+  function formatBytes(bytes) {
+    var n = Number(bytes || 0);
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function syncFSAsync() {
+    return new Promise(function(resolve) {
+      try {
+        FS.syncfs(false, function(err) { resolve(err || null); });
+      } catch (e) {
+        resolve(e || null);
+      }
+    });
   }
 
   function getDirs() {
@@ -196,6 +239,80 @@
     return dirs;
   }
 
+  function clearTabDropTargets() {
+    if (!tabs) return;
+    tabs.querySelectorAll('.nq-drop-target').forEach(function(btn) {
+      btn.classList.remove('nq-drop-target');
+    });
+  }
+
+  function moveFileToDir(displayPath, targetDir) {
+    var srcPath = String(displayPath || '').trim();
+    var dstDir = String(targetDir || '').trim();
+    if (!srcPath || !dstDir || dstDir === '__all__') return;
+    if (!srcPath.startsWith('/') || !dstDir.startsWith('/')) return;
+    var name = srcPath.slice(srcPath.lastIndexOf('/') + 1).toLowerCase();
+    if (!name || !isUserFile(name)) return;
+
+    var dstPath = dstDir + name;
+    if (dstPath === srcPath) return;
+
+    var srcBackup = USERFS + srcPath;
+    var dstDirPath = dstDir.replace(/\/$/, '');
+    var dstBackupDir = USERFS + dstDirPath;
+    var dstBackupPath = dstBackupDir + '/' + name;
+    if ((safeStat(dstPath) || safeStat(dstBackupPath)) && !confirm('Overwrite ' + dstPath + '?')) {
+      showUploadStatus('Move skipped for ' + name, '', 2500);
+      return;
+    }
+
+    try {
+      var data;
+      try {
+        data = FS.readFile(srcBackup);
+      } catch (e1) {
+        data = FS.readFile(srcPath);
+      }
+
+      safeMkdirTree(dstDirPath);
+      safeMkdirTree(dstBackupDir);
+
+      safeUnlink(dstPath);
+      safeUnlink(dstBackupPath);
+      FS.writeFile(dstPath, data);
+      FS.writeFile(dstBackupPath, data);
+
+      safeUnlink(srcPath);
+      safeUnlink(srcBackup);
+      safeSyncFS();
+      refresh();
+    } catch (e) {
+      showUploadError('Move failed');
+      showUploadStatus('Move failed', 'error', 3000);
+      console.error('Move failed:', e);
+    }
+  }
+
+  function attachTabDropHandlers(btn, dir) {
+    btn.addEventListener('dragover', function(ev) {
+      if (!dragSourcePath || !dir || dir === '__all__') return;
+      ev.preventDefault();
+      btn.classList.add('nq-drop-target');
+    });
+    btn.addEventListener('dragleave', function(ev) {
+      var rt = ev.relatedTarget;
+      if (rt && btn.contains(rt)) return;
+      btn.classList.remove('nq-drop-target');
+    });
+    btn.addEventListener('drop', function(ev) {
+      if (!dir || dir === '__all__') return;
+      ev.preventDefault();
+      btn.classList.remove('nq-drop-target');
+      var src = (ev.dataTransfer && ev.dataTransfer.getData('text/nq-file-path')) || dragSourcePath;
+      if (src) moveFileToDir(src, dir);
+    });
+  }
+
   function buildTabs() {
     var dirs = getDirs();
     var labels = ['all', 'GAME'];
@@ -203,14 +320,18 @@
     var allBtn = document.createElement('button');
     allBtn.className = 'nq-tab' + (currentDir === '__all__' ? ' active' : '');
     allBtn.textContent = 'all';
+    allBtn.dataset.dir = '__all__';
     allBtn.onclick = function() { currentDir = '__all__'; refresh(); };
+    attachTabDropHandlers(allBtn, '__all__');
     tabs.appendChild(allBtn);
     dirs.forEach(function(d) {
       var btn = document.createElement('button');
       var name = d.replace(/^\/|\/$/g, '');
       btn.className = 'nq-tab' + (currentDir === d ? ' active' : '');
       btn.textContent = name;
+      btn.dataset.dir = d;
       btn.onclick = function() { currentDir = d; refresh(); };
+      attachTabDropHandlers(btn, d);
       tabs.appendChild(btn);
       labels.push(name);
     });
@@ -255,6 +376,22 @@
         shownName = displayPath.slice(currentDir.length);
       }
       var li = document.createElement('li');
+      li.draggable = true;
+      li.addEventListener('dragstart', function(ev) {
+        dragSourcePath = displayPath;
+        li.classList.add('nq-dragging');
+        if (ev.dataTransfer) {
+          ev.dataTransfer.effectAllowed = 'move';
+          ev.dataTransfer.setData('text/nq-file-path', displayPath);
+        }
+        setTabsOpen(true);
+      });
+      li.addEventListener('dragend', function() {
+        li.classList.remove('nq-dragging');
+        dragSourcePath = '';
+        clearTabDropTargets();
+      });
+
       var span = document.createElement('span');
       span.className = 'nq-fname';
       span.textContent = shownName;
@@ -345,53 +482,149 @@
     return USER_EXTS.indexOf(ext) >= 0;
   }
 
-  function uploadFile(file) {
+  function readFileAsUint8(file, onProgress) {
+    return new Promise(function(resolve, reject) {
+      var reader = new FileReader();
+      reader.onerror = function() {
+        reject(reader.error || new Error('read failed'));
+      };
+      reader.onprogress = function(e) {
+        if (onProgress) onProgress(e);
+      };
+      reader.onload = function(e) {
+        resolve(new Uint8Array(e.target.result));
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  async function uploadFile(file, index, total) {
     if (!file || !isValidUpload(file.name)) {
       showUploadError('Quake ' + USER_FILE_DESC + ' only');
-      return;
+      return false;
     }
     clearUploadError();
+
     var dir = getUploadDir();
     var dirPath = dir.replace(/\/$/, '');
     var backupDir = USERFS + dirPath;
-    var reader = new FileReader();
-    reader.onload = function(e) {
-      var data = new Uint8Array(e.target.result);
-      var name = file.name.toLowerCase();
-      try {
-        safeMkdirTree(dirPath);
-        safeMkdirTree(backupDir);
-        safeUnlink(dir + name);
-        safeUnlink(backupDir + '/' + name);
-        FS.createDataFile(dirPath, name, data, true, true, true);
-        FS.writeFile(backupDir + '/' + name, data);
-        safeSyncFS();
-        refresh();
-      } catch(err) {
-        showUploadError('Upload failed');
-        console.error('Upload failed:', err);
+    var name = file.name.toLowerCase();
+    var dstPath = dir + name;
+    var dstBackupPath = backupDir + '/' + name;
+    var label = 'Uploading ' + name + ' (' + index + '/' + total + ')';
+    var data;
+    if ((safeStat(dstPath) || safeStat(dstBackupPath)) && !confirm('Overwrite ' + dstPath + '?')) {
+      showUploadStatus('Upload skipped for ' + name, '', 2500);
+      return null;
+    }
+
+    try {
+      showUploadStatus(label + ' 0%', 'active');
+      data = await readFileAsUint8(file, function(e) {
+        if (!e || !e.lengthComputable || e.total <= 0) {
+          showUploadStatus(label + '...', 'active');
+          return;
+        }
+        var pct = Math.max(0, Math.min(100, Math.round((e.loaded * 100) / e.total)));
+        showUploadStatus(label + ' ' + pct + '%', 'active');
+      });
+    } catch (err) {
+      showUploadError('Upload failed');
+      showUploadStatus('Upload failed for ' + name, 'error', 3500);
+      console.error('Upload read failed:', err);
+      return false;
+    }
+
+    try {
+      safeMkdirTree(dirPath);
+      safeMkdirTree(backupDir);
+      safeUnlink(dstPath);
+      safeUnlink(dstBackupPath);
+      FS.createDataFile(dirPath, name, data, true, true, true);
+      FS.writeFile(dstBackupPath, data);
+      return true;
+    } catch (err2) {
+      showUploadError('Upload failed');
+      showUploadStatus('Upload failed for ' + name, 'error', 3500);
+      console.error('Upload write failed:', err2);
+      return false;
+    }
+  }
+
+  async function processUploads(files) {
+    if (uploadBusy) return;
+    var queue = [];
+    forEachFile(files, function(file) { queue.push(file); });
+    if (!queue.length) return;
+
+    setUploadBusyState(true);
+    clearUploadError();
+    clearUploadStatus();
+
+    var uploaded = 0;
+    var skipped = 0;
+    var failed = 0;
+    try {
+      for (var i = 0; i < queue.length; i++) {
+        var ok = await uploadFile(queue[i], i + 1, queue.length);
+        if (ok === true) uploaded++;
+        else if (ok === null) skipped++;
+        else failed++;
       }
-    };
-    reader.readAsArrayBuffer(file);
+
+      if (uploaded > 0) {
+        showUploadStatus('Syncing ' + uploaded + ' file(s) to storage...', 'active');
+        var syncErr = await syncFSAsync();
+        if (syncErr) {
+          failed++;
+          showUploadError('Storage sync failed');
+          console.error('Upload sync failed:', syncErr);
+        }
+      }
+
+      if (uploaded > 0) refresh();
+      if (failed > 0) {
+        showUploadStatus('Uploaded ' + uploaded + ', skipped ' + skipped + ', failed ' + failed, 'error', 4000);
+      } else if (skipped > 0) {
+        showUploadStatus('Uploaded ' + uploaded + ', skipped ' + skipped, '', 3500);
+      } else {
+        var totalBytes = queue.reduce(function(acc, file) { return acc + Number(file.size || 0); }, 0);
+        showUploadStatus('Uploaded ' + uploaded + ' file(s) (' + formatBytes(totalBytes) + ')', '', 2500);
+      }
+    } finally {
+      setUploadBusyState(false);
+    }
   }
 
-  function processUploads(files) {
-    forEachFile(files, uploadFile);
-  }
-
-  upload.onclick = function() { fileInput.click(); };
+  upload.onclick = function() {
+    if (uploadBusy) return;
+    fileInput.click();
+  };
   fileInput.onchange = function(e) {
-    processUploads(e.target.files);
+    processUploads(e.target.files).catch(function(err) {
+      showUploadError('Upload failed');
+      showUploadStatus('Upload failed', 'error', 3000);
+      console.error('Upload queue failed:', err);
+    });
     fileInput.value = '';
   };
 
   // Drag-drop
   list.addEventListener('dragover', function(e) { e.preventDefault(); list.style.background = 'rgba(80,80,80,0.4)'; });
-  list.addEventListener('dragleave', function(e) { e.preventDefault(); list.style.background = ''; });
+  list.addEventListener('dragleave', function(e) {
+    e.preventDefault();
+    list.style.background = '';
+  });
   list.addEventListener('drop', function(e) {
     e.preventDefault();
     list.style.background = '';
-    processUploads(e.dataTransfer && e.dataTransfer.files);
+    clearTabDropTargets();
+    dragSourcePath = '';
+    processUploads(e.dataTransfer && e.dataTransfer.files).catch(function(err) {
+      showUploadError('Upload failed');
+      showUploadStatus('Upload failed', 'error', 3000);
+      console.error('Drop upload failed:', err);
+    });
   });
 
   // Init
