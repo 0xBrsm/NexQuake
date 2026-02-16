@@ -1,17 +1,18 @@
 --- cl_parse.c
 +++ cl_parse.c
-@@ -21,6 +21,10 @@
+@@ -21,6 +21,11 @@
  
  #include "quakedef.h"
  
 +#ifdef __EMSCRIPTEN__
 +#include <emscripten/emscripten.h>
++extern void SNDDMA_MuteTransfer(void);
 +#endif
 +
  char *svc_strings[] =
  {
  	"svc_bad",
-@@ -173,8 +179,11 @@
+@@ -173,8 +180,11 @@
  			Host_Error ("CL_KeepaliveMessage: received a message");
  			break;
  		case 2:
@@ -25,7 +26,7 @@
  			break;
  		}
  	} while (ret);
-@@ -215,6 +224,27 @@
+@@ -215,6 +225,27 @@
  //
  	CL_ClearState ();
  
@@ -53,7 +54,7 @@
  // parse protocol version number
  	i = MSG_ReadLong ();
  	if (i != PROTOCOL_VERSION)
-@@ -281,6 +293,63 @@
+@@ -281,6 +294,67 @@
  		S_TouchSound (str);
  	}
  
@@ -90,6 +91,10 @@
 +			Module.nexquakePrefetchStart();
 +	});
 +
++	// Mute the audio callback so it outputs silence and freezes the read
++	// cursor while the mixer cannot run.  SNDDMA_Submit() unmutes
++	// automatically once the mixer resumes producing data.
++	SNDDMA_MuteTransfer();
 +	{
 +		double start = Sys_FloatTime();
 +		double wait_limit = 30.0;
@@ -117,7 +122,7 @@
  //
  // now we try to load everything else until a cache allocation fails
  //
-@@ -960,4 +1020,3 @@
+@@ -960,4 +1024,3 @@
  		}
  	}
  }

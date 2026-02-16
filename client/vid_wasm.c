@@ -285,7 +285,11 @@ void D_BeginDirectRect(int x, int y, byte *pbitmap, int width, int height) {
 void D_EndDirectRect(int x, int y, int width, int height) {}
 
 // Input interface
-void Sys_SendKeyEvents(void) {}
+// Yield to the browser event loop so keyboard/mouse callbacks can fire.
+// Native Quake pumps OS events here synchronously; the WASM equivalent is
+// an ASYNCIFY yield.  This is called once per frame in _Host_Frame and
+// also inside tight polling loops (SCR_ModalMessage, Con_NotifyBox).
+void Sys_SendKeyEvents(void) { emscripten_sleep(0); }
 void IN_Init(void) { if (!COM_CheckParm("-nomouse")) mouse_avail = 1; }
 void IN_Shutdown(void) { mouse_avail = 0; }
 void IN_Commands(void) {}
