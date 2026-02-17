@@ -310,8 +310,18 @@ func (m *ServerManager) stopServer(ctx context.Context, rec *serverRecord, s *ma
 	}
 	waitAfterSignal := killAfter
 
+	clearRunning := func(err error) error {
+		m.mu.Lock()
+		if rec != nil && rec.Running == s {
+			rec.Running = nil
+			resetRecordStartupState(rec)
+			rec.lastError = ""
+		}
+		m.mu.Unlock()
+		return err
+	}
+
 	if sendSignal && s.Cmd != nil && s.Cmd.Process != nil && isProcessAlive(s.Cmd.Process) {
-		// Graceful path first: ask the server to quit via console.
 		_ = s.writeConsole("quit")
 
 		quitGrace := 750 * time.Millisecond
@@ -327,14 +337,7 @@ func (m *ServerManager) stopServer(ctx context.Context, rec *serverRecord, s *ma
 		case <-ctx.Done():
 			return ctx.Err()
 		case err := <-s.done:
-			m.mu.Lock()
-			if rec != nil && rec.Running == s {
-				rec.Running = nil
-				resetRecordStartupState(rec)
-				rec.lastError = ""
-			}
-			m.mu.Unlock()
-			return err
+			return clearRunning(err)
 		case <-time.After(quitGrace):
 		}
 
@@ -347,28 +350,14 @@ func (m *ServerManager) stopServer(ctx context.Context, rec *serverRecord, s *ma
 	case <-ctx.Done():
 		return ctx.Err()
 	case err := <-s.done:
-		m.mu.Lock()
-		if rec != nil && rec.Running == s {
-			rec.Running = nil
-			resetRecordStartupState(rec)
-			rec.lastError = ""
-		}
-		m.mu.Unlock()
-		return err
+		return clearRunning(err)
 	case <-time.After(waitAfterSignal):
 		if s.Cmd != nil && s.Cmd.Process != nil && isProcessAlive(s.Cmd.Process) {
 			_ = s.Cmd.Process.Kill()
 		}
 		select {
 		case err := <-s.done:
-			m.mu.Lock()
-			if rec != nil && rec.Running == s {
-				rec.Running = nil
-				resetRecordStartupState(rec)
-				rec.lastError = ""
-			}
-			m.mu.Unlock()
-			return err
+			return clearRunning(err)
 		case <-time.After(1 * time.Second):
 			slot := -1
 			gameDir := ""

@@ -217,32 +217,22 @@ func fatalf(format string, args ...any) {
 	os.Exit(1)
 }
 
-func appendNexusLogLineLocked(line string) {
-	if line == "" {
+func recordNexusLogLine(text string) {
+	if text == "" {
 		return
 	}
-	if !strings.HasSuffix(line, "\n") {
-		line += "\n"
-	}
-
-	if len(nexusLogHistory) < nexusLogHistoryCap {
-		nexusLogHistory = append(nexusLogHistory, line)
-		return
-	}
-
-	copy(nexusLogHistory, nexusLogHistory[1:])
-	nexusLogHistory[len(nexusLogHistory)-1] = line
-}
-
-func recordNexusLogLine(line string) {
-	if line == "" {
-		return
-	}
-
 	nexusLogHistoryMu.Lock()
 	defer nexusLogHistoryMu.Unlock()
-	for _, chunk := range splitLogLines(line) {
-		appendNexusLogLineLocked(chunk)
+	for _, line := range splitLogLines(text) {
+		if line == "" {
+			continue
+		}
+		if len(nexusLogHistory) < nexusLogHistoryCap {
+			nexusLogHistory = append(nexusLogHistory, line)
+		} else {
+			copy(nexusLogHistory, nexusLogHistory[1:])
+			nexusLogHistory[len(nexusLogHistory)-1] = line
+		}
 	}
 }
 

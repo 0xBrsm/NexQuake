@@ -1,4 +1,4 @@
-# net_dgrm.c — three networking bugs
+# net_dgrm.c — two networking bugs
 #
 # 1. BAN_TEST POSIX struct portability. The #else fallback for non-Windows
 #    builds manually defines struct in_addr, struct sockaddr_in, AF_INET,
@@ -6,14 +6,7 @@
 #    fragile and can cause problems when the struct layout does not match the
 #    platform. The fix replaces them with standard POSIX #include directives.
 #
-# 2. AddrCompare connection matching (NAT bug). UDP_AddrCompare() returns
-#    0 for an exact match, 1 for same-IP-different-port, and -1 for different
-#    IP. The original check `if (ret >= 0)` treats "same IP, different port"
-#    as a reconnection, so a second player behind the same NAT (same public
-#    IP, different source port) kicks the first player. The fix changes the
-#    check to `if (ret == 0)`.
-#
-# 3. Datagram_GetMessage receive buffer overflow. The packet reassembly loop
+# 2. Datagram_GetMessage receive buffer overflow. The packet reassembly loop
 #    memcpys incoming data into sock->receiveMessage without checking whether
 #    the accumulated length exceeds NET_MAXMESSAGE. A malicious or malformed
 #    oversized packet can overflow the buffer. The fix adds bounds checks at
@@ -55,7 +48,7 @@
  #endif	// BAN_TEST
  
 #
-# Fix 3a: Bounds-check individual packet length before memcpy.
+# Fix 2a: Bounds-check individual packet length before memcpy.
 #
 @@ -438,9 +421,21 @@
  			sock->receiveSequence++;
@@ -71,7 +64,7 @@
  			if (flags & NETFLAG_EOM)
  			{
 #
-# Fix 3b: Bounds-check assembled message length at end-of-message.
+# Fix 2b: Bounds-check assembled message length at end-of-message.
 #
 +				if (sock->receiveMessageLength + (int)length > NET_MAXMESSAGE)
 +				{
@@ -87,7 +80,7 @@
  			}
  
 #
-# Fix 3c: Bounds-check assembled message length during fragment accumulation.
+# Fix 2c: Bounds-check assembled message length during fragment accumulation.
 #
 +			if (sock->receiveMessageLength + (int)length > NET_MAXMESSAGE)
 +			{
@@ -98,17 +91,3 @@
  			Q_memcpy(sock->receiveMessage + sock->receiveMessageLength, packetBuffer.data, length);
  			sock->receiveMessageLength += length;
  			continue;
- 
-#
-# Fix 2: Change `ret >= 0` to `ret == 0` so same-IP-different-port is not
-#         treated as a reconnection (allows multiple players behind NAT).
-#
-@@ -994,7 +995,7 @@
- 		if (s->driver != net_driverlevel)
- 			continue;
- 		ret = dfunc.AddrCompare(&clientaddr, &s->addr);
--		if (ret >= 0)
-+		if (ret == 0)
- 		{
- 			// is this a duplicate connection reqeust?
- 			if (ret == 0 && net_time - s->connecttime < 2.0)

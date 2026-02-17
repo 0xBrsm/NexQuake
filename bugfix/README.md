@@ -52,12 +52,12 @@ Four related overflows in host_cmd.c:
 
 The fix clamps the `memcpy` length and replaces `sprintf` with `snprintf`.
 
-## net_dgrm.c — three networking bugs
+## net_dgrm.c — two networking bugs
 
 **File:** `net_dgrm.c.patch`
-**Severity:** buffer overflow (remotely exploitable) / connection handling
+**Severity:** buffer overflow (remotely exploitable)
 
-Three fixes in the datagram network layer:
+Two fixes in the datagram network layer:
 
 1. **BAN_TEST POSIX struct portability.** The `#else` fallback for non-Windows
    builds manually defines `struct in_addr`, `struct sockaddr_in`, `AF_INET`,
@@ -65,14 +65,7 @@ Three fixes in the datagram network layer:
    fragile and can cause problems when the struct layout does not match the
    platform. The fix replaces them with standard POSIX `#include` directives.
 
-2. **`AddrCompare` connection matching (NAT bug).** `UDP_AddrCompare()` returns
-   0 for an exact match, 1 for same-IP-different-port, and -1 for different IP.
-   The original check `if (ret >= 0)` treats "same IP, different port" as a
-   reconnection, so a second player behind the same NAT (same public IP,
-   different source port) kicks the first player. The fix changes the check to
-   `if (ret == 0)`.
-
-3. **`Datagram_GetMessage` receive buffer overflow.** The packet reassembly
+2. **`Datagram_GetMessage` receive buffer overflow.** The packet reassembly
    loop `memcpy`s incoming data into `sock->receiveMessage` without checking
    whether the accumulated length exceeds `NET_MAXMESSAGE`. A malicious or
    malformed oversized packet can overflow the buffer. The fix adds bounds

@@ -53,12 +53,6 @@ func BuildCCREQServerInfo() []byte {
 	return buf
 }
 
-// isCCREQServerInfo reports whether payload is a valid CCREQ_SERVER_INFO.
-func isCCREQServerInfo(payload []byte) bool {
-	_, ok := parseCCREQServerInfo(payload)
-	return ok
-}
-
 // parseCCREQServerInfo extracts the protocol version from a CCREQ_SERVER_INFO.
 func parseCCREQServerInfo(payload []byte) (protocol byte, ok bool) {
 	if len(payload) < 4+1 {

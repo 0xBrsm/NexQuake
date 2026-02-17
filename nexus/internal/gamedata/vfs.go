@@ -129,7 +129,7 @@ func overlayLayerIntoManifest(byKey map[string]vfsManifestEntry, dataDir, mod, l
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
-		if rel == "." || rel == "" {
+		if rel == "." {
 			return nil
 		}
 
@@ -262,9 +262,6 @@ func cleanVFSPath(p string) (string, error) {
 	if strings.HasPrefix(p, "../") || p == ".." || strings.Contains(p, "/../") {
 		return "", fmt.Errorf("path traversal")
 	}
-	if strings.HasPrefix(p, "/") {
-		return "", fmt.Errorf("absolute path")
-	}
 	return p, nil
 }
 
@@ -396,7 +393,7 @@ func overlaySymlinks(dstRoot, srcRoot string) error {
 		if err != nil {
 			return nil
 		}
-		if rel == "." || rel == "" {
+		if rel == "." {
 			return nil
 		}
 

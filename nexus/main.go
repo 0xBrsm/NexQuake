@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -97,7 +96,7 @@ func main() {
 	}
 
 	pakCache := gamedata.NewPakIndexCache()
-	mux := newMux(cfg, pakCache, serverMgr)
+	mux := newMux(cfg, pakCache)
 
 	server := &http.Server{
 		Addr:              ":" + cfg.httpPort,
@@ -223,11 +222,6 @@ func runHealthcheck(httpPort string) error {
 	}
 	defer resp.Body.Close()
 
-	// Drain response body to allow connection reuse, though not critical for a single-shot command.
-	defer func() {
-		_, _ = io.Copy(io.Discard, resp.Body)
-	}()
-
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s", resp.Status)
 	}
@@ -334,7 +328,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func newMux(cfg runtimeConfig, pakCache *gamedata.PakIndexCache, mgr *orch.ServerManager) *http.ServeMux {
+func newMux(cfg runtimeConfig, pakCache *gamedata.PakIndexCache) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// Health check endpoint (Go 1.22+ method-based routing)
@@ -346,15 +340,10 @@ func newMux(cfg runtimeConfig, pakCache *gamedata.PakIndexCache, mgr *orch.Serve
 		fmt.Fprintf(w, "OK")
 	})
 
-	// WebSocket endpoint for game connections
-	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
-		handleWebSocket(w, r)
-	})
+	mux.HandleFunc("GET /ws", handleWebSocket)
 
 	// Serve game data files - shared between WASM client and servers.
-	dataManifestHandler := addCORSHeaders(http.HandlerFunc(gamedata.NewDataManifestBundleHandler(cfg.dataDir, pakCache, cfg.vfsPrefetchConcurrency)), cfg.corsOrigin)
-	mux.Handle("/data-manifest", dataManifestHandler)
-	mux.Handle("/data-manifest/", dataManifestHandler)
+	mux.Handle("/data-manifest", addCORSHeaders(http.HandlerFunc(gamedata.NewDataManifestBundleHandler(cfg.dataDir, pakCache, cfg.vfsPrefetchConcurrency)), cfg.corsOrigin))
 	mux.Handle("/pak-extract/", addCORSHeaders(http.HandlerFunc(gamedata.NewPakExtractHandler(cfg.dataDir, pakCache)), cfg.corsOrigin))
 	mux.Handle("/cd-manifest", addCORSHeaders(http.HandlerFunc(gamedata.NewCDManifestHandler(cfg.cdDir)), cfg.corsOrigin))
 
@@ -372,36 +361,16 @@ func newMux(cfg runtimeConfig, pakCache *gamedata.PakIndexCache, mgr *orch.Serve
 
 func buildAdminEnv() *admin.Env {
 	return &admin.Env{
-		ServerSnapshots: func() []orch.ServerSnapshot {
-			return globalServerManager.Snapshots()
-		},
-		StartServer: func(target int) error {
-			return globalServerManager.StartServer(target)
-		},
-		StopServer: func(ctx context.Context, target int, killAfter time.Duration) error {
-			return globalServerManager.StopServer(ctx, target, killAfter)
-		},
-		RestartServer: func(ctx context.Context, target int, killAfter time.Duration) error {
-			return globalServerManager.RestartServer(ctx, target, killAfter)
-		},
-		RemoveServer: func(target int) error {
-			return globalServerManager.RemoveServer(target)
-		},
-		LaunchServer: func(binary string, args []string) error {
-			return globalServerManager.LaunchServer(binary, args)
-		},
-		ExecServerCmd: func(port int, cmd string) (string, error) {
-			return globalServerManager.ExecServerCommand(port, cmd)
-		},
-		TailNexusLog: tailNexusLogLines,
-		SessionSnapshots: func() []nqnet.SessionSnapshot {
-			return globalSessionRegistry.SnapshotAll()
-		},
-		SnapshotByVIP: func(vip string) ([]*nqnet.Router, []nqnet.BanTarget) {
-			return globalSessionRegistry.SnapshotByVirtualIP(vip)
-		},
-		ReserveAndBlock: func(ip [4]byte, sourceKey string) {
-			globalIPAllocator.ReserveAndBlock(ip, sourceKey)
-		},
+		ServerSnapshots:  globalServerManager.Snapshots,
+		StartServer:      globalServerManager.StartServer,
+		StopServer:       globalServerManager.StopServer,
+		RestartServer:    globalServerManager.RestartServer,
+		RemoveServer:     globalServerManager.RemoveServer,
+		LaunchServer:     globalServerManager.LaunchServer,
+		ExecServerCmd:    globalServerManager.ExecServerCommand,
+		TailNexusLog:     tailNexusLogLines,
+		SessionSnapshots: globalSessionRegistry.SnapshotAll,
+		SnapshotByVIP:    globalSessionRegistry.SnapshotByVirtualIP,
+		ReserveAndBlock:  globalIPAllocator.ReserveAndBlock,
 	}
 }

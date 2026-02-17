@@ -43,6 +43,12 @@ WASM's strict function signature checking causes a link-time mismatch error.
 The original code relied on an implicit declaration, which C99 deprecated and
 Emscripten rejects.
 
+#### `cl_main.c.patch` — mod switching initialization
+
+Calls `COM_SwitchGame(NULL)` during `CL_Disconnect()` on Emscripten. Resets
+the game directory to the base game when disconnecting, so the next connect
+can switch to whatever mod the new server is running.
+
 #### `common.h.patch` — `COM_SwitchGame` declaration
 
 Declares `COM_SwitchGame()` (implemented in `common.c.patch`) so that
@@ -98,6 +104,18 @@ NexQuake-specific changes to the datagram network layer:
 3. **Emscripten yield during connect.** Adds `emscripten_sleep(1)` in the
    `_Datagram_CheckNewConnections` connect loop so WebSocket frames can arrive.
 
+#### `menu.c.patch` — server list UI enhancements
+
+Four changes to the server browser menus:
+1. **Console auto-close.** Closes the console when opening the search menu so
+   it doesn't obscure the UI.
+2. **Gamedir column.** Adds a `Game` column to the server list using
+   `NET_SlistFormatEntry()`, showing which mod each server runs.
+3. **Centered layout.** Header row, separator rule, and entries are
+   dynamically centered based on the widest entry.
+4. **`smenu` command.** Registers a console command to open the search menu
+   directly (shorthand for `menu_search`).
+
 #### `cl_parse.c.patch` — mod switching and asset prefetch
 
 Two features added to `CL_ParseServerInfo()`:
@@ -122,6 +140,90 @@ Two features added to `CL_ParseServerInfo()`:
 | `Makefile.emscripten` | Emscripten build configuration. Source file list, compiler flags (`-sMAX_WEBGL_VERSION=2`, `-sASYNCIFY`), linker settings. No SDL references. |
 | `shell.html` | HTML template for the browser client. Bootstrap logic: fetches `/data-manifest` (all mod manifests in one payload), creates virtual filesystem, downloads game data, starts Quake. Contains canvas element, loading UI, and query parameter handling (for example `?-nosound`). |
 
+## Feature Index
+
+Patches are organized per upstream file (one `.patch` per file touched), but
+each patch serves one or more higher-level features. This index maps features
+to their constituent patches and overlay files so you can trace all the code
+for a given feature in one place.
+
+Several patches contain hunks for multiple features (noted with "partial"
+below). This is why patches are organized per file rather than per feature —
+splitting cross-cutting hunks across feature-specific patches would cause
+them to break when any one feature patch is skipped, since line offsets in the
+shared upstream file would shift.
+
+### WASM Compatibility
+
+Foundation fixes required for the Quake source to compile and run under
+Emscripten. Everything else depends on these.
+
+| File | What it contributes |
+|------|---------------------|
+| `chase.c.patch` | Explicit `extern` prototype for `SV_RecursiveHullCheck()` |
+| `net.h.patch` *(partial)* | `PollProcedure` signature: `()` → `(void *arg)` |
+| `net_main.c.patch` *(partial)* | `void*` poll signatures, `emscripten_sleep` yield in connect loop |
+| `net_dgrm.c.patch` *(partial)* | `void*` poll signatures, `emscripten_sleep` yield in search/connect loops |
+
+Platform overlay files: `sys_wasm.c`, `vid_wasm.c`, `snd_wasm.c`
+
+### Mod Switching
+
+Runtime game directory switching so the client can connect to servers running
+different mods (e.g. `id1` → `hipnotic`) without restarting.
+
+| File | What it contributes |
+|------|---------------------|
+| `common.h.patch` | `COM_SwitchGame()` declaration |
+| `common.c.patch` | `COM_SwitchGame()` implementation (ring buffer cache, JS notification) |
+| `host.c.patch` | `fs_hunklevel` for safe Hunk free/realloc across mod switches |
+| `cl_main.c.patch` | Resets game directory on disconnect |
+| `cl_parse.c.patch` *(partial)* | Auto-switches to server's gamedir on connect |
+
+### Nexus Server List
+
+Aggregated server list from the Nexus relay, with gamedir display and
+formatted UI.
+
+| File | What it contributes |
+|------|---------------------|
+| `net.h.patch` *(partial)* | `gamedir[16]` field in `hostcache_t` |
+| `net_main.c.patch` *(partial)* | Aggregated slist with early-exit, gamedir column in console output, poll dedup |
+| `net_dgrm.c.patch` *(partial)* | Batched server list parsing (Nexus protocol) |
+| `menu.c.patch` | Server list UI: gamedir column, centered layout, console auto-close, `smenu` command |
+
+### Asset Prefetch
+
+Parallel download of models and sounds over HTTP during connect, eliminating
+sequential latency.
+
+| File | What it contributes |
+|------|---------------------|
+| `cl_parse.c.patch` *(partial)* | JavaScript prefetch pipeline, 30s wait, keepalive fix for mid-parse datagrams |
+
+### WebSocket Networking
+
+Replaces UDP sockets with WebSocket transport for browser multiplayer.
+
+Overlay files only (no patches): `net_ws_transport.c`, `net_ws_transport.h`,
+`net_ws_vnet.c`, `net_ws_vnet.h`, `net_bsd.c`, `cmd_rcon.c`
+
+### Cross-Cutting Patches
+
+These patches appear in multiple features above. The table shows which hunks
+serve which feature.
+
+| Patch | Hunks | Features |
+|-------|-------|----------|
+| `net.h.patch` | `PollProcedure` signature | WASM Compat |
+| | `gamedir[16]` field | Nexus Server List |
+| `net_main.c.patch` | Aggregated slist, gamedir column, poll dedup | Nexus Server List |
+| | `void*` signatures, `emscripten_sleep` | WASM Compat |
+| `net_dgrm.c.patch` | Batched server list parsing | Nexus Server List |
+| | `void*` signatures, `emscripten_sleep` | WASM Compat |
+| `cl_parse.c.patch` | Auto mod switch on connect | Mod Switching |
+| | Prefetch pipeline, keepalive fix | Asset Prefetch |
+
 ## Patch Overlap Analysis
 
 The bugfix patches (`bugfix/`) and client patches both modify `common.c`,
@@ -130,7 +232,7 @@ The bugfix patches (`bugfix/`) and client patches both modify `common.c`,
 | File | Bugfix hunks | Client hunks | Conflict? |
 |------|-------------|-------------|-----------|
 | `common.c` | Lines 855–980 (COM_FileBase, COM_Parse) | Lines 21, 1239–1834 (include, COM_SwitchGame) | ❌ No |
-| `net_dgrm.c` | Lines 29–50, 438–455, 994 (structs, overflow, NAT) | Lines 54, 516, 644, 1103–1313 (signatures, slist, yield) | ❌ No |
+| `net_dgrm.c` | Lines 29–50, 438–455 (structs, overflow) | Lines 54, 516, 644, 1103–1313 (signatures, slist, yield) | ❌ No |
 | `net.h` | Lines 241–254 (htonl/ntohl declarations) | Lines 227, 314 (hostcache gamedir, PollProcedure sig) | ❌ No |
 
 Bugfix patches are applied first by `prepare-upstream.sh`, then client patches
@@ -176,10 +278,12 @@ All client patches are **necessary** for NexQuake:
 | Patch | Verdict | Reason |
 |-------|---------|--------|
 | `chase.c.patch` | **Required** | WASM build fails without the explicit prototype |
+| `cl_main.c.patch` | **Required** | Resets game directory on disconnect for clean mod switching |
 | `common.h.patch` | **Required** | Declaration for COM_SwitchGame |
 | `common.c.patch` | **Required** | Mod switching is core NexQuake functionality |
 | `host.c.patch` | **Required** | Companion to common.c.patch (Hunk safety) |
 | `net.h.patch` | **Required** | WASM crashes without strict function signatures |
 | `net_main.c.patch` | **Required** | Aggregated slist, poll dedup, WASM yields |
 | `net_dgrm.c.patch` | **Required** | Nexus server list protocol, WASM yields |
+| `menu.c.patch` | **Required** | Server list gamedir column and centered layout |
 | `cl_parse.c.patch` | **Required** | Mod switching + asset prefetch for playable load times |

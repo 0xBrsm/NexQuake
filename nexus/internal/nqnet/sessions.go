@@ -129,20 +129,13 @@ func sortedUniqueTargets(in []BanTarget) []BanTarget {
 	if len(in) == 0 {
 		return nil
 	}
-	type banKey struct {
-		Port      int
-		VirtualIP string
-	}
-	seen := make(map[banKey]BanTarget, len(in))
+	seen := make(map[BanTarget]struct{}, len(in))
+	out := make([]BanTarget, 0, len(in))
 	for _, t := range in {
-		if t.Port < 1 || t.Port > 65535 || t.VirtualIP == "" {
-			continue
+		if _, dup := seen[t]; !dup {
+			seen[t] = struct{}{}
+			out = append(out, t)
 		}
-		seen[banKey{Port: t.Port, VirtualIP: t.VirtualIP}] = t
-	}
-	out := make([]BanTarget, 0, len(seen))
-	for _, target := range seen {
-		out = append(out, target)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Port != out[j].Port {

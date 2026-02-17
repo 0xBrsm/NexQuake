@@ -223,7 +223,7 @@ func (r *Router) handleWSFrame(packet []byte) {
 	payload := packet[WSPortHeaderSize:]
 
 	if dstPort == 0 {
-		if r.dispatch.HandleSlistRequest != nil && isCCREQServerInfo(payload) {
+		if _, ok := parseCCREQServerInfo(payload); r.dispatch.HandleSlistRequest != nil && ok {
 			if resp := r.dispatch.HandleSlistRequest(payload); len(resp) > 0 {
 				r.sendWS(buildWSFrame(0, resp), false)
 			}

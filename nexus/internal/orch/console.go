@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -322,9 +323,7 @@ func (c *serverConsole) tail(n int, filter serverConsoleLineFilter) []string {
 		}
 		out = append(out, filtered)
 	}
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
-	}
+	slices.Reverse(out)
 	return out
 }
 
@@ -354,10 +353,6 @@ func (c *serverConsole) run(logFile *os.File, formatLogLine func(string, time.Ti
 			return
 		}
 	}
-}
-
-func (c *serverConsole) captureCommandOutput(cmd string, maxWait, idleWait time.Duration) (string, error) {
-	return c.captureCommandOutputFiltered(cmd, maxWait, idleWait, nil)
 }
 
 func (c *serverConsole) captureCommandOutputFiltered(cmd string, maxWait, idleWait time.Duration, filter serverConsoleLineFilter) (string, error) {

@@ -93,7 +93,7 @@ func loadServersIni(iniPath string, startedAt time.Time, warnf func(string, ...a
 			continue
 		}
 
-		fields, err := splitCommandLine(raw)
+		fields, err := shlex.Split(raw)
 		if err != nil {
 			return nil, true, fmt.Errorf("servers.ini line %d: %w", lineNo, err)
 		}
@@ -150,10 +150,6 @@ func loadServersIni(iniPath string, startedAt time.Time, warnf func(string, ...a
 	}
 
 	return entries, true, nil
-}
-
-func splitCommandLine(line string) ([]string, error) {
-	return shlex.Split(line)
 }
 
 func findUnsupportedLaunchArg(args []string) (string, bool) {

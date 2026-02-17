@@ -43,11 +43,6 @@ func HandleAdminFrame(r *nqnet.Router, payload []byte, auth *Auth, env *Env) {
 		r.SendAdminReply(reply)
 		return
 	}
-	if targetPort < 1 || targetPort > 65535 {
-		r.SendAdminReply("error: unknown target\n")
-		return
-	}
-
 	reply, err := env.ExecServerCmd(targetPort, args)
 	if err != nil {
 		r.SendAdminReply(fmt.Sprintf("error: %v\n", err))

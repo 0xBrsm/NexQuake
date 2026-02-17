@@ -40,10 +40,6 @@ func (s *managedServer) writeConsole(cmd string) error {
 	return s.Console.writeCommand(cmd)
 }
 
-func (s *managedServer) writeConsoleAndCapture(cmd string, maxWait, idleWait time.Duration) (string, error) {
-	return s.writeConsoleAndCaptureFiltered(cmd, maxWait, idleWait, nil)
-}
-
 func (s *managedServer) writeConsoleAndCaptureFiltered(cmd string, maxWait, idleWait time.Duration, filter serverConsoleLineFilter) (string, error) {
 	if s.Console == nil {
 		return "", fmt.Errorf("server console unavailable")
@@ -695,48 +691,4 @@ func isProcessAlive(p *os.Process) bool {
 		return false
 	}
 	return p.Signal(syscall.Signal(0)) == nil
-}
-
-// ResolveManifestGameDirs resolves the full search path for a given game directory,
-// including fallback directories from running servers.
-func (m *ServerManager) ResolveManifestGameDirs(gameDir string) []string {
-	gameDir = strings.TrimSpace(gameDir)
-	if gameDir == "" {
-		return nil
-	}
-
-	resolved := []string{gameDir}
-	seen := map[string]struct{}{gameDir: {}}
-
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	ids := make([]int, 0, len(m.serversByID))
-	for id := range m.serversByID {
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
-
-	for _, id := range ids {
-		rec := m.serversByID[id]
-		if rec.spec == nil {
-			continue
-		}
-		idx := slices.Index(rec.spec.SearchPath, gameDir)
-		if idx < 0 {
-			continue
-		}
-		for _, fallback := range rec.spec.SearchPath[idx+1:] {
-			fallback = strings.TrimSpace(fallback)
-			if fallback == "" {
-				continue
-			}
-			if _, ok := seen[fallback]; ok {
-				continue
-			}
-			seen[fallback] = struct{}{}
-			resolved = append(resolved, fallback)
-		}
-	}
-	return resolved
 }

@@ -22,13 +22,6 @@ func formatServerCommandReply(output string) string {
 	return output + "\n"
 }
 
-func filterServerCommandReplyLine(line string) (string, bool) {
-	if !shouldRelayServerConsoleLine(line) {
-		return "", false
-	}
-	return line, true
-}
-
 func serverCommandReplyFilter(cmd string) serverConsoleLineFilter {
 	expectedEcho := normalizeConsoleRelayLine(formatServerConsoleCommand(cmd))
 	return func(line string) (string, bool) {
@@ -93,7 +86,9 @@ func (m *ServerManager) ExecServerCommand(port int, cmd string) (string, error) 
 		if srv.Console == nil {
 			return "", fmt.Errorf("server console unavailable")
 		}
-		lines := srv.Console.tail(tailLines, filterServerCommandReplyLine)
+		lines := srv.Console.tail(tailLines, func(line string) (string, bool) {
+			return line, shouldRelayServerConsoleLine(line)
+		})
 		return formatServerTailReply(lines), nil
 	}
 	output, err := srv.writeConsoleAndCaptureFiltered(

@@ -82,7 +82,6 @@ func InitAuth(ctx context.Context, infof, debugf func(string, ...any)) (*Auth, e
 	return auth, nil
 }
 
-// RconPassword returns the configured rcon password (may be empty).
 func (a *Auth) rconPasswordValue() string {
 	if a == nil {
 		return ""
@@ -207,11 +206,10 @@ func parseAdminMatchers(raw string) map[string][]string {
 func matchesAdminMatchers(claims map[string]any, matchers map[string][]string) bool {
 	for key, values := range matchers {
 		if strings.EqualFold(key, adminMatchEmail) {
-			email, ok := claims["email"].(string)
-			if ok {
+			if email, ok := claims["email"].(string); ok {
 				email = strings.ToLower(strings.TrimSpace(email))
 				for _, value := range values {
-					if email == strings.ToLower(strings.TrimSpace(value)) {
+					if email == value {
 						return true
 					}
 				}
@@ -236,14 +234,7 @@ func containsClaimValue(val any, target string) bool {
 	switch v := val.(type) {
 	case []interface{}:
 		for _, item := range v {
-			s, ok := item.(string)
-			if ok && s == target {
-				return true
-			}
-		}
-	case []string:
-		for _, s := range v {
-			if s == target {
+			if s, ok := item.(string); ok && s == target {
 				return true
 			}
 		}

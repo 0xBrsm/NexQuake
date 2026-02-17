@@ -64,7 +64,7 @@ func TestMatchesAdminMatchers(t *testing.T) {
 	claims := map[string]any{
 		"email":  "steve@openai.com",
 		"groups": []any{"players", "admin"},
-		"roles":  []string{"viewer", "ops"},
+		"roles":  []any{"viewer", "ops"},
 	}
 
 	if !matchesAdminMatchers(claims, map[string][]string{adminMatchEmail: {"steve@openai.com"}}) {

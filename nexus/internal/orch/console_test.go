@@ -171,7 +171,7 @@ func TestCaptureCommandOutputFiltered_AppliesFilter(t *testing.T) {
 		"hostname",
 		120*time.Millisecond,
 		10*time.Millisecond,
-		filterServerCommandReplyLine,
+		func(line string) (string, bool) { return line, shouldRelayServerConsoleLine(line) },
 	)
 	if err != nil {
 		t.Fatalf("captureCommandOutputFiltered error = %v", err)
@@ -199,7 +199,7 @@ func TestServerConsoleTail_ReturnsMostRecentFilteredLines(t *testing.T) {
 		t.Fatalf("expected last two lines, got %q", strings.Join(lines, ""))
 	}
 
-	filtered := c.tail(3, filterServerCommandReplyLine)
+	filtered := c.tail(3, func(line string) (string, bool) { return line, shouldRelayServerConsoleLine(line) })
 	joined := strings.Join(filtered, "")
 	if strings.Contains(joined, "FindFile: maps/e1m1.bsp") {
 		t.Fatalf("expected noisy FindFile line filtered from tail, got %q", joined)
