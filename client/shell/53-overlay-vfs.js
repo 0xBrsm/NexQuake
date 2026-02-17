@@ -73,168 +73,6 @@
       return path.toLowerCase().endsWith('.cfg');
     }
 
-    function getCdRemoteTracks() {
-      var raw = [];
-      try { raw = Module.nqCdGetRemoteTracks ? Module.nqCdGetRemoteTracks() : []; } catch (e) {}
-      if (!Array.isArray(raw)) return [];
-      return raw.map(function(path) {
-        path = String(path || '').trim().replace(/^\/+/, '');
-        return path ? (ctx.CD_DIR + path) : '';
-      }).filter(Boolean);
-    }
-
-    function getCdTrackButtonState(trackPath, runtime) {
-      var runtimePath = runtime && runtime.path ? String(runtime.path).replace(/\\/g, '/').toLowerCase() : '';
-      var userPrefix = String(ctx.USERFS || '').replace(/\\/g, '/').toLowerCase();
-      var pathLower = String(trackPath || '').replace(/\\/g, '/').toLowerCase();
-      var isPlaying = runtime && (runtime.state === 'playing' || runtime.state === 'loading');
-      var isPaused = runtime && runtime.state === 'paused';
-      var isCurrentTrack;
-
-      if (runtimePath && userPrefix && runtimePath.indexOf(userPrefix + '/') === 0)
-        runtimePath = runtimePath.slice(userPrefix.length);
-      if (runtimePath && runtimePath.charAt(0) !== '/')
-        runtimePath = '/' + runtimePath;
-
-      var trackNumber = ctx.getCdTrackNumber(trackPath);
-      isCurrentTrack = !!(runtimePath && runtimePath === pathLower);
-      return {
-        isCurrentTrack: isCurrentTrack,
-        isCurrentActive: isCurrentTrack && (isPlaying || isPaused),
-        isCurrentPlaying: isCurrentTrack && isPlaying,
-        isCurrentPaused: isCurrentTrack && isPaused,
-        trackNumber: trackNumber,
-        disabled: false
-      };
-    }
-
-    function getCdTrackState(trackPath, runtime, forceDisabled) {
-      var state = getCdTrackButtonState(trackPath, runtime);
-      if (forceDisabled || !ctx.cdEnabled) {
-        state.disabled = true;
-        state.isCurrentPlaying = false;
-        state.isCurrentPaused = false;
-        state.isCurrentActive = false;
-      }
-      return state;
-    }
-
-    function runCdTrackCommand(command, trackNumber, errorMessage) {
-      ctx.runCdCommand(command, trackNumber).catch(function(err) {
-        ctx.showErrorMessage(errorMessage, 2500);
-        console.error(errorMessage + ':', err);
-      });
-    }
-
-    function runCdTrackToggle(trackPath, trackState) {
-      if (!trackState || trackState.disabled)
-        return;
-      if (trackState.isCurrentPlaying) {
-        runCdTrackCommand('pause', 0, 'CD pause failed');
-        return;
-      }
-      if (trackState.isCurrentPaused) {
-        runCdTrackCommand('resume', 0, 'CD resume failed');
-        return;
-      }
-      if (!trackState.trackNumber) {
-        ctx.showErrorMessage('Track filename must start or end with a number', 2500);
-        return;
-      }
-      runCdTrackCommand('loop', trackState.trackNumber, 'CD loop failed');
-    }
-
-    function toggleCdTrack(trackPath, forceDisabled) {
-      runCdTrackToggle(trackPath, getCdTrackState(trackPath, ctx.getCdRuntimeState(), !!forceDisabled));
-    }
-
-    function applyCdTrackToggleState(btn, trackState) {
-      var state = trackState || { trackNumber: 0 };
-      var disabled = !!state.disabled || (!state.isCurrentActive && !state.trackNumber);
-      var label = 'loop track ' + (state.trackNumber || '');
-
-      if (state.isCurrentPlaying)
-        label = 'pause track';
-      else if (state.isCurrentPaused)
-        label = 'resume track';
-
-      btn.classList.toggle('active', !!(state.isCurrentPlaying || state.isCurrentPaused));
-      btn.innerHTML = state.isCurrentPlaying ? ctx.CD_PAUSE_ICON : ctx.CD_PLAY_ICON;
-      btn.setAttribute('aria-label', label);
-      btn.disabled = disabled;
-    }
-
-    function applyCdTrackRowState(li, trackState) {
-      var state = trackState || { trackNumber: 0 };
-      li.classList.toggle('nq-cd-track-active', !!state.isCurrentActive);
-      li.classList.toggle('nq-cd-track-clickable', !state.disabled && (state.isCurrentActive || state.trackNumber));
-    }
-
-    function setCdTrackMeta(el, trackPath, forceDisabled) {
-      if (!el)
-        return;
-      el.setAttribute('data-cd-track-path', trackPath);
-      el.setAttribute('data-cd-track-disabled', forceDisabled ? '1' : '0');
-    }
-
-    function getCdTrackStateFromElement(el, runtime) {
-      var trackPath = el.getAttribute('data-cd-track-path') || '';
-      var forceDisabled = el.getAttribute('data-cd-track-disabled') === '1';
-      return getCdTrackState(trackPath, runtime, forceDisabled);
-    }
-
-    function applyCdTrackElementState(li, runtime) {
-      var btn = li.querySelector('.nq-cd-track-toggle');
-      var state = getCdTrackStateFromElement(li, runtime);
-      applyCdTrackRowState(li, state);
-      if (btn)
-        applyCdTrackToggleState(btn, state);
-    }
-
-    function createCdTrackToggleButton(trackPath, forceDisabled, runtime) {
-      var btn = document.createElement('button');
-      btn.className = 'nq-cd-track-toggle';
-      setCdTrackMeta(btn, trackPath, forceDisabled);
-      applyCdTrackToggleState(btn, getCdTrackState(trackPath, runtime, forceDisabled));
-      return btn;
-    }
-
-    function updateCdTrackRows(runtime) {
-      if (!ctx.list || !ctx.isCdDir(ctx.currentDir))
-        return false;
-      ctx.list.querySelectorAll('li[data-cd-track-path]').forEach(function(li) {
-        applyCdTrackElementState(li, runtime);
-      });
-      return true;
-    }
-
-    function appendCdServerTracks(serverTracks, runtime, localTrackNumbers) {
-      var heading;
-      if (!serverTracks.length)
-        return;
-      heading = document.createElement('li');
-      heading.className = 'nq-cd-server-heading';
-      heading.textContent = 'Server CD tracks';
-      ctx.list.appendChild(heading);
-
-      serverTracks.forEach(function(trackPath) {
-        var li = document.createElement('li');
-        var span = document.createElement('span');
-        var trackNumber = ctx.getCdTrackNumber(trackPath);
-        var overridden = !!(trackNumber > 0 && localTrackNumbers && localTrackNumbers[trackNumber]);
-        li.className = 'nq-cd-track-server';
-        if (overridden)
-          li.classList.add('nq-cd-track-overridden');
-        setCdTrackMeta(li, trackPath, overridden);
-        span.className = 'nq-fname';
-        span.textContent = trackPath.startsWith(ctx.CD_DIR) ? trackPath.slice(ctx.CD_DIR.length) : trackPath;
-        li.appendChild(createCdTrackToggleButton(trackPath, overridden, runtime));
-        li.appendChild(span);
-        applyCdTrackElementState(li, runtime);
-        ctx.list.appendChild(li);
-      });
-    }
-
     function openEditor(displayPath, backupPath) {
       try {
         var data = FS.readFile(backupPath, { encoding: 'utf8' });
@@ -280,7 +118,7 @@
       try {
         if (ctx.isCdDir(ctx.currentDir)) {
           runtimeState = ctx.getCdRuntimeState();
-          stateForDeletedTrack = getCdTrackButtonState(displayPath, runtimeState);
+          stateForDeletedTrack = ctx.getCdTrackButtonState(displayPath, runtimeState);
           if (stateForDeletedTrack.isCurrentTrack && runtimeState.state !== 'stopped') {
             try {
               await ctx.runCdCommand('stop');
@@ -392,7 +230,7 @@
           if (trackNumber > 0)
             localTrackNumbers[trackNumber] = true;
         });
-        serverTracks = getCdRemoteTracks().sort();
+        serverTracks = ctx.getCdRemoteTracks().sort();
         runtime = ctx.getCdRuntimeState();
       } else {
         files = collectFiles(ctx.USERFS, ctx.isUserFile)
@@ -434,10 +272,10 @@
           span.classList.add('nq-editable');
 
         if (isCdMode) {
-          setCdTrackMeta(li, displayPath, false);
-          cdBtn = createCdTrackToggleButton(displayPath, false, runtime);
+          ctx.setCdTrackMeta(li, displayPath, false);
+          cdBtn = ctx.createCdTrackToggleButton(displayPath, false, runtime);
           li.appendChild(cdBtn);
-          applyCdTrackElementState(li, runtime);
+          ctx.applyCdTrackElementState(li, runtime);
         }
         li.appendChild(span);
         actions = document.createElement('div');
@@ -465,7 +303,7 @@
       }
 
       if (isCdMode)
-        appendCdServerTracks(serverTracks, runtime, localTrackNumbers);
+        ctx.appendCdServerTracks(serverTracks, runtime, localTrackNumbers);
     }
 
     Object.assign(ctx, {
@@ -474,8 +312,6 @@
       deleteFile,
       requestDeleteFile,
       moveFileToDir,
-      toggleCdTrack,
-      updateCdTrackRows,
       refresh
     });
   });

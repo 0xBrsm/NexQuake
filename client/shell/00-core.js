@@ -73,28 +73,31 @@ function nqSafeSyncFS() {
 var NQ_PER_MOD_CONFIG_STORAGE_KEY = 'nexquake.per_mod_config';
 var NQ_CD_ENABLED_STORAGE_KEY = 'nexquake.cd_enabled';
 
-function nqLoadPerModConfig() {
+function nqLoadStoredBool(storageKey) {
   try {
-    var raw = localStorage.getItem(NQ_PER_MOD_CONFIG_STORAGE_KEY);
+    var raw = localStorage.getItem(storageKey);
     if (raw === '1' || raw === 'true') return true;
     if (raw === '0' || raw === 'false') return false;
   } catch (e) {}
   return null;
+}
+
+function nqSaveStoredBool(storageKey, value) {
+  try { localStorage.setItem(storageKey, value ? '1' : '0'); } catch (e) {}
+}
+
+function nqLoadPerModConfig() {
+  return nqLoadStoredBool(NQ_PER_MOD_CONFIG_STORAGE_KEY);
 }
 
 function nqSavePerModConfig(value) {
-  try { localStorage.setItem(NQ_PER_MOD_CONFIG_STORAGE_KEY, value ? '1' : '0'); } catch (e) {}
+  nqSaveStoredBool(NQ_PER_MOD_CONFIG_STORAGE_KEY, value);
 }
 
 function nqLoadCdEnabled() {
-  try {
-    var raw = localStorage.getItem(NQ_CD_ENABLED_STORAGE_KEY);
-    if (raw === '1' || raw === 'true') return true;
-    if (raw === '0' || raw === 'false') return false;
-  } catch (e) {}
-  return null;
+  return nqLoadStoredBool(NQ_CD_ENABLED_STORAGE_KEY);
 }
 
 function nqSaveCdEnabled(value) {
-  try { localStorage.setItem(NQ_CD_ENABLED_STORAGE_KEY, value ? '1' : '0'); } catch (e) {}
+  nqSaveStoredBool(NQ_CD_ENABLED_STORAGE_KEY, value);
 }
