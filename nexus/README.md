@@ -19,16 +19,17 @@ Most nexus logic lives in internal packages:
 |-----|---------|
 | `internal/nqnet/` | **Networking.** WebSocket upgrader, WebSocket<->UDP router, session registry, virtual IP allocator, tunnel frame helpers. |
 | `internal/orch/` | **Orchestration.** Dedicated server launch planning, process lifecycle, server console capture/tail, server-info poller for `slist`. |
-| `internal/admin/` | **Admin.** Auth (RCON password + OIDC JWT), admin frame handler (`rcon`), nexus command dispatcher. |
-| `internal/gamedata/` | **Game data.** Bootstrap manifests, VFS manifest builder, PAK indexing and on-demand extraction handlers. |
+| `internal/admin/` | **Admin.** Auth (OIDC JWT + per-frame `rcon_password`), admin frame handler (`rcon`), nexus command dispatcher. |
+| `internal/gamedata/` | **Game data.** Bootstrap manifests, VFS manifest builder, PAK indexing, and hash-addressed asset gateway. |
 
 ### Game Data
 
 | File | Purpose |
 |------|---------|
 | `internal/gamedata/vfs.go` | **Manifest builder.** Scans `${DATA_DIR}/<mod>/common` + `${DATA_DIR}/<mod>/client`, builds JSON manifests with Quake-like precedence (loose > PAK, higher PAK number wins). |
-| `internal/gamedata/cd.go` | **CD manifest.** Scans `${CD_DIR}` for `.ogg`/`.mp3` and serves `/cd-manifest` + `/cd-stream/*` URLs for browser CD audio playback. |
-| `internal/gamedata/pak.go` | **PAK parser.** Indexes PAK headers and streams files via `/pak-extract/<mod>/<layer>/<pak>/<file>`. |
+| `internal/gamedata/cd.go` | **CD index.** Scans `${CD_DIR}` for `.ogg`/`.mp3` tracks. |
+| `internal/gamedata/pak.go` | **PAK parser.** Indexes PAK headers and exposes file offsets/sizes for extraction. |
+| `internal/gamedata/manifest.go` | **Runtime gateway.** Serves `/start` bootstrap + `/nq/<hash>` asset requests for VFS and CD audio. |
 | `internal/gamedata/assets.go` | **Bootstrap.** Downloads game data on first run from a quickstart manifest (e.g. `minimal.json`). Only activates when `${DATA_DIR}` is writable. |
 
 ### Quake 1.06 Extraction (`quake106/`)
@@ -45,7 +46,7 @@ This is what makes Nexus's auto-bootstrap work: on first run, if no game data ex
 
 | File | Purpose |
 |------|---------|
-| `auth.go` | **Authentication.** Two methods: RCON password (shared secret, token = base64(password)) and OIDC JWT (issuer + audience verification). Admin matcher logic (email, group, role). |
+| `auth.go` | **Authentication.** OIDC JWT for connection-level admin identity plus optional frame-level `rcon_password` checks. Admin matcher logic (email, group, role). |
 
 ### Utilities
 

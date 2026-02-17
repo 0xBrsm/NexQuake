@@ -138,7 +138,7 @@ Two features added to `CL_ParseServerInfo()`:
 | File | Purpose |
 |------|---------|
 | `Makefile.emscripten` | Emscripten build configuration. Source file list, compiler flags (`-sMAX_WEBGL_VERSION=2`, `-sASYNCIFY`), linker settings. No SDL references. |
-| `shell.html` | HTML template for the browser client. Bootstrap logic: fetches `/data-manifest` (all mod manifests in one payload), creates virtual filesystem, downloads game data, starts Quake. Contains canvas element, loading UI, and query parameter handling (for example `?-nosound`). |
+| `shell.html` | HTML template for the browser client. Bootstrap logic: fetches `/start` (manifest bundle + hash context), maps assets to `/nq/<hash>`, creates virtual filesystem, starts Quake. Contains canvas element, loading UI, and query parameter handling (for example `?-nosound`). |
 
 ## Feature Index
 

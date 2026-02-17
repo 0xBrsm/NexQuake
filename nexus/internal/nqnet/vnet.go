@@ -1,9 +1,9 @@
 package nqnet
 
 import (
-	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"hash/fnv"
 	"net"
 	"net/http"
 	"net/netip"
@@ -59,9 +59,9 @@ func (a *IPAllocator) tryAlloc(sourceKey string) ([4]byte, bool) {
 
 	for probe := 0; probe < maxClientIPProbeAttempts; probe++ {
 		seed := "NQ:client-ip:v1|" + base + "|" + strconv.Itoa(probe)
-		sum := sha256.Sum256([]byte(seed))
+		sum := fnv64aSum(seed)
 
-		candidate := [4]byte{127, sum[0], sum[1], sum[2]}
+		candidate := [4]byte{127, byte(sum >> 56), byte(sum >> 48), byte(sum >> 40)}
 		if a.serverIP != nil &&
 			candidate[0] == a.serverIP[0] &&
 			candidate[1] == a.serverIP[1] &&
@@ -83,6 +83,12 @@ func (a *IPAllocator) tryAlloc(sourceKey string) ([4]byte, bool) {
 	}
 
 	return [4]byte{}, false
+}
+
+func fnv64aSum(text string) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(text))
+	return h.Sum64()
 }
 
 // release returns a virtual IP to the pool.

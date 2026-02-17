@@ -169,7 +169,7 @@ Within each layer, Quake's standard precedence applies: loose files override PAK
 
 ### PAK Streaming
 
-The browser client never downloads full PAK files. Nexus indexes PAK headers on startup and extracts individual files on the fly via `/pak-extract/<mod>/<layer>/<pak>/<file>`. When the client requests a texture, model, or sound, Nexus seeks into the PAK, reads just that entry, and serves it directly. This means:
+The browser client never downloads full PAK files. Nexus indexes PAK headers on startup and serves files through hash-addressed URLs (`/nq/<hash>`). Internally, hash entries can resolve to loose files or offsets inside PAK archives, so when the client requests a texture, model, or sound, Nexus can seek into a PAK, read just that entry, and stream it directly. This means:
 
 - No multi-megabyte PAK transfers to the browser
 - No server-side extraction or disk duplication

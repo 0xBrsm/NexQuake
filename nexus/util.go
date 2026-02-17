@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net/http"
 	"os"
@@ -296,6 +297,16 @@ func currentVersionInfo() versionInfo {
 
 // ---- Misc runtime helpers ----
 
+func FNV64aSum(text string) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(text))
+	return h.Sum64()
+}
+
+func FNV64aHex(text string) string {
+	return fmt.Sprintf("%016x", FNV64aSum(text))
+}
+
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
@@ -384,7 +395,7 @@ func addCORSHeaders(h http.Handler, allowedOrigin string) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-			w.Header().Set("Access-Control-Expose-Headers", "X-NQ-VFS-Prefetch-Concurrency")
+			w.Header().Set("Access-Control-Expose-Headers", "X-NQ-VFS-Prefetch-Concurrency, X-NexQuake-Ref")
 
 			// Handle preflight
 			if r.Method == "OPTIONS" {

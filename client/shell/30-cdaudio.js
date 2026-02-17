@@ -20,17 +20,11 @@
   }
 
   function loadRemoteManifest() {
-    var xhr, raw;
-    if (manifest !== null) return manifest;
+    var raw;
+    if (manifest !== null && manifest.length)
+      return manifest;
     manifest = [];
-    try {
-      xhr = new XMLHttpRequest();
-      xhr.open('GET', '/cd-manifest', false);
-      xhr.send(null);
-    } catch (e) { return manifest; }
-    if (xhr.status === 404 || xhr.status === 204) return manifest;
-    if (xhr.status !== 200 && xhr.status !== 0) return manifest;
-    try { raw = JSON.parse(xhr.responseText || '[]'); } catch (e2) { return manifest; }
+    try { raw = Module.nexquakeCdRemoteManifest || []; } catch (e) { return manifest; }
     if (!Array.isArray(raw)) return manifest;
     raw.forEach(function(entry) {
       var path = String(entry && entry.path || '').trim();

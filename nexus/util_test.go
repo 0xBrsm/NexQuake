@@ -7,6 +7,23 @@ import (
 	"testing"
 )
 
+func TestFNV64aHex_KnownVectors(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{in: "", want: "cbf29ce484222325"},
+		{in: "hello", want: "a430d84680aabd0b"},
+	}
+
+	for _, tt := range tests {
+		got := FNV64aHex(tt.in)
+		if got != tt.want {
+			t.Fatalf("FNV64aHex(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 func writeTestPak(t *testing.T, pakPath string, files map[string][]byte) {
 	t.Helper()
 

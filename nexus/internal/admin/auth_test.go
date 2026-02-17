@@ -1,34 +1,24 @@
 package admin
 
 import (
-	"encoding/base64"
 	"net/http/httptest"
 	"testing"
 )
 
-func TestDeriveRconTokenFromPassword(t *testing.T) {
-	pw := "secret"
-	got := deriveRconTokenFromPassword(pw)
-	want := base64.StdEncoding.EncodeToString([]byte(pw))
-	if got != want {
-		t.Fatalf("deriveRconTokenFromPassword() = %q, want %q", got, want)
-	}
-}
-
-func TestIsAdminBase64PasswordToken(t *testing.T) {
+func TestIsAdminIgnoresRconPasswordQueryToken(t *testing.T) {
 	auth := &Auth{rconPassword: "testpw"}
-	token := deriveRconTokenFromPassword(auth.rconPassword)
 
-	reqA := httptest.NewRequest("GET", "http://quake-a.local:1337/ws?token="+token, nil)
+	reqA := httptest.NewRequest("GET", "http://quake-a.local:1337/ws?token=dGVzdHB3", nil)
 	reqA.Host = "quake-a.local:1337"
-	if !auth.IsAdmin(reqA) {
-		t.Fatalf("expected IsAdmin() true for matching base64 token")
+	if auth.IsAdmin(reqA) {
+		t.Fatalf("expected IsAdmin() false when only query token is provided")
 	}
 
-	reqB := httptest.NewRequest("GET", "http://quake-b.local:1337/ws?token="+base64.StdEncoding.EncodeToString([]byte("wrong")), nil)
+	reqB := httptest.NewRequest("GET", "http://quake-b.local:1337/ws", nil)
+	reqB.Header.Set("Authorization", "Bearer dGVzdHB3")
 	reqB.Host = "quake-b.local:1337"
 	if auth.IsAdmin(reqB) {
-		t.Fatalf("expected IsAdmin() false for non-matching token")
+		t.Fatalf("expected IsAdmin() false when only rcon_password-derived bearer token is provided")
 	}
 }
 

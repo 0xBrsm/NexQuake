@@ -213,6 +213,7 @@ var Module = {
     // Quake searchpaths are layered: remote first, user last (so user overrides win).
     if (!Module.nexquakeRemoteFiles) Module.nexquakeRemoteFiles = Object.create(null);
     if (!Module.nexquakeInstalledManifests) Module.nexquakeInstalledManifests = Object.create(null);
+    if (!Array.isArray(Module.nexquakeCdRemoteManifest)) Module.nexquakeCdRemoteManifest = [];
     Module.nexquakeActiveGame = normalizeGameName(Module.nexquakeActiveGame || getBaseGameName());
 
     // Emscripten's built-in FS.createLazyFile only supports browser lazy-loading in Web Workers.
@@ -365,7 +366,7 @@ var Module = {
         node = Module.nexquakeRemoteFiles && Module.nexquakeRemoteFiles[REMOTE_ROOT + '/' + baseGame + '/' + lowerRel];
       }
       if (!node || node.contents) return;
-      var resp = await fetch(node.url, { cache: 'force-cache' });
+      var resp = await fetch(node.url, { cache: 'no-store' });
       if (!resp.ok) throw new Error('prefetch failed: ' + resp.status + ' for ' + node.url);
       var buf = await resp.arrayBuffer();
       node.contents = new Uint8Array(buf);
@@ -426,11 +427,88 @@ var Module = {
       }
     }
 
-    function fetchManifestBundle() {
-      return fetch('/data-manifest').then(function(response) {
-        if (!response.ok) throw new Error('manifest bundle fetch failed: ' + response.status);
+    function normalizeRemotePath(path) {
+      path = String(path || '').replace(/\\/g, '/').replace(/^\/+/, '');
+      return path.split('/').filter(Boolean).map(function(part) { return part.toLowerCase(); }).join('/');
+    }
+
+    function fnv1a64Hex(text) {
+      var FNV_OFFSET = 0xcbf29ce484222325n;
+      var FNV_PRIME = 0x100000001b3n;
+      var MASK_64 = 0xffffffffffffffffn;
+      var bytes;
+      var hash = FNV_OFFSET;
+      var i;
+      var hex;
+
+      if (typeof BigInt === 'undefined')
+        throw new Error('BigInt is required for NexQuake asset hashing');
+      if (typeof TextEncoder === 'undefined')
+        throw new Error('TextEncoder is required for NexQuake asset hashing');
+
+      bytes = new TextEncoder().encode(String(text || ''));
+
+      for (i = 0; i < bytes.length; i++) {
+        hash ^= BigInt(bytes[i]);
+        hash = (hash * FNV_PRIME) & MASK_64;
+      }
+
+      hex = hash.toString(16);
+      while (hex.length < 16) hex = '0' + hex;
+      return hex;
+    }
+
+    function computeAssetURL(kind, mod, relPath) {
+      var ref = String(Module.nexquakeAssetRef || '').trim();
+      var normalizedPath = normalizeRemotePath(relPath);
+      var normalizedMod;
+      var key;
+      if (!ref || !normalizedPath)
+        return '';
+      if (kind === 'cd') {
+        key = 'cd:' + normalizedPath;
+      } else {
+        normalizedMod = normalizeGameName(mod);
+        if (!normalizedMod)
+          return '';
+        key = 'mod:' + normalizedMod + ':' + normalizedPath;
+      }
+      return '/nq/' + fnv1a64Hex(ref + ':' + key);
+    }
+
+    function decodeBase64UTF8(encoded) {
+      var text = String(encoded || '').trim();
+      var binary;
+      var bytes;
+      var i;
+      if (!text)
+        throw new Error('start bundle payload is empty');
+      if (typeof atob !== 'function')
+        throw new Error('base64 decode not supported in this runtime');
+      if (typeof TextDecoder === 'undefined')
+        throw new Error('TextDecoder is required for start bundle decode');
+      binary = atob(text);
+      bytes = new Uint8Array(binary.length);
+      for (i = 0; i < binary.length; i++)
+        bytes[i] = binary.charCodeAt(i) & 255;
+      return new TextDecoder().decode(bytes);
+    }
+
+    function fetchStartBundle() {
+      return fetch('/start').then(function(response) {
+        if (!response.ok) throw new Error('start bundle fetch failed: ' + response.status);
         applyPrefetchConcurrency(response.headers.get('X-NQ-VFS-Prefetch-Concurrency'));
-        return response.json();
+        Module.nexquakeAssetRef = String(response.headers.get('X-NexQuake-Ref') || '');
+        if (!Module.nexquakeAssetRef)
+          throw new Error('start bundle missing X-NexQuake-Ref header');
+        return response.text();
+      }).then(function(encoded) {
+        var decoded = decodeBase64UTF8(encoded);
+        try {
+          return JSON.parse(decoded);
+        } catch (err) {
+          throw new Error('start bundle decode failed: ' + err);
+        }
       });
     }
 
@@ -474,7 +552,9 @@ var Module = {
       // Ensure the mount root exists.
       ensureGameDir(mod);
       entries.forEach(function(ent) {
-        installLazyFile(mod, ent.path, ent.url, Number(ent.size || 0));
+        var path = String(ent && ent.path || '').trim();
+        if (!path) return;
+        installLazyFile(mod, path, computeAssetURL('mod', mod, path), 0);
       });
       Module.nexquakeInstalledManifests[mod] = true;
       Module.nexquakeActiveGame = mod;
@@ -483,17 +563,31 @@ var Module = {
 
     var manifestBundle = null;
 
-    function normalizeManifestBundle(rawBundle) {
+    function normalizeStartBundle(rawBundle) {
       var out = Object.create(null);
-      var rawMods = (rawBundle && rawBundle.mods && typeof rawBundle.mods === 'object') ? rawBundle.mods : {};
-      Object.keys(rawMods).forEach(function(rawMod) {
+      var rawGame = (rawBundle && rawBundle.game && typeof rawBundle.game === 'object') ? rawBundle.game : {};
+      var rawCd = (rawBundle && Array.isArray(rawBundle.cd)) ? rawBundle.cd : [];
+      Object.keys(rawGame).forEach(function(rawMod) {
         var mod = normalizeGameName(rawMod);
         if (!mod)
           return;
-        out[mod] = Array.isArray(rawMods[rawMod]) ? rawMods[rawMod] : [];
+        out[mod] = Array.isArray(rawGame[rawMod]) ? rawGame[rawMod] : [];
       });
       if (!out[baseGame])
         throw new Error('manifest bundle missing base game: ' + baseGame);
+      return { game: out, cd: rawCd };
+    }
+
+    function buildRemoteCdManifest(entries) {
+      var out = [];
+      if (!Array.isArray(entries))
+        return out;
+      entries.forEach(function(ent) {
+        var path = String(ent && ent.path || '').trim();
+        if (!path) return;
+        var url = computeAssetURL('cd', '', path);
+        if (url) out.push({ path: path, url: url });
+      });
       return out;
     }
 
@@ -524,11 +618,12 @@ var Module = {
       }
     };
 
-    fetchManifestBundle()
-      .then(normalizeManifestBundle)
+    fetchStartBundle()
+      .then(normalizeStartBundle)
       .then(function(bundle) {
-        manifestBundle = bundle;
+        manifestBundle = bundle.game;
         preloadAllManifestRoots();
+        Module.nexquakeCdRemoteManifest = buildRemoteCdManifest(bundle.cd);
       })
       .then(function() {
         Module.nexquakeActiveGame = baseGame;

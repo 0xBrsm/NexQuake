@@ -2,8 +2,6 @@ package admin
 
 import (
 	"context"
-	"crypto/subtle"
-	"encoding/base64"
 	"net/http"
 	"os"
 	"strings"
@@ -71,7 +69,7 @@ func InitAuth(ctx context.Context, infof, debugf func(string, ...any)) (*Auth, e
 		methods = append(methods, "IdP")
 	}
 	if rconPassword != "" {
-		methods = append(methods, "rcon_password")
+		methods = append(methods, "rcon_password(frame)")
 	}
 	if len(methods) == 0 {
 		infof("Admin access disabled")
@@ -93,15 +91,6 @@ func (a *Auth) rconPasswordValue() string {
 func (a *Auth) IdentifyRequest(r *http.Request) (bool, string) {
 	if a == nil {
 		return false, "anonymous"
-	}
-	k := requestKey(r)
-
-	// Static shared secret token.
-	if a.rconPassword != "" && k != "" {
-		expected := deriveRconTokenFromPassword(a.rconPassword)
-		if subtle.ConstantTimeCompare([]byte(k), []byte(expected)) == 1 {
-			return true, "rcon"
-		}
 	}
 
 	// OIDC JWT.
@@ -127,30 +116,10 @@ func (a *Auth) IsAdmin(r *http.Request) bool {
 	return ok
 }
 
-// requestKey extracts a credential from ?token= query param or Authorization header.
-func requestKey(r *http.Request) string {
-	if k := strings.TrimSpace(r.URL.Query().Get("token")); k != "" {
-		return k
-	}
-	h := r.Header.Get("Authorization")
-	if len(h) > 7 && strings.EqualFold(h[:7], "Bearer ") {
-		return strings.TrimSpace(h[7:])
-	}
-	return strings.TrimSpace(h)
-}
-
-// deriveRconTokenFromPassword derives the connection token from the rcon password.
-func deriveRconTokenFromPassword(password string) string {
-	return base64.StdEncoding.EncodeToString([]byte(password))
-}
-
 func (v *oidcValidator) validate(r *http.Request, debugf func(string, ...any)) (bool, map[string]any) {
 	raw := r.Header.Get(v.headerName)
 	if strings.EqualFold(v.headerName, "Authorization") && len(raw) > 7 && strings.EqualFold(raw[:7], "Bearer ") {
 		raw = strings.TrimSpace(raw[7:])
-	}
-	if raw == "" {
-		raw = strings.TrimSpace(r.URL.Query().Get("token"))
 	}
 	if raw == "" {
 		return false, nil

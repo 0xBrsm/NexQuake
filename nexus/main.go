@@ -330,6 +330,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 func newMux(cfg runtimeConfig, pakCache *gamedata.PakIndexCache) *http.ServeMux {
 	mux := http.NewServeMux()
+	assetGateway := gamedata.NewHashedAssetGateway(cfg.dataDir, cfg.cdDir, pakCache, cfg.vfsPrefetchConcurrency)
 
 	// Health check endpoint (Go 1.22+ method-based routing)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -342,15 +343,9 @@ func newMux(cfg runtimeConfig, pakCache *gamedata.PakIndexCache) *http.ServeMux 
 
 	mux.HandleFunc("GET /ws", handleWebSocket)
 
-	// Serve game data files - shared between WASM client and servers.
-	mux.Handle("/data-manifest", addCORSHeaders(http.HandlerFunc(gamedata.NewDataManifestBundleHandler(cfg.dataDir, pakCache, cfg.vfsPrefetchConcurrency)), cfg.corsOrigin))
-	mux.Handle("/pak-extract/", addCORSHeaders(http.HandlerFunc(gamedata.NewPakExtractHandler(cfg.dataDir, pakCache)), cfg.corsOrigin))
-	mux.Handle("/cd-manifest", addCORSHeaders(http.HandlerFunc(gamedata.NewCDManifestHandler(cfg.cdDir)), cfg.corsOrigin))
-
-	dataFS := http.FileServerFS(os.DirFS(cfg.dataDir))
-	mux.Handle("/data/", addCORSHeaders(contentTypeOverride(http.StripPrefix("/data/", dataFS)), cfg.corsOrigin))
-	cdFS := http.FileServerFS(os.DirFS(cfg.cdDir))
-	mux.Handle("/cd-stream/", addCORSHeaders(contentTypeOverride(http.StripPrefix("/cd-stream/", cdFS)), cfg.corsOrigin))
+	// Bootstrap + hash-addressed asset delivery for browser runtime.
+	mux.Handle("/start", addCORSHeaders(http.HandlerFunc(assetGateway.StartHandler()), cfg.corsOrigin))
+	mux.Handle("/nq/", addCORSHeaders(http.HandlerFunc(assetGateway.AssetHandler()), cfg.corsOrigin))
 
 	// Serve client files (WASM, HTML, JS, CSS)
 	clientFS := http.FileServerFS(os.DirFS(cfg.clientDir))
