@@ -7,7 +7,7 @@ import (
 	"syscall"
 )
 
-const DefaultNQServerIP = "127.13.37.9"
+const DefaultNQServerIP = "127.0.0.1"
 
 // RelayListenAddr returns an unspecified UDP listen address (any port).
 func RelayListenAddr() *net.UDPAddr {
