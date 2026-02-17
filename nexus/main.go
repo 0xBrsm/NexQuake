@@ -139,6 +139,7 @@ func main() {
 type runtimeConfig struct {
 	httpPort               string
 	dataDir                string
+	cdDir                  string
 	logsDir                string
 	binDir                 string
 	clientDir              string
@@ -149,9 +150,11 @@ type runtimeConfig struct {
 
 func loadRuntimeConfig() runtimeConfig {
 	binDir := getEnv("BIN_DIR", "/app/bin")
+	dataDir := getEnv("DATA_DIR", "/app/data")
 	return runtimeConfig{
 		httpPort:               getEnv("HTTP_PORT", "1337"),
-		dataDir:                getEnv("DATA_DIR", "/app/data"),
+		dataDir:                dataDir,
+		cdDir:                  getEnv("CD_DIR", "/app/cd"),
 		logsDir:                getEnv("LOGS_DIR", "/app/logs"),
 		binDir:                 binDir,
 		clientDir:              getEnv("CLIENT_DIR", filepath.Join(binDir, "nqwasm")),
@@ -349,14 +352,16 @@ func newMux(cfg runtimeConfig, pakCache *gamedata.PakIndexCache, mgr *orch.Serve
 	})
 
 	// Serve game data files - shared between WASM client and servers.
-	// /data-manifest/<mod> returns a virtualized manifest from common+client layers (with PAK exploding).
-	mux.Handle("/data-manifest/", addCORSHeaders(http.HandlerFunc(gamedata.NewDataManifestHandler(cfg.dataDir, func(gameDir string) []string {
-		return mgr.ResolveManifestGameDirs(gameDir)
-	}, pakCache, cfg.vfsPrefetchConcurrency)), cfg.corsOrigin))
+	dataManifestHandler := addCORSHeaders(http.HandlerFunc(gamedata.NewDataManifestBundleHandler(cfg.dataDir, pakCache, cfg.vfsPrefetchConcurrency)), cfg.corsOrigin)
+	mux.Handle("/data-manifest", dataManifestHandler)
+	mux.Handle("/data-manifest/", dataManifestHandler)
 	mux.Handle("/pak-extract/", addCORSHeaders(http.HandlerFunc(gamedata.NewPakExtractHandler(cfg.dataDir, pakCache)), cfg.corsOrigin))
+	mux.Handle("/cd-manifest", addCORSHeaders(http.HandlerFunc(gamedata.NewCDManifestHandler(cfg.cdDir)), cfg.corsOrigin))
 
 	dataFS := http.FileServerFS(os.DirFS(cfg.dataDir))
 	mux.Handle("/data/", addCORSHeaders(contentTypeOverride(http.StripPrefix("/data/", dataFS)), cfg.corsOrigin))
+	cdFS := http.FileServerFS(os.DirFS(cfg.cdDir))
+	mux.Handle("/cd-stream/", addCORSHeaders(contentTypeOverride(http.StripPrefix("/cd-stream/", cdFS)), cfg.corsOrigin))
 
 	// Serve client files (WASM, HTML, JS, CSS)
 	clientFS := http.FileServerFS(os.DirFS(cfg.clientDir))

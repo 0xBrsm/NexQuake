@@ -16,7 +16,7 @@
 qboolean isDedicated;
 
 static double time, oldtime, newtime;
-static qboolean restore_busy, quit_requested;
+static qboolean quit_requested, bootstrap_ready, main_loop_started, canvas_visible;
 void main_loop(void);
 
 // Stubs: no-ops on WASM (engine calls these but they have no meaning here)
@@ -146,39 +146,14 @@ byte *Sys_ZoneBase(int *size) {
 	return malloc(*size);
 }
 
-// IDBFS persistence
-EM_JS(int, wasm_restore_busy, (), { return Module.restore_busy; });
-
-void wasm_init_fs(void) {
-	EM_ASM(
-		Module.restore_busy = 1;
-		try {
-			try { FS.mkdir("/nexquake"); } catch(e) {}
-			try { FS.mount(IDBFS, {}, "/nexquake"); } catch(e) {}
-			console.info("Loading data...");
-			FS.syncfs(true, function(err) {
-				if (err) console.warn("Failed to load data: " + err);
-				else console.info("Data loaded.");
-				Module.restore_busy = 0;
-			});
-		} catch(e) { console.warn("wasm_init_fs failed:", e); Module.restore_busy = 0; }
-	);
-}
-
 int main(int c, char **v) {
 	quakeparms_t parms;
 	int pnum;
 
-	wasm_init_fs();
-	while (wasm_restore_busy()) emscripten_sleep(10);
-	EM_ASM({
-		try { if (Module.nqRestoreUserFiles) Module.nqRestoreUserFiles(); } catch(e) { console.warn('nqRestoreUserFiles failed:', e); }
-	});
-
 	COM_InitArgv(c, v);
 	parms.argc = com_argc;
 	parms.argv = com_argv;
-	parms.memsize = 16 * 1024 * 1024;
+	parms.memsize = 32 * 1024 * 1024;
 	if ((pnum = COM_CheckParm("-mem"))) {
 		if (pnum >= com_argc - 1) {
 			fprintf(stderr, "Error: -mem requires a size in MB\n");
@@ -204,7 +179,9 @@ int main(int c, char **v) {
 	Host_Init(&parms);
 	Con_Printf("NexQuake WebAssembly v%s\n", NEXQUAKE_VERSION);
 	oldtime = Sys_FloatTime() - 0.1;
-	restore_busy = true;
+	bootstrap_ready = false;
+	main_loop_started = false;
+	canvas_visible = false;
 #ifdef WASM_BENCHMARK
 	emscripten_set_main_loop_timing(EM_TIMING_SETIMMEDIATE, 0);
 #endif
@@ -216,18 +193,36 @@ void main_loop(void) {
 		quit_requested = false;
 		if (cls.state == ca_connected) CL_Disconnect();
 		Host_Shutdown();
+		main_loop_started = false;
+		canvas_visible = false;
 		EM_ASM({
 			try {
 				if (Module.nqPersistUserFiles) Module.nqPersistUserFiles();
 				if (Module.nqOverlayRefreshVFS) Module.nqOverlayRefreshVFS();
 			} catch(e) { console.warn('quit cleanup failed:', e); }
 		});
+		EM_ASM({
+			try {
+				if (Module.nqShowReloadScreen)
+					Module.nqShowReloadScreen();
+			} catch(e) {}
+		});
 		emscripten_cancel_main_loop();
 		return;
 	}
-	if (restore_busy) {
-		if (wasm_restore_busy()) return;
-		restore_busy = false;
+	if (!bootstrap_ready) {
+		bootstrap_ready = true;
+		EM_ASM({
+			try {
+				if (Module.nqOnBootstrapReady)
+					Module.nqOnBootstrapReady();
+			} catch(e) {}
+		});
+	}
+	if (!main_loop_started)
+		return;
+	if (!canvas_visible) {
+		canvas_visible = true;
 		EM_ASM( if (typeof Module.hideConsole === 'function') Module.hideConsole(); );
 	}
 	newtime = Sys_FloatTime();
@@ -244,6 +239,11 @@ EMSCRIPTEN_KEEPALIVE void NexQuake_ExecCommand(const char *cmd)
 		return;
 	Cbuf_AddText((char *)cmd);
 	Cbuf_AddText("\n");
+}
+
+EMSCRIPTEN_KEEPALIVE void NexQuake_StartMainLoop(void)
+{
+	main_loop_started = true;
 }
 
 EMSCRIPTEN_KEEPALIVE void NexQuake_OnPageHide(void)

@@ -1,6 +1,9 @@
 package gamedata
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -37,7 +40,7 @@ func TestBuildVFSManifest_LayersAndPakExplode(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	manifest, err := buildVFSManifest(dataDir, []string{mod}, NewPakIndexCache())
+	manifest, err := buildVFSManifest(dataDir, mod, NewPakIndexCache())
 	if err != nil {
 		t.Fatalf("buildVFSManifest: %v", err)
 	}
@@ -81,7 +84,7 @@ func TestBuildVFSManifest_LooseBeatsPakWithinLayer(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	manifest, err := buildVFSManifest(dataDir, []string{mod}, NewPakIndexCache())
+	manifest, err := buildVFSManifest(dataDir, mod, NewPakIndexCache())
 	if err != nil {
 		t.Fatalf("buildVFSManifest: %v", err)
 	}
@@ -119,7 +122,7 @@ func TestBuildVFSManifest_PakOrderWithinLayer(t *testing.T) {
 		"docs/readme.txt": []byte("from pak1"),
 	})
 
-	manifest, err := buildVFSManifest(dataDir, []string{mod}, NewPakIndexCache())
+	manifest, err := buildVFSManifest(dataDir, mod, NewPakIndexCache())
 	if err != nil {
 		t.Fatalf("buildVFSManifest: %v", err)
 	}
@@ -141,7 +144,7 @@ func TestBuildVFSManifest_PakOrderWithinLayer(t *testing.T) {
 	}
 }
 
-func TestBuildVFSManifest_SearchPathOrderAcrossGameDirs(t *testing.T) {
+func TestNewDataManifestBundleHandler_ReturnsDirectModManifests(t *testing.T) {
 	dataDir := t.TempDir()
 
 	if err := os.MkdirAll(filepath.Join(dataDir, "id1", "common"), 0o755); err != nil {
@@ -150,40 +153,75 @@ func TestBuildVFSManifest_SearchPathOrderAcrossGameDirs(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dataDir, "ctf", "common"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-
-	if err := os.WriteFile(filepath.Join(dataDir, "id1", "common", "foo.txt"), []byte("id1"), 0o644); err != nil {
+	if err := os.MkdirAll(filepath.Join(dataDir, "cfgmod"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "id1", "common", "base.txt"), []byte("id1"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "ctf", "common", "foo.txt"), []byte("ctf"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "id1", "common", "base.txt"), []byte("base"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dataDir, "ctf", "common", "ctf.txt"), []byte("ctf"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
-	manifest, err := buildVFSManifest(dataDir, []string{"ctf", "id1"}, NewPakIndexCache())
-	if err != nil {
-		t.Fatalf("buildVFSManifest: %v", err)
+	handler := NewDataManifestBundleHandler(dataDir, NewPakIndexCache(), 7)
+
+	req := httptest.NewRequest(http.MethodGet, "/data-manifest", nil)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get(headerVFSPrefetchConcurrency); got != "7" {
+		t.Fatalf("prefetch header=%q want %q", got, "7")
 	}
 
-	get := func(p string) (vfsManifestEntry, bool) {
-		for _, e := range manifest {
-			if e.Path == p {
-				return e, true
+	var bundle vfsManifestBundle
+	if err := json.Unmarshal(rec.Body.Bytes(), &bundle); err != nil {
+		t.Fatalf("decode bundle: %v", err)
+	}
+
+	hasPath := func(entries []vfsManifestEntry, want string) bool {
+		for _, entry := range entries {
+			if entry.Path == want {
+				return true
 			}
 		}
-		return vfsManifestEntry{}, false
+		return false
 	}
 
-	if e, ok := get("foo.txt"); !ok || !strings.HasPrefix(e.URL, "/data/ctf/common/foo.txt") {
-		t.Fatalf("expected foo.txt from highest-priority game dir, got: ok=%v entry=%+v", ok, e)
+	if !hasPath(bundle.Mods["id1"], "base.txt") {
+		t.Fatalf("id1 manifest missing base.txt: %+v", bundle.Mods["id1"])
 	}
-	if e, ok := get("base.txt"); !ok || !strings.HasPrefix(e.URL, "/data/id1/common/base.txt") {
-		t.Fatalf("expected base.txt from fallback game dir, got: ok=%v entry=%+v", ok, e)
+	if !hasPath(bundle.Mods["ctf"], "ctf.txt") {
+		t.Fatalf("ctf manifest missing ctf.txt: %+v", bundle.Mods["ctf"])
+	}
+	if hasPath(bundle.Mods["ctf"], "base.txt") {
+		t.Fatalf("ctf manifest unexpectedly duplicated id1 file: %+v", bundle.Mods["ctf"])
+	}
+	cfgEntries, ok := bundle.Mods["cfgmod"]
+	if !ok {
+		t.Fatalf("cfgmod missing from manifest bundle: %+v", bundle.Mods)
+	}
+	if len(cfgEntries) != 0 {
+		t.Fatalf("cfgmod expected empty manifest, got %+v", cfgEntries)
 	}
 }
 
-func TestListMods_RequiresLayerDirectories(t *testing.T) {
+func TestNewDataManifestBundleHandler_NoModsReturnsNotFound(t *testing.T) {
+	dataDir := t.TempDir()
+	handler := NewDataManifestBundleHandler(dataDir, NewPakIndexCache(), 4)
+	req := httptest.NewRequest(http.MethodGet, "/data-manifest", nil)
+	rec := httptest.NewRecorder()
+
+	handler(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestListMods_IncludesEmptyModDirs(t *testing.T) {
 	dataDir := t.TempDir()
 
 	if err := os.MkdirAll(filepath.Join(dataDir, "id1", "common"), 0o755); err != nil {
@@ -192,8 +230,14 @@ func TestListMods_RequiresLayerDirectories(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dataDir, "mod2", "server"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "cfgmod"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
 	if err := os.MkdirAll(filepath.Join(dataDir, "junk"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "junk", "note.txt"), []byte("junk"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
 	}
 	if err := os.MkdirAll(filepath.Join(dataDir, ".hidden", "common"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -210,8 +254,8 @@ func TestListMods_RequiresLayerDirectories(t *testing.T) {
 		t.Fatalf("ListMods: %v", err)
 	}
 
-	if !slices.Contains(mods, "id1") || !slices.Contains(mods, "mod2") {
-		t.Fatalf("expected id1 and mod2, got %v", mods)
+	if !slices.Contains(mods, "id1") || !slices.Contains(mods, "mod2") || !slices.Contains(mods, "cfgmod") {
+		t.Fatalf("expected id1, mod2, and cfgmod, got %v", mods)
 	}
 	if slices.Contains(mods, "junk") {
 		t.Fatalf("did not expect junk dir, got %v", mods)

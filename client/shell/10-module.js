@@ -1,21 +1,204 @@
 var nqStoredPerModConfig = nqLoadPerModConfig();
+var nqBootstrapReady = false;
+var nqMainLoopStarted = false;
+var nqNeedsReload = false;
+var NQ_AUTOSTART_RELOAD_STORAGE_KEY = 'nexquake.autostart_after_reload';
+var NQ_BOOTSTRAP_PHASE_COUNT = 3;
+var NQ_BOOTSTRAP_PROGRESS_MAX = 90;
+var NQ_BOOTSTRAP_PROGRESS_STEP = NQ_BOOTSTRAP_PROGRESS_MAX / NQ_BOOTSTRAP_PHASE_COUNT;
+var nqBootstrapPhase = 1;
+var nqAutoStartAfterReload = false;
+
+function nqConsumeAutoStartAfterReload() {
+  try {
+    if (sessionStorage.getItem(NQ_AUTOSTART_RELOAD_STORAGE_KEY) === '1') {
+      sessionStorage.removeItem(NQ_AUTOSTART_RELOAD_STORAGE_KEY);
+      return true;
+    }
+  } catch (e) {}
+  return false;
+}
+
+function nqMarkAutoStartAfterReload() {
+  try {
+    sessionStorage.setItem(NQ_AUTOSTART_RELOAD_STORAGE_KEY, '1');
+  } catch (e) {}
+}
+
+function nqLogBootstrapStage(text) {
+  if (text)
+    console.info('[nq-loader] ' + text);
+}
+
+nqAutoStartAfterReload = nqConsumeAutoStartAfterReload();
+nqLogBootstrapStage('instantiating WASM... (0%)');
+
+function nqSetBootstrapProgress(percent) {
+  if (!loaderProgressBar)
+    return;
+  if (!Number.isFinite(percent))
+    percent = 0;
+  if (percent < 0) percent = 0;
+  if (percent > NQ_BOOTSTRAP_PROGRESS_MAX) percent = NQ_BOOTSTRAP_PROGRESS_MAX;
+  loaderProgressBar.style.width = Math.round(percent) + '%';
+}
+
+function nqSetBootstrapPhase(phase) {
+  var phaseText = '';
+
+  if (phase < nqBootstrapPhase)
+    return;
+  nqBootstrapPhase = phase;
+  nqSetBootstrapProgress((phase - 1) * NQ_BOOTSTRAP_PROGRESS_STEP);
+  if (phase === 1)
+    phaseText = 'instantiating WASM...';
+  else if (phase === 2)
+    phaseText = 'building vfs...';
+  else if (phase === 3)
+    phaseText = 'syncing saved data...';
+  if (!phaseText)
+    return;
+  if (loaderStatusElement)
+    loaderStatusElement.textContent = phaseText;
+  nqLogBootstrapStage(phaseText + ' (' + Math.round((phase - 1) * NQ_BOOTSTRAP_PROGRESS_STEP) + '%)');
+}
+
+function nqSetBootstrapRunning() {
+  nqSetBootstrapProgress(NQ_BOOTSTRAP_PROGRESS_MAX);
+  if (loaderStatusElement)
+    loaderStatusElement.textContent = 'running...';
+  nqLogBootstrapStage('running... (' + NQ_BOOTSTRAP_PROGRESS_MAX + '%)');
+}
+
+function nqIsRuntimeStatusText(text) {
+  var phaseMatch;
+  if (!text)
+    return false;
+  text = String(text).trim().toLowerCase();
+  phaseMatch = text.match(/^([^(]+)\(\s*\d+(?:\.\d+)?\s*\/\s*\d+\s*\)$/);
+  if (phaseMatch)
+    text = phaseMatch[1].trim();
+  if (text === 'preparing...')
+    return true;
+  if (text === 'loading...')
+    return true;
+  if (text === 'running...')
+    return true;
+  if (text === 'all downloads complete.')
+    return true;
+  if (text === 'downloading...')
+    return true;
+  return false;
+}
+
+function nqShowEnterButton() {
+  nqBootstrapReady = true;
+  nqSetOverlayToggleVisible(true);
+  try {
+    if (Module.nqOverlayCtx) {
+      if (typeof Module.nqOverlayCtx.syncCdEnabledFromPreference === 'function')
+        Module.nqOverlayCtx.syncCdEnabledFromPreference();
+      else if (typeof Module.nqOverlayCtx.setCdEnabled === 'function')
+        Module.nqOverlayCtx.setCdEnabled(false, false);
+    }
+  } catch (e) {}
+  if (loaderElement)
+    loaderElement.classList.add('enter-mode');
+  if (loaderStatusElement)
+    loaderStatusElement.textContent = '';
+  if (loaderReloadButton) {
+    loaderReloadButton.textContent = 'ENTER';
+    loaderReloadButton.disabled = false;
+    loaderReloadButton.classList.remove('hidden');
+  }
+  nqLogBootstrapStage('enter ready (100%)');
+  if (nqAutoStartAfterReload) {
+    nqAutoStartAfterReload = false;
+    setTimeout(nqStartGameFromEnter, 0);
+  }
+}
+
+function nqStartGameFromEnter() {
+  if (nqNeedsReload) {
+    nqMarkAutoStartAfterReload();
+    window.location.reload();
+    return;
+  }
+  if (nqGameStarted) {
+    window.location.reload();
+    return;
+  }
+  if (!nqBootstrapReady || !nqRuntimeReady || nqMainLoopStarted)
+    return;
+  nqMainLoopStarted = true;
+  nqGameStarted = true;
+  if (loaderReloadButton) {
+    loaderReloadButton.textContent = 'STARTING...';
+    loaderReloadButton.disabled = true;
+  }
+  try {
+    if (Module.nqOverlayCtx) {
+      if (typeof Module.nqOverlayCtx.syncCdEnabledFromPreference === 'function')
+        Module.nqOverlayCtx.syncCdEnabledFromPreference();
+      else if (typeof Module.nqOverlayCtx.setCdEnabled === 'function')
+        Module.nqOverlayCtx.setCdEnabled(true, false);
+    }
+  } catch (e3) {}
+  nqLogBootstrapStage('starting game client...');
+  try {
+    if (typeof Module.callMain !== 'function')
+      throw new Error('Module.callMain is not available');
+    Module.callMain([]);
+    nqLogBootstrapStage('wasm main initialized');
+    Module.ccall('NexQuake_StartMainLoop', 'void', [], []);
+    nqLogBootstrapStage('main loop started');
+    if (typeof Module.hideConsole === 'function')
+      Module.hideConsole();
+    try {
+      if (Module.nqOverlayCtx && typeof Module.nqOverlayCtx.applyCdPreferenceToGame === 'function')
+        Module.nqOverlayCtx.applyCdPreferenceToGame();
+      if (Module.nqOverlayCtx && typeof Module.nqOverlayCtx.refresh === 'function')
+        Module.nqOverlayCtx.refresh();
+    } catch (overlayErr) {
+      console.warn('Overlay refresh failed:', overlayErr);
+    }
+  } catch (err) {
+    console.error('Failed to start main loop:', err);
+    nqMainLoopStarted = false;
+    nqGameStarted = false;
+    if (loaderReloadButton) {
+      loaderReloadButton.textContent = 'ENTER';
+      loaderReloadButton.disabled = false;
+    }
+    try {
+      if (Module.nqOverlayCtx) {
+        if (typeof Module.nqOverlayCtx.syncCdEnabledFromPreference === 'function')
+          Module.nqOverlayCtx.syncCdEnabledFromPreference();
+        else if (typeof Module.nqOverlayCtx.setCdEnabled === 'function')
+          Module.nqOverlayCtx.setCdEnabled(false, false);
+      }
+    } catch (e4) {}
+  }
+}
 
 var Module = {
   nexquakeBaseGameName: NEXQUAKE_GAMENAME,
+  noInitialRun: true,
   nqPerModConfig: nqStoredPerModConfig === null ? false : !!nqStoredPerModConfig,
   preRun: [function() {
     var normalizeGameName = nqNormalizeGameName;
     var getBaseGameName = nqGetBaseGameName;
     var safeMkdirTree = nqSafeMkdirTree;
-    var safeUnlink = nqSafeUnlink;
+    var REMOTE_ROOT = '/.nqremote';
+    var USERFS_ROOT = '/NexQuake';
 
     function ensureGameDir(mod) {
       mod = normalizeGameName(mod);
-      safeMkdirTree('/' + mod);
+      safeMkdirTree(REMOTE_ROOT + '/' + mod);
       return mod;
     }
 
-    // Create the baseline game mount root.
+    // Create the baseline remote mount root.
     ensureGameDir(getBaseGameName());
 
     function ensureDirForPath(path) {
@@ -25,39 +208,12 @@ var Module = {
       safeMkdirTree('/' + parts.join('/'));
     }
 
-    // Remote assets act like pack files: they are readable, but "loose" user files
-    // should take precedence. To achieve this we:
-    // - avoid overwriting existing local files when installing remote nodes
-    // - promote a remote node to a real writable file on first write attempt
-    // - recreate a remote node on-demand when a read fails with ENOENT
+    // Remote assets live under /.nqremote/<mod> as lazy VFS entries.
+    // User-writable content lives in /NexQuake/<mod> (IDBFS), exposed at /<mod> via symlink.
+    // Quake searchpaths are layered: remote first, user last (so user overrides win).
     if (!Module.nexquakeRemoteFiles) Module.nexquakeRemoteFiles = Object.create(null);
-    if (!Module.nexquakeRemoteURLs) Module.nexquakeRemoteURLs = Object.create(null);
     if (!Module.nexquakeInstalledManifests) Module.nexquakeInstalledManifests = Object.create(null);
     Module.nexquakeActiveGame = normalizeGameName(Module.nexquakeActiveGame || getBaseGameName());
-
-    function resolveVFSPath(p) {
-      p = String(p || '');
-      if (!p) return p;
-      try {
-        if (p[0] === '/') return PATH.normalize(p);
-        return PATH.normalize(FS.cwd() + '/' + p);
-      } catch (e) {
-        if (p[0] === '/') return p;
-        var cwd = (typeof FS !== 'undefined' && FS && typeof FS.cwd === 'function') ? FS.cwd() : '/';
-        if (!cwd.endsWith('/')) cwd += '/';
-        return cwd + p;
-      }
-    }
-
-    function isWriteOpenFlags(flags) {
-      if (typeof flags === 'string') {
-        // "w", "a", and "+" imply write intent.
-        return flags.indexOf('w') !== -1 || flags.indexOf('a') !== -1 || flags.indexOf('+') !== -1;
-      }
-      // Numeric flags: POSIX open() uses O_RDONLY=0, O_WRONLY=1, O_RDWR=2.
-      // (flags & 3) != 0 indicates a write-capable open.
-      return (flags & 3) !== 0;
-    }
 
     // Emscripten's built-in FS.createLazyFile only supports browser lazy-loading in Web Workers.
     // NexQuake runs on the main thread, so we implement a tiny "lazy remote file" wrapper:
@@ -137,48 +293,6 @@ var Module = {
       return node;
     }
 
-    (function installUnionOpenShim() {
-      if (!FS || !FS.open) return;
-      if (FS._nexquake_union_open_shim) return;
-      FS._nexquake_union_open_shim = true;
-
-      var origOpen = FS.open;
-      FS.open = function(path, flags, mode) {
-        try {
-          return origOpen.call(FS, path, flags, mode);
-        } catch (e) {
-          var absPath = resolveVFSPath(path);
-
-          if (isWriteOpenFlags(flags)) {
-            // If a remote (read-only) node exists at this path, replace it with a real
-            // local file so Quake can write (and we can persist) user-owned content.
-            try {
-              var node = FS.lookupPath(absPath).node;
-              if (node && node.url) {
-                safeUnlink(absPath);
-                delete Module.nexquakeRemoteFiles[absPath];
-                return origOpen.call(FS, path, flags, mode);
-              }
-            } catch (e4) {}
-          } else if (e && e.errno === 2) { // ENOENT
-            // If a remote mapping exists for this path, recreate the remote stub and retry.
-            try {
-              var ent = Module.nexquakeRemoteURLs && Module.nexquakeRemoteURLs[absPath];
-              if (ent && ent.url) {
-                ensureDirForPath(absPath);
-                var parent = absPath.substring(0, absPath.lastIndexOf('/')) || '/';
-                var name = absPath.substring(absPath.lastIndexOf('/') + 1);
-                var node = createRemoteFile(parent, name, ent.url, Number(ent.size || 0));
-                Module.nexquakeRemoteFiles[absPath] = node;
-                return origOpen.call(FS, path, flags, mode);
-              }
-            } catch (e5) {}
-          }
-          throw e;
-        }
-      };
-    })();
-
     function installLazyFile(mod, vfsRelPath, url, size) {
       mod = normalizeGameName(mod);
       vfsRelPath = String(vfsRelPath || '').replace(/^\/+/, '');
@@ -187,11 +301,9 @@ var Module = {
 
       // Store everything as lowercase in the VFS (Quake expects lowercase paths).
       var lowerRel = vfsRelPath.split('/').filter(Boolean).map(function(p) { return p.toLowerCase(); }).join('/');
-      var outPath = '/' + mod + '/' + lowerRel;
+      var outPath = REMOTE_ROOT + '/' + mod + '/' + lowerRel;
       var parent = outPath.substring(0, outPath.lastIndexOf('/')) || '/';
       var name = outPath.substring(outPath.lastIndexOf('/') + 1);
-
-      Module.nexquakeRemoteURLs[outPath] = { url: url, size: Number(size || 0) };
 
       ensureDirForPath(outPath);
 
@@ -247,10 +359,10 @@ var Module = {
     async function prefetchOne(lowerRel) {
       var baseGame = getBaseGameName();
       var activeGame = normalizeGameName(Module.nexquakeActiveGame || baseGame);
-      var outPath = '/' + activeGame + '/' + lowerRel;
+      var outPath = REMOTE_ROOT + '/' + activeGame + '/' + lowerRel;
       var node = Module.nexquakeRemoteFiles && Module.nexquakeRemoteFiles[outPath];
       if (!node && activeGame !== baseGame) {
-        node = Module.nexquakeRemoteFiles && Module.nexquakeRemoteFiles['/' + baseGame + '/' + lowerRel];
+        node = Module.nexquakeRemoteFiles && Module.nexquakeRemoteFiles[REMOTE_ROOT + '/' + baseGame + '/' + lowerRel];
       }
       if (!node || node.contents) return;
       var resp = await fetch(node.url, { cache: 'force-cache' });
@@ -300,10 +412,12 @@ var Module = {
         .finally(function() { Module.nexquakePrefetchBusy = 0; });
     };
 
-    // Mirror virtualized manifests into /<mod> roots.
+    // Install virtualized manifests into /.nqremote/<mod> roots.
     // Files are installed as lazy-backed VFS entries (download on first read).
     var baseGame = getBaseGameName();
     var manifestDependencyId = 'manifest:' + baseGame;
+    var syncDependencyId = 'sync:' + baseGame;
+    nqSetBootstrapPhase(2);
     Module.addRunDependency(manifestDependencyId);
 
     function applyPrefetchConcurrency(value) {
@@ -312,32 +426,49 @@ var Module = {
       }
     }
 
-    function fetchManifest(mod) {
-      mod = normalizeGameName(mod);
-      return fetch('/data-manifest/' + encodeURIComponent(mod)).then(function(response) {
-        if (!response.ok) throw new Error('manifest fetch failed for ' + mod + ': ' + response.status);
+    function fetchManifestBundle() {
+      return fetch('/data-manifest').then(function(response) {
+        if (!response.ok) throw new Error('manifest bundle fetch failed: ' + response.status);
         applyPrefetchConcurrency(response.headers.get('X-NQ-VFS-Prefetch-Concurrency'));
         return response.json();
       });
     }
 
-    function fetchManifestSync(mod) {
-      mod = normalizeGameName(mod);
-      var xhr = new XMLHttpRequest();
-      xhr.open('GET', '/data-manifest/' + encodeURIComponent(mod), false);
-      xhr.send(null);
-      if (xhr.status !== 200 && xhr.status !== 0) {
-        throw new Error('manifest fetch failed for ' + mod + ': ' + xhr.status);
-      }
-      applyPrefetchConcurrency(xhr.getResponseHeader('X-NQ-VFS-Prefetch-Concurrency'));
-      var text = xhr.responseText || '';
-      return JSON.parse(text);
+    function syncSavedData() {
+      safeMkdirTree(USERFS_ROOT);
+      try { FS.mount(IDBFS, {}, USERFS_ROOT); } catch (e) {}
+      return new Promise(function(resolve) {
+        try {
+          FS.syncfs(true, function(err) {
+            if (err) console.warn('Failed to sync saved data:', err);
+            try {
+              safeMkdirTree(USERFS_ROOT + '/' + baseGame);
+              safeMkdirTree(USERFS_ROOT + '/cd');
+              try { FS.symlink(USERFS_ROOT + '/cd', '/cd'); } catch (e2) {}
+              try { FS.symlink(USERFS_ROOT + '/' + baseGame, '/' + baseGame); } catch (e3) {}
+              FS.readdir(USERFS_ROOT).forEach(function(name) {
+                if (name === '.' || name === '..' || name === baseGame || name === 'cd') return;
+                var st = null;
+                try { st = FS.stat(USERFS_ROOT + '/' + name); } catch (e4) {}
+                if (st && FS.isDir(st.mode))
+                  try { FS.symlink(USERFS_ROOT + '/' + name, '/' + name); } catch (e5) {}
+              });
+            } catch (linkErr) {
+              console.warn('Failed to link user dirs:', linkErr);
+            }
+            resolve();
+          });
+        } catch (e) {
+          console.warn('Failed to sync saved data:', e);
+          resolve();
+        }
+      });
     }
 
     function installManifest(mod, entries) {
       mod = normalizeGameName(mod);
-      if (!Array.isArray(entries) || entries.length === 0) {
-        throw new Error('manifest empty for ' + mod);
+      if (!Array.isArray(entries)) {
+        throw new Error('manifest invalid for ' + mod);
       }
 
       // Ensure the mount root exists.
@@ -350,32 +481,68 @@ var Module = {
       try { if (typeof Module.nqOverlayUpdateDirs === 'function') Module.nqOverlayUpdateDirs(); } catch (e) {}
     }
 
-    function ensureManifestSync(mod) {
-      mod = normalizeGameName(mod);
-      if (Module.nexquakeInstalledManifests && Module.nexquakeInstalledManifests[mod]) {
-        Module.nexquakeActiveGame = mod;
-        return;
-      }
-      installManifest(mod, fetchManifestSync(mod));
+    var manifestBundle = null;
+
+    function normalizeManifestBundle(rawBundle) {
+      var out = Object.create(null);
+      var rawMods = (rawBundle && rawBundle.mods && typeof rawBundle.mods === 'object') ? rawBundle.mods : {};
+      Object.keys(rawMods).forEach(function(rawMod) {
+        var mod = normalizeGameName(rawMod);
+        if (!mod)
+          return;
+        out[mod] = Array.isArray(rawMods[rawMod]) ? rawMods[rawMod] : [];
+      });
+      if (!out[baseGame])
+        throw new Error('manifest bundle missing base game: ' + baseGame);
+      return out;
+    }
+
+    function preloadAllManifestRoots() {
+      installManifest(baseGame, manifestBundle[baseGame]);
+      Object.keys(manifestBundle).forEach(function(mod) {
+        if (mod === baseGame)
+          return;
+        try {
+          installManifest(mod, manifestBundle[mod]);
+        } catch (err) {
+          console.warn('Skipping /' + mod + ' manifest preload:', err);
+        }
+      });
     }
 
     Module.nexquakeSwitchGameData = function(mod) {
       mod = normalizeGameName(mod);
       try {
-        ensureManifestSync(mod);
+        if (!Module.nexquakeInstalledManifests || !Module.nexquakeInstalledManifests[mod]) {
+          throw new Error('manifest missing for ' + mod);
+        }
+        Module.nexquakeActiveGame = mod;
+        safeMkdirTree(USERFS_ROOT + '/' + mod);
+        try { FS.symlink(USERFS_ROOT + '/' + mod, '/' + mod); } catch (e2) {}
       } catch (err) {
         console.error('Failed to install /' + mod + ' manifest:', err);
       }
     };
 
-    fetchManifest(baseGame)
-      .then(function(entries) { installManifest(baseGame, entries); })
+    fetchManifestBundle()
+      .then(normalizeManifestBundle)
+      .then(function(bundle) {
+        manifestBundle = bundle;
+        preloadAllManifestRoots();
+      })
       .then(function() {
+        Module.nexquakeActiveGame = baseGame;
+        nqSetBootstrapPhase(3);
+        Module.addRunDependency(syncDependencyId);
         Module.removeRunDependency(manifestDependencyId);
+        return syncSavedData().finally(function() {
+          nqSetBootstrapRunning();
+          Module.removeRunDependency(syncDependencyId);
+        });
       })
       .catch(function(err) {
-        console.error('Failed to install /' + baseGame + ' manifest:', err);
-        try { Module.setStatus('Failed to load game data (see console)'); } catch (e) {}
+        console.error('Failed to preload manifest bundle (base game required):', err);
+        try { Module.setStatus('failed to load game data'); } catch (e) {}
         // Intentionally do not remove the run dependency: Quake must not start without data.
       });
   }],
@@ -391,23 +558,57 @@ var Module = {
   })(),
   canvas: canvasElement,
   setStatus: function(text) {
-    if (!Module.setStatus.last) Module.setStatus.last = { time: Date.now(), text: '' };
-    if (text === Module.setStatus.last.text) return;
-    var m = text.match(/([^(]+)\((\d+(\.\d+)?)\/(\d+)\)/);
-    var now = Date.now();
-    if (m && now - Module.setStatus.last.time < 30) return;
-    Module.setStatus.last.time = now;
-    Module.setStatus.last.text = text;
-    if (m) {
-      text = m[1].trim();
-      var pct = Math.round((parseInt(m[2]) / parseInt(m[4])) * 100);
-      loaderProgressBar.style.width = pct + '%';
-    } else if (!text) {
-      loaderElement.classList.add('hidden');
+    if (!loaderStatusElement)
+      return;
+    if (nqIsRuntimeStatusText(text))
+      return;
+    text = String(text || '').trim();
+    if (text)
+      loaderStatusElement.textContent = text;
+  },
+  nqShowReloadScreen: function() {
+    try {
+      if (document.pointerLockElement && document.exitPointerLock)
+        document.exitPointerLock();
+    } catch (e) {}
+    nqNeedsReload = true;
+    nqMainLoopStarted = false;
+    nqGameStarted = false;
+    if (loaderProgressBar)
+      loaderProgressBar.style.width = '0%';
+    if (loaderStatusElement)
+      loaderStatusElement.textContent = '';
+    if (loaderReloadButton) {
+      loaderReloadButton.textContent = 'ENTER';
+      loaderReloadButton.disabled = false;
+      loaderReloadButton.classList.remove('hidden');
     }
-    loaderStatusElement.textContent = text || 'Ready';
+    if (loaderElement) {
+      loaderElement.classList.remove('hidden');
+      loaderElement.classList.add('enter-mode');
+    }
+    nqSetOverlayToggleVisible(true);
+    try {
+      if (Module.nqOverlayCtx) {
+        if (typeof Module.nqOverlayCtx.syncCdEnabledFromPreference === 'function')
+          Module.nqOverlayCtx.syncCdEnabledFromPreference();
+        else if (typeof Module.nqOverlayCtx.setCdEnabled === 'function')
+          Module.nqOverlayCtx.setCdEnabled(false, false);
+      }
+    } catch (e2) {}
+    if (canvasElement)
+      canvasElement.style.display = 'none';
+    if (outputElement)
+      outputElement.style.display = 'none';
+    try {
+      if (Module.nqOverlayCtx && Module.nqOverlayCtx.setPanelOpen)
+        Module.nqOverlayCtx.setPanelOpen(false);
+    } catch (e) {}
   },
   hideConsole: function() {
+    nqNeedsReload = false;
+    if (loaderElement)
+      loaderElement.classList.add('hidden');
     outputElement.style.display = 'none';
     canvasElement.style.display = 'block';
     canvasElement.focus();
@@ -440,9 +641,20 @@ var Module = {
   totalDependencies: 0,
   monitorRunDependencies: function(left) {
     this.totalDependencies = Math.max(this.totalDependencies, left);
-    Module.setStatus(left ? 'Preparing... (' + (this.totalDependencies-left) + '/' + this.totalDependencies + ')' : 'All downloads complete.');
+    if (nqBootstrapPhase !== 1 || !loaderProgressBar || this.totalDependencies <= 0)
+      return;
+    var done = this.totalDependencies - left;
+    nqSetBootstrapProgress((done / this.totalDependencies) * NQ_BOOTSTRAP_PROGRESS_STEP);
   },
   onRuntimeInitialized: function() {
-    outputElement.style.display = 'block';
+    nqRuntimeReady = true;
+    outputElement.style.display = 'none';
+    nqShowEnterButton();
   }
 };
+
+if (loaderReloadButton) {
+  loaderReloadButton.onclick = function() {
+    nqStartGameFromEnter();
+  };
+}

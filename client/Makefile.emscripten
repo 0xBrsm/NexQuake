@@ -17,7 +17,7 @@ endif
 LDFLAGS := -O3 -Wl,--allow-multiple-definition -sMAX_WEBGL_VERSION=2 -sMIN_WEBGL_VERSION=2 -sINITIAL_MEMORY=64MB -sTOTAL_STACK=2MB -sALLOW_MEMORY_GROWTH \
 	--shell-file shell.html --pre-js nq-pre.js -lidbfs.js $(WEBSOCKET_URL_FLAG) -sWEBSOCKET_SUBPROTOCOL=binary \
 	-lwebsocket.js -sASYNCIFY=1 -sASYNCIFY_STACK_SIZE=4MB -sASYNCIFY_IGNORE_INDIRECT=0 -sALLOW_BLOCKING_ON_MAIN_THREAD=1 \
-	-sEXPORTED_RUNTIME_METHODS=['addRunDependency','removeRunDependency','ccall'] -sEXPORT_KEEPALIVE=1
+	-sEXPORTED_RUNTIME_METHODS=['addRunDependency','removeRunDependency','ccall','callMain'] -sEXPORT_KEEPALIVE=1
 TARGET := index.html
 
 # C source files
@@ -95,7 +95,7 @@ r_vars.c \
 screen.c
 
 SRCS += \
-cd_null.c \
+cd_wasm.c \
 sys_wasm.c \
 vid_wasm.c \
 snd_wasm.c

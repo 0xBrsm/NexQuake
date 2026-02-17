@@ -36,7 +36,7 @@
  	p = Draw_CachePic ("gfx/p_multi.lmp");
  	M_DrawPic ( (320-p->width)/2, 4, p);
 +	list_header = "Server          Map             Game            Users";
-+	list_rule = "--------------- --------------- --------------- -----";
++	list_rule = "";
 +	list_chars = Q_strlen(list_header);
 +	i = Q_strlen(list_rule);
 +	if (i > list_chars)

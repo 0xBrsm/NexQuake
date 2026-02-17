@@ -27,6 +27,7 @@ Most nexus logic lives in internal packages:
 | File | Purpose |
 |------|---------|
 | `internal/gamedata/vfs.go` | **Manifest builder.** Scans `${DATA_DIR}/<mod>/common` + `${DATA_DIR}/<mod>/client`, builds JSON manifests with Quake-like precedence (loose > PAK, higher PAK number wins). |
+| `internal/gamedata/cd.go` | **CD manifest.** Scans `${CD_DIR}` for `.ogg`/`.mp3` and serves `/cd-manifest` + `/cd-stream/*` URLs for browser CD audio playback. |
 | `internal/gamedata/pak.go` | **PAK parser.** Indexes PAK headers and streams files via `/pak-extract/<mod>/<layer>/<pak>/<file>`. |
 | `internal/gamedata/assets.go` | **Bootstrap.** Downloads game data on first run from a quickstart manifest (e.g. `minimal.json`). Only activates when `${DATA_DIR}` is writable. |
 

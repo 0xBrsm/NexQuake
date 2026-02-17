@@ -7,7 +7,7 @@ Scripts that compile the WASM client and dedicated server from the upstream id S
 | File | Purpose |
 |------|---------|
 | `Makefile` | **Primary orchestrator.** Top-level build targets for client, server, and upstream preparation. |
-| `build-client.sh` | **WASM client build.** Prepares the upstream source, applies client patches and overlays, runs `make -f Makefile.emscripten`. Produces `index.html`, `shell.css`, `index.js`, `index.wasm`. |
+| `build-client.sh` | **WASM client build.** Prepares the upstream source, applies client patches and overlays, runs `make -f Makefile.emscripten`. Produces `index.html`, `shell.css`, `favicon.svg`, `index.js`, `index.wasm`. |
 | `build-server.sh` | **Dedicated server build.** Prepares the upstream source, applies server patches, compiles with GCC. Produces `nqserver`. Handles platform detection and 32/64-bit selection. |
 | `prepare-upstream.sh` | **Upstream checkout.** Sparse-clones `id-Software/Quake` into `tmp/WinQuake/`. Idempotent -- skips if already present. |
 | `platform.sh` | **Platform detection.** Sets `PLATFORM` environment variable from Docker-style platform strings (linux/amd64, linux/arm64, linux/arm/v7, linux/386). Used by Dockerfiles and build scripts. |
@@ -21,7 +21,7 @@ Scripts that compile the WASM client and dedicated server from the upstream id S
 2. build-client.sh
    ├── cp tmp/WinQuake/ -> tmp/client/ (working copy)
    ├── apply src/client/*.patch
-   ├── cp src/client/*.c, *.h, *.js, Makefile.emscripten, shell.html
+   ├── cp src/client/*.c, *.h, *.js, Makefile.emscripten, shell.html, shell.css, favicon.svg
    └── emcc (Emscripten) -> output files
 
 3. build-server.sh

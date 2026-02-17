@@ -24,60 +24,59 @@ type vfsManifestEntry struct {
 	Size int64  `json:"size,omitempty"`
 }
 
+type vfsManifestBundle struct {
+	Mods map[string][]vfsManifestEntry `json:"mods"`
+}
+
 // headerVFSPrefetchConcurrency is the HTTP header name for VFS prefetch concurrency.
 const headerVFSPrefetchConcurrency = "X-NQ-VFS-Prefetch-Concurrency"
 
-// NewDataManifestHandler returns an HTTP handler that serves VFS manifests.
-// resolveGameDirs maps a requested game directory to its ordered search path.
-func NewDataManifestHandler(dataDir string, resolveGameDirs func(string) []string, pakCache *PakIndexCache, prefetchConcurrency int) http.HandlerFunc {
+// NewDataManifestBundleHandler returns all mod manifests in one response.
+func NewDataManifestBundleHandler(dataDir string, pakCache *PakIndexCache, prefetchConcurrency int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 
-		gameDir := strings.TrimPrefix(r.URL.Path, "/data-manifest/")
-		gameDir = strings.Trim(gameDir, "/")
-		if gameDir == "" {
-			http.Error(w, "missing mod", http.StatusBadRequest)
-			return
-		}
-		if strings.Contains(gameDir, "..") || strings.ContainsAny(gameDir, `/\`) {
-			http.Error(w, "invalid mod", http.StatusBadRequest)
-			return
-		}
-
-		manifest, err := buildVFSManifest(dataDir, resolveGameDirs(gameDir), pakCache)
+		mods, err := ListMods(dataDir)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if len(manifest) == 0 {
+		if len(mods) == 0 {
 			http.NotFound(w, r)
 			return
 		}
 
+		bundle := vfsManifestBundle{
+			Mods: make(map[string][]vfsManifestEntry, len(mods)),
+		}
+		for _, mod := range mods {
+			manifest, manifestErr := buildVFSManifest(dataDir, mod, pakCache)
+			if manifestErr != nil {
+				http.Error(w, manifestErr.Error(), http.StatusInternalServerError)
+				return
+			}
+			bundle.Mods[mod] = manifest
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set(headerVFSPrefetchConcurrency, strconv.Itoa(prefetchConcurrency))
-		_ = json.NewEncoder(w).Encode(manifest)
+		_ = json.NewEncoder(w).Encode(bundle)
 	}
 }
 
-// buildVFSManifest produces a sorted manifest of all files available for the
-// given ordered list of game directories.
-func buildVFSManifest(dataDir string, gameDirs []string, pakCache *PakIndexCache) ([]vfsManifestEntry, error) {
+// buildVFSManifest produces a sorted manifest of all files available for one mod.
+func buildVFSManifest(dataDir, mod string, pakCache *PakIndexCache) ([]vfsManifestEntry, error) {
 	layers := []string{"common", "client"}
 
 	// Later layers overwrite earlier ones.
 	byKey := make(map[string]vfsManifestEntry)
 
-	// path output is ordered highest priority -> lowest priority.
-	for i := len(gameDirs) - 1; i >= 0; i-- {
-		gameDir := gameDirs[i]
-		for _, layer := range layers {
-			if err := overlayLayerIntoManifest(byKey, dataDir, gameDir, layer, pakCache); err != nil {
-				return nil, err
-			}
+	for _, layer := range layers {
+		if err := overlayLayerIntoManifest(byKey, dataDir, mod, layer, pakCache); err != nil {
+			return nil, err
 		}
 	}
 
@@ -279,8 +278,9 @@ func escapeURLPathPreserveSlashes(p string) string {
 
 // ---- Server runtime filesystem layout ----
 
-// ListMods returns the game directory names found under dataDir that contain
-// at least one layer directory (common, client, or server).
+// ListMods returns valid game directory names found under dataDir that either:
+// - contain at least one layer directory (common, client, or server), or
+// - are empty directories (used for client-only config mods with no data yet).
 func ListMods(dataDir string) ([]string, error) {
 	ents, err := os.ReadDir(dataDir)
 	if err != nil {
@@ -299,10 +299,10 @@ func ListMods(dataDir string) ([]string, error) {
 		if !isValidQuakeGameDirName(name) {
 			continue
 		}
-		// Only treat directories as "mods" if they have at least one layer directory.
-		// This avoids starting bogus servers for junk directories (or for a user who
-		// accidentally bind-mounted a single mod dir as DATA_DIR).
-		if !dirHasAnyLayer(filepath.Join(dataDir, name)) {
+		modDir := filepath.Join(dataDir, name)
+		// Treat directories as mods when they have layer dirs, or when they are
+		// intentionally empty placeholders for client-side config mods.
+		if !dirHasAnyLayer(modDir) && !dirIsEmpty(modDir) {
 			continue
 		}
 		mods = append(mods, name)
@@ -334,6 +334,14 @@ func dirHasAnyLayer(modDir string) bool {
 		}
 	}
 	return false
+}
+
+func dirIsEmpty(modDir string) bool {
+	ents, err := os.ReadDir(modDir)
+	if err != nil {
+		return false
+	}
+	return len(ents) == 0
 }
 
 // PrepareRuntimeBasedir creates an ephemeral overlay basedir with symlinks into

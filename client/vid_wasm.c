@@ -124,8 +124,13 @@ EM_JS(void, js_request_pointerlock, (), {
 	if (p && p.catch) p.catch(function(){});
 });
 
+EM_JS(int, js_overlay_modal_open, (), {
+	return (typeof Module !== 'undefined' && Module && Module.nqOverlayModalOpen) ? 1 : 0;
+});
+
 // Input callbacks
 static EM_BOOL on_key(int type, const EmscriptenKeyboardEvent *e, void *ud) {
+	if (js_overlay_modal_open() && e->keyCode != 37 && e->keyCode != 38 && e->keyCode != 39 && e->keyCode != 40) return 0;
 	if (e->keyCode == 27 && emscripten_get_now() - ptrlock_lost_at < 50) return 1;
 	int k = e->keyCode < 256 ? keymap[e->keyCode] : 0;
 	if (!k) return 0;
@@ -134,12 +139,14 @@ static EM_BOOL on_key(int type, const EmscriptenKeyboardEvent *e, void *ud) {
 }
 
 static EM_BOOL on_mouse_move(int t, const EmscriptenMouseEvent *e, void *ud) {
+	if (js_overlay_modal_open()) return 0;
 	if (!mouse_avail || !pointer_locked) return 0;
 	mouse_x += e->movementX * 2; mouse_y += e->movementY * 2;
 	return 1;
 }
 
 static EM_BOOL on_mouse_btn(int type, const EmscriptenMouseEvent *e, void *ud) {
+	if (js_overlay_modal_open()) return 0;
 	if (!mouse_avail) return 0;
 	qboolean down = (type == EMSCRIPTEN_EVENT_MOUSEDOWN);
 	if (down && !pointer_locked) {
@@ -153,6 +160,7 @@ static EM_BOOL on_mouse_btn(int type, const EmscriptenMouseEvent *e, void *ud) {
 }
 
 static EM_BOOL on_wheel(int t, const EmscriptenWheelEvent *e, void *ud) {
+	if (js_overlay_modal_open()) return 0;
 	if (!mouse_avail) return 0;
 	int k = e->deltaY < 0 ? K_MWHEELUP : e->deltaY > 0 ? K_MWHEELDOWN : 0;
 	if (!k) return 0;
