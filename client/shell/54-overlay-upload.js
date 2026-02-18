@@ -37,19 +37,25 @@
       var invalidText = opts.invalidText || ('Quake ' + ctx.USER_FILE_DESC + ' only');
       var dir = String(opts.dir || ctx.getUploadDir());
       var dirPath;
+      var rawName;
+      var ext;
+      var isCdUpload;
       var name;
       var dstPath;
       var label;
       var data;
 
-      if (!file || allowedExts.indexOf(file.name.slice(file.name.lastIndexOf('.') + 1).toLowerCase()) < 0) {
+      rawName = String(file && file.name || '').split(/[\\/]/).pop();
+      ext = rawName.slice(rawName.lastIndexOf('.') + 1).toLowerCase();
+      if (!rawName || allowedExts.indexOf(ext) < 0) {
         ctx.showErrorMessage(invalidText, 3000);
         return false;
       }
       ctx.clearStatusMessage('upload-progress');
 
       dirPath = dir.replace(/\/$/, '');
-      name = file.name.toLowerCase();
+      isCdUpload = typeof ctx.isCdDir === 'function' && ctx.isCdDir(dir);
+      name = isCdUpload ? rawName : rawName.toLowerCase();
       dstPath = dir + name;
       label = 'Uploading ' + name + ' (' + index + '/' + total + ')';
 

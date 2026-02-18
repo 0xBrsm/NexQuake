@@ -384,6 +384,8 @@ func materializeMergedModDir(runtimeRoot, sourceDataDir, mod string) error {
 }
 
 func overlaySymlinks(dstRoot, srcRoot string) error {
+	seen := make(map[string]string)
+
 	return filepath.WalkDir(srcRoot, func(full string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -397,7 +399,13 @@ func overlaySymlinks(dstRoot, srcRoot string) error {
 			return nil
 		}
 
-		dst := filepath.Join(dstRoot, rel)
+		lowerRel := strings.ToLower(filepath.ToSlash(rel))
+		if prev, ok := seen[lowerRel]; ok && prev != rel {
+			return fmt.Errorf("case-colliding paths in %s: %s and %s", srcRoot, prev, rel)
+		}
+		seen[lowerRel] = rel
+
+		dst := filepath.Join(dstRoot, filepath.FromSlash(lowerRel))
 
 		// Never symlink directories. If we symlink a directory from a read-only
 		// source tree (e.g. /data), then later overlays that try to remove/replace

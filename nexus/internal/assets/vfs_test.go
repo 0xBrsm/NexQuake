@@ -355,3 +355,73 @@ func TestMaterializeMergedModDir_DoesNotSymlinkDirs(t *testing.T) {
 		t.Fatalf("expected server override, got %q", string(got))
 	}
 }
+
+func TestMaterializeMergedModDir_LowercasesRuntimePaths(t *testing.T) {
+	gameDir := t.TempDir()
+	runtimeRoot := t.TempDir()
+	mod := "id1"
+
+	commonDir := filepath.Join(gameDir, mod, "common")
+	serverDir := filepath.Join(gameDir, mod, "server")
+	if err := os.MkdirAll(commonDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.MkdirAll(serverDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(commonDir, "PROGS.DAT"), []byte("common"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(serverDir, "PROGS.DAT"), []byte("server"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if err := materializeMergedModDir(runtimeRoot, gameDir, mod); err != nil {
+		t.Fatalf("materializeMergedModDir: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(runtimeRoot, mod, "progs.dat"))
+	if err != nil {
+		t.Fatalf("read lowercase path: %v", err)
+	}
+	if string(got) != "server" {
+		t.Fatalf("expected server override at lowercase path, got %q", string(got))
+	}
+
+	ents, err := os.ReadDir(filepath.Join(runtimeRoot, mod))
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, ent := range ents {
+		if ent.Name() == "PROGS.DAT" {
+			t.Fatalf("expected uppercase runtime path to be absent, but it was found")
+		}
+	}
+}
+
+func TestMaterializeMergedModDir_FailsOnCaseCollisionWithinLayer(t *testing.T) {
+	gameDir := t.TempDir()
+	runtimeRoot := t.TempDir()
+	mod := "id1"
+
+	commonDir := filepath.Join(gameDir, mod, "common")
+	if err := os.MkdirAll(commonDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(commonDir, "PROGS.DAT"), []byte("upper"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(commonDir, "progs.dat"), []byte("lower"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	err := materializeMergedModDir(runtimeRoot, gameDir, mod)
+	if err == nil {
+		t.Fatalf("expected case-collision error, got nil")
+	}
+	if !strings.Contains(err.Error(), "case-colliding paths") {
+		t.Fatalf("expected case-collision error, got: %v", err)
+	}
+}
