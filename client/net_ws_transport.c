@@ -9,6 +9,8 @@
 
 #include "quakedef.h"
 
+#include <stdio.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,10 +42,12 @@ typedef struct
 static WsMessage wsDataMessages[MAX_WS_DATA_MESSAGES];
 static uint16_t wsDataRead = 0;
 static uint16_t wsDataWrite = 0;
+static uint16_t wsDataOverflowWarnings = 0;
 
 static WsMessage wsCtlMessages[MAX_WS_CTL_MESSAGES];
 static uint16_t wsCtlRead = 0;
 static uint16_t wsCtlWrite = 0;
+static uint16_t wsCtlOverflowWarnings = 0;
 
 static qboolean ws_opened = false;
 static qboolean ws_onopen_handled = false;
@@ -70,10 +74,48 @@ EM_JS(char *, NQ_ConnectUrl, (), {
 	return 0;
 });
 
+EM_JS(void, NQ_WebSocketLog, (int level, const char *msg), {
+	var text = UTF8ToString(msg);
+	if (typeof console === 'undefined' || !console) return;
+	if (level == 2 && typeof console.error === 'function') {
+		console.error(text);
+		return;
+	}
+	if (level == 1 && typeof console.warn === 'function') {
+		console.warn(text);
+		return;
+	}
+	if (typeof console.info === 'function') {
+		console.info(text);
+		return;
+	}
+	if (typeof console.log === 'function')
+		console.log(text);
+});
+
+enum
+{
+	WS_LOG_INFO = 0,
+	WS_LOG_WARN = 1,
+	WS_LOG_ERROR = 2
+};
+
+static void WebSocketTransport_Log(int level, const char *fmt, ...)
+{
+	char message[224];
+	va_list args;
+	va_start(args, fmt);
+	vsnprintf(message, sizeof(message), fmt, args);
+	va_end(args);
+	NQ_WebSocketLog(level, message);
+}
+
 static void WebSocketTransport_ResetQueues(void)
 {
 	wsDataRead = wsDataWrite = 0;
 	wsCtlRead = wsCtlWrite = 0;
+	wsDataOverflowWarnings = 0;
+	wsCtlOverflowWarnings = 0;
 }
 
 static void WebSocketTransport_ResetState(void)
@@ -85,7 +127,7 @@ static void WebSocketTransport_ResetState(void)
 }
 
 static void WebSocketTransport_QueueMessage(WsMessage *messages, uint16_t capacity, uint16_t *read_index,
-	uint16_t *write_index, const void *data, unsigned int length)
+	uint16_t *write_index, uint16_t *overflow_warnings, const char *queue_name, const void *data, unsigned int length)
 {
 	uint16_t next;
 
@@ -94,7 +136,21 @@ static void WebSocketTransport_QueueMessage(WsMessage *messages, uint16_t capaci
 
 	next = (uint16_t)((*write_index + 1u) % capacity);
 	if (next == *read_index)
+	{
+		unsigned int warning_count = (unsigned int)(*overflow_warnings) + 1u;
+		if (warning_count <= 5u || (warning_count % 256u) == 0u)
+		{
+			int depth = (*write_index >= *read_index)
+				? (int)(*write_index - *read_index)
+				: (int)(*write_index + capacity - *read_index);
+			WebSocketTransport_Log(WS_LOG_WARN,
+				"_WebSocket_onmessage: %s full (depth=%d), dropping oldest packet (overflow #%u)",
+				queue_name, depth, warning_count);
+		}
+		if (*overflow_warnings < 0xffffu)
+			(*overflow_warnings)++;
 		*read_index = (uint16_t)((*read_index + 1u) % capacity); // drop oldest
+	}
 
 	messages[*write_index].length = length;
 	memcpy(messages[*write_index].data, data, length);
@@ -148,7 +204,7 @@ static EM_BOOL _WebSocket_onopen(int eventType, const EmscriptenWebSocketOpenEve
 		return EM_TRUE;
 
 	ws_onopen_handled = true;
-	Sys_Printf("_WebSocket_onopen: connected\n");
+	WebSocketTransport_Log(WS_LOG_INFO, "_WebSocket_onopen: connected");
 #ifdef __EMSCRIPTEN__
 	EM_ASM({
 		if (typeof Module === 'undefined') return;
@@ -171,7 +227,7 @@ static EM_BOOL _WebSocket_onerror(int eventType, const EmscriptenWebSocketErrorE
 	if ((EMSCRIPTEN_WEBSOCKET_T)(uintptr_t)userData != ws)
 		return EM_TRUE;
 
-	Sys_Printf("_WebSocket_onerror: failed (see browser console)\n");
+	WebSocketTransport_Log(WS_LOG_ERROR, "_WebSocket_onerror: callback received");
 	return EM_TRUE;
 }
 
@@ -189,7 +245,10 @@ static EM_BOOL _WebSocket_onclose(int eventType, const EmscriptenWebSocketCloseE
 
 	WebSocketTransport_ResetState();
 
-	Sys_Printf("_WebSocket_onclose: disconnected%s\n", expected ? " at user request" : " unexpectedly");
+	if (expected)
+		WebSocketTransport_Log(WS_LOG_INFO, "_WebSocket_onclose: disconnected at user request");
+	else
+		WebSocketTransport_Log(WS_LOG_WARN, "_WebSocket_onclose: disconnected unexpectedly");
 	return EM_TRUE;
 }
 
@@ -237,6 +296,7 @@ static EM_BOOL _WebSocket_onmessage(int eventType, const EmscriptenWebSocketMess
 		if (is_control)
 		{
 			WebSocketTransport_QueueMessage(wsCtlMessages, MAX_WS_CTL_MESSAGES, &wsCtlRead, &wsCtlWrite,
+				&wsCtlOverflowWarnings, "wsCtlMessages",
 				websocketEvent->data, (unsigned int)websocketEvent->numBytes);
 		}
 		else if (payload_len > 0)
@@ -249,6 +309,7 @@ static EM_BOOL _WebSocket_onmessage(int eventType, const EmscriptenWebSocketMess
 	}
 	else
 		WebSocketTransport_QueueMessage(wsDataMessages, MAX_WS_DATA_MESSAGES, &wsDataRead, &wsDataWrite,
+			&wsDataOverflowWarnings, "wsDataMessages",
 			websocketEvent->data, (unsigned int)websocketEvent->numBytes);
 
 	return EM_TRUE;
@@ -269,7 +330,10 @@ int WebSocketTransport_Open(void)
 
 	ws_url = NQ_ConnectUrl();
 	if (!ws_url || !ws_url[0])
+	{
+		WebSocketTransport_Log(WS_LOG_ERROR, "_WebSocket_open: failed (missing websocket URL)");
 		return -1;
+	}
 
 	ws_attrs.url = ws_url;
 	ws_attrs.protocols = NULL;
@@ -280,7 +344,7 @@ int WebSocketTransport_Open(void)
 
 	if ((ws = emscripten_websocket_new(&ws_attrs)) <= 0)
 	{
-		Sys_Printf("WebSocketTransport_Open: failed to open socket\n");
+		WebSocketTransport_Log(WS_LOG_ERROR, "_WebSocket_open: failed (browser socket create error)");
 		free(ws_url);
 		return -1;
 	}

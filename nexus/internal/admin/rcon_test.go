@@ -66,6 +66,24 @@ func TestHandleAdminFrame_PromotesSessionAfterValidPassword(t *testing.T) {
 	}
 }
 
+func TestHandleAdminFrameWithPromotionHook_FiresOnPromotion(t *testing.T) {
+	r, ch := nqnet.NewTestRouter(false)
+	auth := &Auth{rconPassword: "pw"}
+
+	hookCalls := 0
+	HandleAdminFrameWithPromotionHook(r, []byte("pw\x000\x00help"), auth, &Env{}, func(*nqnet.Router) {
+		hookCalls++
+	})
+
+	reply := readAdminReply(t, ch)
+	if !strings.Contains(reply, "Nexus commands:") {
+		t.Fatalf("expected help reply after auth, got %q", reply)
+	}
+	if hookCalls != 1 {
+		t.Fatalf("expected promotion hook to fire once, got %d", hookCalls)
+	}
+}
+
 func TestExecNexusCommand_Help(t *testing.T) {
 	env := &Env{
 		ServerSnapshots:  func() []orch.ServerSnapshot { return nil },

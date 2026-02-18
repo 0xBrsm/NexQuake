@@ -307,7 +307,13 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			return listPayload
 		},
 		HandleAdminFrame: func(router *nqnet.Router, payload []byte) {
-			admin.HandleAdminFrame(router, payload, globalAuth, globalAdminEnv)
+			admin.HandleAdminFrameWithPromotionHook(router, payload, globalAuth, globalAdminEnv, func(r *nqnet.Router) {
+				source := strings.TrimSpace(r.SourceIP())
+				if source == "" {
+					source = "unknown"
+				}
+				infof("Admin promoted: source=%s key=%s nqip=%s", source, r.SourceKey(), r.VirtualClientIP())
+			})
 		},
 	}
 

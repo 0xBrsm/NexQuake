@@ -246,7 +246,7 @@ EMSCRIPTEN_KEEPALIVE void NexQuake_StartMainLoop(void)
 	main_loop_started = true;
 }
 
-EMSCRIPTEN_KEEPALIVE void NexQuake_OnPageHide(void)
+EMSCRIPTEN_KEEPALIVE void NexQuake_OnPageUnload(void)
 {
 	if (cls.state == ca_connected)
 		CL_Disconnect();

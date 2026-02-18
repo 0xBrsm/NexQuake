@@ -14,6 +14,18 @@ const defaultServerTailLines = 10
 
 // HandleAdminFrame processes an incoming admin (port 0) frame from a WebSocket client.
 func HandleAdminFrame(r *nqnet.Router, payload []byte, auth *Auth, env *Env) {
+	HandleAdminFrameWithPromotionHook(r, payload, auth, env, nil)
+}
+
+// HandleAdminFrameWithPromotionHook is HandleAdminFrame plus an optional
+// callback fired when a non-admin session is promoted via valid rcon_password.
+func HandleAdminFrameWithPromotionHook(
+	r *nqnet.Router,
+	payload []byte,
+	auth *Auth,
+	env *Env,
+	onPromoted func(*nqnet.Router),
+) {
 	pw, targetPort, args := splitAdminPayload(payload)
 
 	// Authorize either at connection time (OIDC / shared token) or per-frame
@@ -28,6 +40,9 @@ func HandleAdminFrame(r *nqnet.Router, payload []byte, auth *Auth, env *Env) {
 			return
 		}
 		r.PromoteAdmin()
+		if onPromoted != nil {
+			onPromoted(r)
+		}
 	}
 
 	args = strings.TrimSpace(args)

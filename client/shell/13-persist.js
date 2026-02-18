@@ -6,7 +6,7 @@
   var USER_GAME_ROOT = USERFS_ROOT + '/game';
   var USER_CD_ROOT = USERFS_ROOT + '/cd';
   var USER_EXTS = nqGetUserFileExts();
-  var shutdownRequested = false;
+  var unloadShutdownRequested = false;
 
   function syncUserFS() {
     if (typeof FS === 'undefined') return;
@@ -26,18 +26,19 @@
     Module.nqUserFileExts = USER_EXTS.slice();
   } catch (e) {}
 
-  function requestShutdown() {
-    if (shutdownRequested) return;
-    shutdownRequested = true;
+  function requestUnloadShutdown() {
+    if (unloadShutdownRequested) return;
+    unloadShutdownRequested = true;
     try {
       if (typeof Module !== 'undefined' && Module && typeof Module.ccall === 'function')
-        Module.ccall('NexQuake_OnPageHide', 'void', [], []);
+        Module.ccall('NexQuake_OnPageUnload', 'void', [], []);
     } catch (e) {
-      console.warn('NexQuake_OnPageHide failed:', e);
+      console.warn('NexQuake_OnPageUnload failed:', e);
     }
     syncUserFS();
   }
 
-  window.addEventListener('pagehide', requestShutdown);
-  window.addEventListener('beforeunload', requestShutdown);
+  // These are unload/navigation signals (not tab-visibility changes).
+  window.addEventListener('pagehide', requestUnloadShutdown);
+  window.addEventListener('beforeunload', requestUnloadShutdown);
 })();
