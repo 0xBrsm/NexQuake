@@ -1,4 +1,4 @@
-# Technical Deep Dive
+# Architecture
 
 This document covers the technical choices and philosophy behind NexQuake. It is written for contributors, curious engineers, and anyone who wants to understand how a 1996 game engine runs in a 2026 browser.
 
@@ -41,7 +41,7 @@ This technique applies to any indexed-color engine ported to WebGL.
 
 ## Direct Emscripten Platform Layer
 
-The original [Quake-WASM](https://github.com/GMH-Code/Quake-WASM) port by Gregory Maynard-Hoare proved that Quake could run in a browser. That port used Emscripten's SDL2 shim (`-sUSE_SDL=2`), a solid approach that leverages SDL's well-tested abstractions. NexQuake replaced the SDL layer with direct Emscripten API calls in v0.7.0 to reduce the distance between the engine and the browser, cutting binary size and simplifying debugging.
+The original [Quake-WASM](https://github.com/GMH-Code/Quake-WASM) port by Gregory Maynard-Hoare proved that Quake C could run in a browser. That port used Emscripten's SDL2 shim (`-sUSE_SDL=2`), a solid approach that leverages SDL's well-tested abstractions. NexQuake replaced the SDL layer with direct Emscripten API calls in v0.7.0 to reduce the distance between the engine and the browser, cutting binary size and simplifying debugging.
 
 ### What Changed
 
@@ -83,6 +83,14 @@ No locks are needed because the callback runs on the main thread in browsers, an
 
 AudioContext auto-resume on first user gesture handles browser autoplay policies.
 
+### CD Audio
+
+Quake's CD audio system originally played music tracks from a physical CD-ROM drive. NexQuake replaces this with digital audio streaming from a server-side directory (`CD_DIR`).
+
+Nexus scans `CD_DIR` for `.ogg` and `.mp3` files and includes the resulting track index in the `/start` bootstrap payload. CD audio bytes are then fetched through hash-addressed `/nq/<hash>` URLs (backed internally by the CD stream resolver). Track numbers are extracted from filenames (e.g., `02-intro.ogg` is track 2).
+
+`cd_wasm.c` replaces the original `cd_audio.c` with Emscripten `EM_JS` bindings that drive an HTML5 `<audio>` element. The JavaScript layer resolves tracks through a two-tier system: first checking user-uploaded files in the Emscripten virtual filesystem, then falling back to the server manifest. Playback respects the `bgmvolume` cvar and handles browser autoplay policies with resume-on-user-gesture logic.
+
 ## Stateless WebSocket Tunnel
 
 Game proxies typically parse packets, maintain session state, and layer their own protocol on top. NexQuake takes a simpler approach: the tunnel forwards raw datagrams without inspecting them.
@@ -105,7 +113,7 @@ Because Nexus never parses the datagram payload, it has no knowledge of whether 
 
 ### Multi-Server Routing
 
-Server selection is port-based: managed id `N` listens on loopback `:(26000+N)` (default = `:26000`).
+Server selection is port-based: each server's listen port is set explicitly in `servers.ini` via the `-port` flag (or assigned by the OS when `-port 0` is used). Nexus discovers the actual port at startup by querying the server console.
 
 Control/broadcast traffic uses `udp_port = 0`. For `slist`, Nexus detects `CCREQ_SERVER_INFO` and replies with aggregated `CCREP_SERVER_INFO` data built from its polled server cache. This replaces NetQuake's UDP broadcast, which never worked well and doesn't work across loopback addresses on Linux anyway.
 
@@ -115,22 +123,34 @@ NexQuake routes exclusively by UDP port:
 
 - Browser frames carry destination port in the 2-byte WS header
 - Nexus forwards to `${NQSERVER_IP}:<port>` (default `127.13.37.9`)
-- Client-facing Quake addresses are virtualized as `0.0.0.0:<port>` (routing keys only on the port)
+- Server addresses appear as port-only to the client: players connect by port number (e.g. `connect 26000`), and the server list displays no IP addresses
 
-To keep stock Quake behavior and server-side IP semantics, nexus still assigns each WebSocket client a stable virtual loopback IP (`127.x.y.z`) and binds that client's UDP relay socket to it. On WebSocket open, nexus sends a small control frame so the browser client can set its local NQIP for Quake address APIs. Routing still remains port-only.
+### Virtual qsockaddr Synthesis
+
+Quake's networking code passes `qsockaddr` structures through every address API (`GetSocketAddr`, `GetNameFromAddr`, `GetAddrFromName`, `AddrCompare`, etc.). The vnet driver in `net_ws_vnet.c` synthesizes these structures so the rest of the engine works without modification:
+
+- **Server addresses**: Built from port number alone. The IP portion is a fixed placeholder; only the port field matters for routing. When Quake asks for an address string (e.g. for the server list or the `connect` status line), the driver returns just the port number.
+- **Local client address**: On WebSocket open, Nexus sends a control frame containing the virtual loopback IP (`127.x.y.z`) assigned to this client. The vnet driver stores this and returns it when Quake calls `GetSocketAddr` on the local socket. This gives each browser client a stable identity that the server sees as a unique IP.
+- **Address comparison**: `AddrCompare` compares the full synthesized `qsockaddr`, which lets the engine distinguish between different servers (by port) and different clients (by virtual IP).
+
+This keeps all address handling inside the vnet driver. The rest of the Quake networking stack, the datagram layer, the connection logic, the server browser, sees well-formed `qsockaddr` values and never knows it's running over WebSocket.
+
+### Server-Side IP Semantics
+
+To keep stock Quake server behavior, Nexus still assigns each WebSocket client a stable virtual loopback IP (`127.x.y.z`) and binds that client's UDP relay socket to it. The server sees each client as a unique IP address, so features like per-IP bans, per-IP rate limiting, and the status command's address display all work unmodified. On WebSocket open, Nexus sends a small control frame so the browser client can set its local NQIP for the vnet driver. Routing still remains port-only on the tunnel itself.
 
 ## Build Architecture
 
 ### Patch-Based Overlay
 
-NexQuake does not fork Quake. The upstream `id-Software/Quake` repository is checked out pristine into `build/tmp/WinQuake/` and never modified. At build time:
+NexQuake does not fork Quake. The upstream `id-Software/Quake` repository is checked out canonical into `build/tmp/WinQuake/` and never modified. At build time:
 
-1. Copy the pristine source to a working directory
+1. Copy the canonical source to a working directory
 2. Apply `.patch` files from `client/` or `server/`
 3. Copy overlay `.c`/`.h` files (new code that does not exist upstream)
 4. Compile
 
-This keeps upstream changes auditable. Every modification is a patch file. New functionality is a new file. The Quake source in git is always pristine.
+This keeps upstream changes auditable. Every modification is a patch file. New functionality is a new file. The Quake source in git is always canonical.
 
 ### Multi-Stage Docker
 
@@ -138,16 +158,16 @@ The production Dockerfile builds all three components in isolated stages:
 
 ```
 Stage 1: Go builder    -> Nexus binary (CGO_ENABLED=0, static)
-Stage 2: C builder     -> nqserver (32-bit by default)
+Stage 2: C builder     -> nqserver (64-bit by default)
 Stage 3: WASM builder  -> index.html + shell.css + index.js + index.wasm
 Stage 4: Runtime       -> chainguard/wolfi-base + all artifacts
 ```
 
 The final image contains only the runtime: no compilers, no source code, no build tools.
 
-### 32-Bit Server Default
+### 64-Bit Server with QuakeC Patches
 
-The dedicated server builds as 32-bit by default, even on 64-bit hosts. This avoids QuakeC `string_t` pointer-subtraction crashes (`sv.name - pr_strings` truncation on 64-bit). Optional 64-bit patches exist in `server/64bit/` for hosts that need them.
+The dedicated server defaults to 64-bit on standard architectures (x86_64, arm64). QuakeC stores string references as 32-bit offsets (`string_t`), so 64-bit builds require patches in `server/64bit/` to widen the affected pointer-subtraction paths. These patches are applied automatically. 32-bit builds (armhf, i386) skip them and work without modification.
 
 ## Game Data Pipeline
 
@@ -176,29 +196,13 @@ The browser client never downloads full PAK files. Nexus indexes PAK headers on 
 - Files are served with correct HTTP caching headers
 - Works with any PAK file (shareware, full, mods)
 
-### Quickstart Bootstrap and the `quake106` Package
+### Quickstart Bootstrap
 
 On first run, if `${GAME_DIR}` is writable, Nexus downloads game data from a manifest file (e.g., `minimal.json`). The default manifest bootstraps Quake 1.06 shareware and a NexQuake version of LibreQuake's pak1.pak, which is enough to boot the engine and play single-player. Users can provide their own PAK files for the full game.
 
-The `nexus/quake106/` package is a standalone Go package that extracts `pak0.pak` directly from the original id Software FTP Quake 1.06 shareware distribution (`quake106.zip`). The original shareware archive uses a multi-part LHA-compressed installer format from 1996, so this package implements LZH (LH5) decompression from scratch in pure Go (no cgo, no external binaries, no shell calls) to decompress the `resource.1` segment and extract the PAK file and license text.
-
-Every step is SHA256-verified; the zip file itself, the `resource.1` entry, and the extracted `pak0.pak`. If any hash does not match the known-good value, extraction fails. This guarantees that Nexus only serves authentic, unmodified shareware data, which is important both for correctness (the engine expects specific file layouts) and for conformance with id Software's shareware license, which permits redistribution of the original, unmodified archive only.
+Shareware extraction is handled by the [`quake106` package](../nexus/quake106/README.md), which extracts `pak0.pak` directly from the original id Software shareware distribution with SHA256 verification at every stage.
 
 All of this allows a fresh NexQuake instance to be a multiplayer, multi-server Quake experience with a single `docker compose up`.
-
-## Environment Configuration
-
-NexQuake is configured entirely through environment variables, with no config files or command-line flags for Nexus. This keeps Docker deployment straightforward:
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `HTTP_PORT` | `1337` | Listen port |
-| `GAME_DIR` | `/app/game` | Game data root |
-| `LOGS_DIR` | `/app/logs` | Server state (read-write) |
-| `QUICKSTART` | `minimal` | Bootstrap manifest |
-| `AUTH_ISSUER` | (unset) | OIDC provider URL for admin auth |
-| `AUTH_RCON_PASSWORD` | (unset) | Shared secret for in-game `rcon_password` validation |
-| `LOG_LEVEL` | `info` | Logging verbosity |
 
 ## What's Next
 
@@ -211,7 +215,7 @@ NexQuake is GPL-2.0-or-later. Contributions are welcome. The best way to get sta
 1. Read this document and the [README](./README.md)
 2. Run the Docker quick start
 3. Look at the patch files in `client/` and `server/` to understand the scope of changes
-4. Check `nexus/` for Go contributions (well-tested, standard library only)
+4. Check `nexus/` for Go contributions (well-tested, minimal dependencies)
 
 The project values simplicity, authenticity, and minimal upstream diff.
 

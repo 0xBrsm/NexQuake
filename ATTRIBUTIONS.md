@@ -1,4 +1,4 @@
-# NexQuake Attributions
+# Attributions
 
 This file records upstream sources that NexQuake derives from or incorporates.
 
@@ -12,21 +12,17 @@ This file records upstream sources that NexQuake derives from or incorporates.
 
 ## WebSocket Networking Lineage
 
-- **initialed85 Quake-WASM fork**
-  - Repository: https://github.com/initialed85/Quake-WASM
-  - Reference commit: `2bac461a6cc8`
+- **initialed85 WebSocket / WASM Quake projects**
+  - Repositories:
+    - https://github.com/initialed85/quake-websocket-proxy (initial seed for what became Nexus)
+    - https://github.com/initialed85/Quake-WASM (reference commit `2bac461a6cc8`)
+    - https://github.com/initialed85/Quake (reference commit `7640d6b58f91`)
   - Upstream paths referenced:
     - `WinQuake/net_websocket.c`
     - `WinQuake/net_websocket.h`
-  - Notes: Primary ancestry for NexQuake websocket net driver integration.
-
-- **initialed85 Quake fork**
-  - Repository: https://github.com/initialed85/Quake
-  - Reference commit: `7640d6b58f91`
-  - Upstream paths referenced:
     - `WinQuake/websockets/websockets.c`
     - `WinQuake/websockets/websockets.h`
-  - Notes: Secondary websocket transport design/reference lineage.
+  - Notes: Primary ancestry for NexQuake websocket net driver integration. The `quake-websocket-proxy` repo was the original proof-of-concept that seeded this project; the two Quake forks provided the websocket transport code that NexQuake's networking derives from.
 
 ## LZH Decompression Lineage
 
@@ -54,7 +50,7 @@ This file records upstream sources that NexQuake derives from or incorporates.
 
 The following projects provided inspiration and reference during NexQuake's development but are not direct code ancestors of the current codebase:
 
-- **Gregory Maynard-Hoare** ([GMH-Code/Quake-WASM](https://github.com/GMH-Code/Quake-WASM)) -- Original WASM/SDL port of Quake. NexQuake's platform layer was rewritten from scratch using direct Emscripten APIs (no SDL), but the GMH port demonstrated the viability of Quake-in-a-browser and influenced downstream forks that NexQuake's WebSocket networking derives from.
+- **Gregory Maynard-Hoare** ([GMH-Code/Quake-WASM](https://github.com/GMH-Code/Quake-WASM)). Original WASM/SDL port of Quake. NexQuake's platform layer was rewritten from scratch using direct Emscripten APIs (no SDL), but the GMH port demonstrated the viability of Quake-in-a-browser and influenced downstream forks that NexQuake's WebSocket networking derives from.
 
 ## File-Level Guidance
 

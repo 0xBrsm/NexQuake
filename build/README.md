@@ -6,17 +6,17 @@ Scripts that compile the WASM client and dedicated server from the upstream id S
 
 | File | Purpose |
 |------|---------|
-| `Makefile` | **Primary orchestrator.** Top-level build targets for client, server, and upstream preparation. |
-| `build-client.sh` | **WASM client build.** Prepares the upstream source, applies client patches and overlays, runs `make -f Makefile.emscripten`. Produces `index.html`, `shell.css`, `favicon.svg`, `index.js`, `index.wasm`. |
-| `build-server.sh` | **Dedicated server build.** Prepares the upstream source, applies server patches, compiles with GCC. Produces `nqserver`. Handles platform detection and 32/64-bit selection. |
-| `prepare-upstream.sh` | **Upstream checkout.** Sparse-clones `id-Software/Quake` into `tmp/WinQuake/`. Idempotent -- skips if already present. |
-| `platform.sh` | **Platform detection.** Sets `PLATFORM` environment variable from Docker-style platform strings (linux/amd64, linux/arm64, linux/arm/v7, linux/386). Used by Dockerfiles and build scripts. |
+| `Makefile` | Primary orchestrator. Top-level build targets for client, server, and upstream preparation. |
+| `build-client.sh` | WASM client build. Prepares the upstream source, applies client patches and overlays, runs `make -f Makefile.emscripten`. Produces `index.html`, `shell.css`, `favicon.svg`, `index.js`, `index.wasm`. |
+| `build-server.sh` | Dedicated server build. Prepares the upstream source, applies server patches, compiles with GCC. Produces `nqserver`. Handles platform detection and 32/64-bit selection. |
+| `prepare-upstream.sh` | Upstream checkout. Sparse-clones `id-Software/Quake` into `tmp/WinQuake/`. Idempotent; skips if already present. |
+| `platform.sh` | Platform detection. Sets `PLATFORM` environment variable from Docker-style platform strings (linux/amd64, linux/arm64, linux/arm/v7, linux/386). Used by Dockerfiles and build scripts. |
 
 ## How It Works
 
 ```
 1. prepare-upstream.sh
-   └── git sparse-checkout id-Software/Quake -> tmp/WinQuake/ (pristine, never modified)
+   └── git sparse-checkout id-Software/Quake -> tmp/WinQuake/ (canonical, never modified)
 
 2. build-client.sh
    ├── cp tmp/WinQuake/ -> tmp/client/ (working copy)
@@ -37,7 +37,7 @@ All build intermediates go under `build/tmp/` (relative to `src/`, i.e. `src/bui
 
 ```
 build/tmp/
-  WinQuake/       Pristine upstream checkout (shared, never modified)
+  WinQuake/       Canonical upstream checkout (shared, never modified)
   client/         Client working copy (disposable)
   server/         Server working copy (disposable)
   bin/            Build outputs (nqwasm/, nqserver)

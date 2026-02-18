@@ -2,18 +2,14 @@
 
 Go HTTP server that ties everything together: serves the WASM client, serves game data, tunnels multiplayer traffic over WebSocket, and manages dedicated server processes.
 
-## Files
-
-### Entry
+## Entry
 
 | File | Purpose |
 |------|---------|
-| `main.go` | **Entry point.** HTTP server setup, route registration, auth init, server manager startup, signal handling, graceful shutdown. |
-| `util.go` | **Shared helpers.** Logging, env parsing, misc utilities. |
+| `main.go` | HTTP server setup, route registration, WebSocket handler, CLI subcommands (`--version`, `--healthcheck`), auth init, server manager startup, signal handling, graceful shutdown. |
+| `util.go` | Leveled logging (stderr + file + ring buffer for `rcon tail`), version info (`-ldflags`), env helpers, HTTP middleware (CORS, cache-control, content-type override). |
 
-### Packages
-
-Most nexus logic lives in internal packages:
+## Packages
 
 | Dir | Purpose |
 |-----|---------|
@@ -22,7 +18,7 @@ Most nexus logic lives in internal packages:
 | `internal/admin/` | **Admin.** Auth (OIDC JWT + per-frame `rcon_password`), admin frame handler (`rcon`), nexus command dispatcher. |
 | `internal/assets/` | **Game data.** Bootstrap manifests, VFS manifest builder, PAK indexing, and hash-addressed asset gateway. |
 
-### Game Data
+### `internal/assets/` — Game Data
 
 | File | Purpose |
 |------|---------|
@@ -42,17 +38,28 @@ This is what makes Nexus's auto-bootstrap work: on first run, if no game data ex
 |------|---------|
 | `quake106.go` | LZH decompression + PAK extraction. SHA256 verification at every stage. |
 
-### Auth
+### `internal/orch/` — Orchestration
+
+Manages dedicated server processes. Parses `servers.ini` into a launch plan, starts processes under PTY for console capture, polls server-info for the slist cache, and exposes operations for the admin rcon interface.
 
 | File | Purpose |
 |------|---------|
-| `auth.go` | **Authentication.** OIDC JWT for connection-level admin identity plus optional frame-level `rcon_password` checks. Admin matcher logic (email, group, role). |
+| `launcher.go` | `servers.ini` parser (with `@macro` expansion), launch plan builder, argument validation. |
+| `manager.go` | Server process lifecycle: start under PTY, track by slot/port, wait for exit, graceful and forced shutdown. |
+| `ops.go` | High-level server operations (start/stop/restart/remove/launch by port or index). Resolves targets, coordinates state transitions. |
+| `console.go` | PTY-based server console I/O. Captures output lines, detects listen port from console, supports filtered reads for rcon command capture. |
+| `rcon.go` | Server command execution: writes a command to the PTY, captures output with idle/max timeouts, formats the reply. |
+| `slist.go` | Server-info poller. Periodically sends CCREQ_SERVER_INFO to each managed server and caches CCREP responses for the WebSocket slist handler. |
 
-### Utilities
+### `internal/admin/` — Admin
+
+Authenticates admin sessions and handles rcon commands dispatched from the WebSocket layer.
 
 | File | Purpose |
 |------|---------|
-| `util.go` | Shared helpers. |
+| `auth.go` | Authentication. OIDC JWT verification (`AUTH_ISSUER`, `AUTH_AUDIENCE`, optional `AUTH_JWT_HEADER`, matcher list `AUTH_ADMIN_ID`) for connection-level admin identity, plus `AUTH_RCON_PASSWORD` for per-frame shared-secret auth. |
+| `rcon.go` | Admin frame handler. Parses the rcon payload (password, optional target port, command), authorizes the frame, and dispatches to either a Nexus-level command or a server-level command. |
+| `cmds.go` | Nexus-level admin command registry and execution: `help`, `tail`, `slist`, `sessions`, `start`, `stop`, `restart`, `remove`, `launch`, `ban`. |
 
 ## Building
 
@@ -61,7 +68,7 @@ cd src/nexus
 go build -o nexus .
 ```
 
-Or for a static binary (Docker):
+Static binary (Docker):
 
 ```bash
 CGO_ENABLED=0 go build -o nexus .
@@ -69,4 +76,4 @@ CGO_ENABLED=0 go build -o nexus .
 
 ## Dependencies
 
-Go 1.25+. Primary deps: `github.com/gorilla/websocket` (WebSocket), `github.com/creack/pty` (server console PTY), `github.com/google/shlex` (admin command splitting).
+Go 1.24+. Primary deps: `github.com/gorilla/websocket` (WebSocket), `github.com/coreos/go-oidc/v3` (OIDC JWT), `github.com/creack/pty` (server console PTY), `github.com/google/shlex` (command splitting).

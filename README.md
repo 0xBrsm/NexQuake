@@ -35,101 +35,6 @@ Browser  --WebSocket-->  Nexus  --UDP-->  NetQuake Server
 
 Players use the standard Quake multiplayer connection experience; either use the Multiplayer menu or from the console (`~`) type `slist` to browse servers and `connect <host>` to join.
 
-## Quick Start
-
-### Docker (Recommended)
-
-While you can certainly add and manage your own mods and configs, NexQuake can auto-bootstrap everything needed to play. No game data setup required:
-
-```bash
-# Run it
-docker compose up --build
-
-# Play
-# Open http://localhost:1337
-```
-
-On first boot, Nexus downloads a copy of the original Quake 1.06 shareware and a [LibreQuake](https://github.com/lavenderdotpet/LibreQuake)-based freeware PAK1 automatically. This gives you a registered engine with Episode 1 single-player and full multiplayer mod support.
-
-To bootstrap with additional mods (Rocket Arena, CTF, etc.), set the `QUICKSTART` variable:
-
-```bash
-QUICKSTART=full docker compose up --build
-```
-
-See [manifests/](manifests/) for the full list of available quickstart packages.
-
-### Providing Your Own PAK Files
-
-If you have retail Quake or want to use your own game data:
-
-```bash
-# 1. Set up game data
-mkdir -p data/id1/common logs
-cp /path/to/PAK0.PAK data/id1/common/     # shareware or full
-cp /path/to/PAK1.PAK data/id1/common/     # optional, full version
-
-# 2. Run
-docker compose up --build
-```
-
-- **PAK0.PAK** (shareware): Download the [Quake 1.06 shareware](https://www.gamers.org/pub/idgames/idstuff/quake/quake106.zip) distribution
-- **PAK1.PAK** (full): Purchase Quake on Steam or GOG, copy from the install directory
-- **MODS**: Browse [NetQuake Mods](https://github.com/brstm/QuakeMods) and grab what you like.
-
-NexQuake supports real-time merging of server-side .ent "entity" files for mods that traditionally required recompiling maps (e.g. CTF). Just drop the .ent files in /<mod>/server/maps/ and play.
-
-### Data Directory Layout
-
-```
-data/
-  id1/
-    common/         Shared game files (PAK0.PAK, PAK1.PAK, autoexec.cfg)
-    client/         Client-only overrides (optional)
-    server/         Server-only overrides (optional)
-logs/               Server logs and runtime state (auto-created)
-```
-
-One set of PAK files serves both browser clients and multiplayer servers. Nexus builds per-target views (client vs server) from the layered directory at runtime.
-
-### Auto-Connect
-
-If you just want to get playing with a single server, add `connect 0.0.0.0:26000` to `data/id1/common/autoexec.cfg` and players join the server automatically on load.
-
-## Architecture
-
-```
-Browser Tab (WASM)
-    |
-    |  HTTP: client files, game data manifests, PAK streaming
-    |  WebSocket: /ws (binary frames with routing header)
-    |
-Nexus (Go, port 1337)
-    |
-    |  UDP: localhost relay
-    |
-NetQuake Servers (loopback:26000 and loopback:(26000+id))
-```
-
-- **Single container**: Nexus handles HTTP, WebSocket, and server management. One port exposed.
-- **Stateless tunnel**: Each WebSocket frame = routing header + raw UDP datagram. No game packet parsing.
-- **Port-only routing**: Browser overlay addresses are virtualized as `0.0.0.0:<port>`; nexus keys routing only by destination port.
-- **Server discovery**: `slist` returns an aggregated server list from the Nexus cache. No flaky broadcast.
-
-## Project Layout
-
-```
-client/           WASM client platform layer and WebSocket networking
-server/           Dedicated server Makefile and patches
-nexus/            Go relay, file serving, server orchestration
-manifests/        Game data bootstrap configs
-build/            Build system and upstream checkout scripts
-Dockerfile        Multi-stage production image
-compose.yml       Docker Compose configuration
-ATTRIBUTIONS.md   Source provenance and GPL lineage
-TECHNICAL.md      Technical deep dive for contributors
-```
-
 ## Features
 
 - **Browser-native**: Runs in Chrome, Firefox, Safari, Edge, and any browser with WebGL2
@@ -139,6 +44,29 @@ TECHNICAL.md      Technical deep dive for contributors
 - **Mod support**: Game directory switching at runtime without page reload
 - **Self-contained**: Single Docker image, single port, optional TLS via reverse proxy
 - **Auto-bootstrap**: Shareware game data downloads automatically on first run
+
+## Documentation
+
+- **[Quick Start](docs/QUICKSTART.md)**: Get up and running with Docker.
+- **[Configuration](docs/CONFIGURATION.md)**: Environment variables and networking setup.
+- **[Usage Guide](docs/USAGE.md)**: Managing game data, mods, and servers.
+- **[Architecture](docs/ARCHITECTURE.md)**: Technical deep dive into system design.
+- **[RCON Commands](docs/RCON.md)**: Server administration reference.
+- **[Bug Fixes](bugfix/README.md)**: Security and stability patches for the upstream WinQuake source.
+
+## Project Layout
+
+```
+client/           WASM client platform layer and WebSocket networking
+server/           Dedicated server Makefile and patches
+nexus/            Go relay, file serving, server orchestration
+manifests/        Game data bootstrap configs
+build/            Build system and upstream checkout scripts
+docs/             Detailed documentation and guides
+Dockerfile        Multi-stage production image
+compose.yml       Docker Compose configuration
+ATTRIBUTIONS.md   Source provenance and GPL lineage
+```
 
 ## License
 

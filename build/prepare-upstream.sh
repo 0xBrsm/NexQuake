@@ -65,7 +65,7 @@ apply_patch() {
 
 # --- Upstream bugfix patches (opt-in via BUGFIX=1) ---------------------------
 # These fix well-documented vanilla WinQuake bugs (buffer overflows, crashes,
-# etc.) and are applied to the pristine source *before* any build-specific
+# etc.) and are applied to the canonical source *before* any build-specific
 # patches.  They are safe for both server and client builds.
 BUGFIX="${BUGFIX:-1}"
 if [[ "${BUGFIX}" == "1" ]]; then
