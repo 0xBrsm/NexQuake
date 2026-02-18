@@ -156,9 +156,9 @@ The dedicated server builds as 32-bit by default, even on 64-bit hosts. This avo
 Game data follows Quake's native directory convention with an added layer system:
 
 ```
-data/<mod>/common/     Shared between client and server
-data/<mod>/client/     Client-only overrides
-data/<mod>/server/     Server-only overrides
+game/<mod>/common/     Shared between client and server
+game/<mod>/client/     Client-only overrides
+game/<mod>/server/     Server-only overrides
 ```
 
 Nexus builds a per-target manifest:
@@ -178,7 +178,7 @@ The browser client never downloads full PAK files. Nexus indexes PAK headers on 
 
 ### Quickstart Bootstrap and the `quake106` Package
 
-On first run, if `${DATA_DIR}` is writable, Nexus downloads game data from a manifest file (e.g., `minimal.json`). The default manifest bootstraps Quake 1.06 shareware and a NexQuake version of LibreQuake's pak1.pak, which is enough to boot the engine and play single-player. Users can provide their own PAK files for the full game.
+On first run, if `${GAME_DIR}` is writable, Nexus downloads game data from a manifest file (e.g., `minimal.json`). The default manifest bootstraps Quake 1.06 shareware and a NexQuake version of LibreQuake's pak1.pak, which is enough to boot the engine and play single-player. Users can provide their own PAK files for the full game.
 
 The `nexus/quake106/` package is a standalone Go package that extracts `pak0.pak` directly from the original id Software FTP Quake 1.06 shareware distribution (`quake106.zip`). The original shareware archive uses a multi-part LHA-compressed installer format from 1996, so this package implements LZH (LH5) decompression from scratch in pure Go (no cgo, no external binaries, no shell calls) to decompress the `resource.1` segment and extract the PAK file and license text.
 
@@ -193,7 +193,7 @@ NexQuake is configured entirely through environment variables, with no config fi
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `HTTP_PORT` | `1337` | Listen port |
-| `DATA_DIR` | `/app/data` | Game data root |
+| `GAME_DIR` | `/app/game` | Game data root |
 | `LOGS_DIR` | `/app/logs` | Server state (read-write) |
 | `QUICKSTART` | `minimal` | Bootstrap manifest |
 | `AUTH_ISSUER` | (unset) | OIDC provider URL for admin auth |

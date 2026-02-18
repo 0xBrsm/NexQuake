@@ -37,10 +37,8 @@
       var invalidText = opts.invalidText || ('Quake ' + ctx.USER_FILE_DESC + ' only');
       var dir = String(opts.dir || ctx.getUploadDir());
       var dirPath;
-      var backupDir;
       var name;
       var dstPath;
-      var dstBackupPath;
       var label;
       var data;
 
@@ -51,14 +49,12 @@
       ctx.clearStatusMessage('upload-progress');
 
       dirPath = dir.replace(/\/$/, '');
-      backupDir = ctx.USERFS + dirPath;
       name = file.name.toLowerCase();
       dstPath = dir + name;
-      dstBackupPath = backupDir + '/' + name;
       label = 'Uploading ' + name + ' (' + index + '/' + total + ')';
 
-      if (ctx.safeStat(dstBackupPath)) {
-        if (!await ctx.confirmAsync('Overwrite ' + dstPath + '?', 'Overwrite'))
+      if (ctx.safeStat(dstPath)) {
+        if (!await ctx.confirmAsync('Overwrite ' + dstPath + '?', 'overwrite'))
           return null;
       }
 
@@ -80,10 +76,9 @@
       }
 
       try {
-        ctx.safeMkdirTree(backupDir);
-        try { FS.symlink(backupDir, dirPath); } catch (e3) {}
-        ctx.safeUnlink(dstBackupPath);
-        FS.writeFile(dstBackupPath, data);
+        ctx.safeMkdirTree(dirPath);
+        ctx.safeUnlink(dstPath);
+        FS.writeFile(dstPath, data);
         return true;
       } catch (err2) {
         ctx.showErrorMessage('Upload failed for ' + name, 3500);

@@ -1,4 +1,4 @@
-package gamedata
+package assets
 
 import (
 	"bytes"
@@ -159,7 +159,7 @@ func (c *PakIndexCache) Get(pakPath string) (*pakIndex, error) {
 
 // NewPakExtractHandler returns an HTTP handler that extracts single files
 // from pak archives on demand.
-func NewPakExtractHandler(dataDir string, pakCache *PakIndexCache) http.HandlerFunc {
+func NewPakExtractHandler(gameDir string, pakCache *PakIndexCache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -198,7 +198,7 @@ func NewPakExtractHandler(dataDir string, pakCache *PakIndexCache) http.HandlerF
 			return
 		}
 
-		pakPath := filepath.Join(dataDir, mod, layer, pakName)
+		pakPath := filepath.Join(gameDir, mod, layer, pakName)
 		idx, err := pakCache.Get(pakPath)
 		if err != nil {
 			http.NotFound(w, r)

@@ -1,4 +1,4 @@
-package gamedata
+package assets
 
 import (
 	"bytes"
@@ -84,10 +84,10 @@ func TestReadPakContents(t *testing.T) {
 }
 
 func TestPakExtractHandler_ServesEntry(t *testing.T) {
-	dataDir := t.TempDir()
+	gameDir := t.TempDir()
 	mod := "id1"
 	layer := "common"
-	commonDir := filepath.Join(dataDir, mod, layer)
+	commonDir := filepath.Join(gameDir, mod, layer)
 	if err := os.MkdirAll(commonDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestPakExtractHandler_ServesEntry(t *testing.T) {
 		"docs/readme.txt": want,
 	})
 
-	h := NewPakExtractHandler(dataDir, NewPakIndexCache())
+	h := NewPakExtractHandler(gameDir, NewPakIndexCache())
 
 	req := httptest.NewRequest(http.MethodGet, "/pak-extract/id1/common/pak0.pak/docs/readme.txt", nil)
 	rr := httptest.NewRecorder()

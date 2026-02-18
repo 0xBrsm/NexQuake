@@ -36,7 +36,6 @@ func NewTestRouterWith(isAdmin bool, alloc *IPAllocator, sessions *SessionRegist
 		clientIP:  clientIP,
 		sourceKey: sourceKey,
 		sourceIP:  sourceIP,
-		isAdmin:   isAdmin,
 		ctx:       ctx,
 		cancel:    cancel,
 		alloc:     alloc,
@@ -44,6 +43,7 @@ func NewTestRouterWith(isAdmin bool, alloc *IPAllocator, sessions *SessionRegist
 		warnf:     noopLogf,
 		debugf:    noopLogf,
 	}
+	r.isAdmin.Store(isAdmin)
 	sessions.track(r)
 	return r, ch
 }

@@ -6,7 +6,7 @@ var NQ_AUTOSTART_RELOAD_STORAGE_KEY = 'nexquake.autostart_after_reload';
 var NQ_BOOTSTRAP_PHASE_COUNT = 3;
 var NQ_BOOTSTRAP_PROGRESS_MAX = 90;
 var NQ_BOOTSTRAP_PROGRESS_STEP = NQ_BOOTSTRAP_PROGRESS_MAX / NQ_BOOTSTRAP_PHASE_COUNT;
-var nqBootstrapPhase = 1;
+var nqBootstrapPhase = 0;
 var nqAutoStartAfterReload = false;
 
 function nqConsumeAutoStartAfterReload() {
@@ -31,7 +31,6 @@ function nqLogBootstrapStage(text) {
 }
 
 nqAutoStartAfterReload = nqConsumeAutoStartAfterReload();
-nqLogBootstrapStage('instantiating WASM... (0%)');
 
 function nqSetBootstrapProgress(percent) {
   if (!loaderProgressBar)
@@ -43,31 +42,33 @@ function nqSetBootstrapProgress(percent) {
   loaderProgressBar.style.width = Math.round(percent) + '%';
 }
 
-function nqSetBootstrapPhase(phase) {
-  var phaseText = '';
+function nqGetBootstrapPhaseText(phase) {
+  if (NQ_BOOTSTRAP_PHASE_TEXT && NQ_BOOTSTRAP_PHASE_TEXT[phase])
+    return NQ_BOOTSTRAP_PHASE_TEXT[phase];
+  return '';
+}
 
-  if (phase < nqBootstrapPhase)
+function nqSetBootstrapPhase(phase) {
+  var phaseText;
+
+  if (phase <= nqBootstrapPhase)
     return;
   nqBootstrapPhase = phase;
   nqSetBootstrapProgress((phase - 1) * NQ_BOOTSTRAP_PROGRESS_STEP);
-  if (phase === 1)
-    phaseText = 'instantiating WASM...';
-  else if (phase === 2)
-    phaseText = 'building vfs...';
-  else if (phase === 3)
-    phaseText = 'syncing saved data...';
+  phaseText = nqGetBootstrapPhaseText(phase);
   if (!phaseText)
     return;
   if (loaderStatusElement)
     loaderStatusElement.textContent = phaseText;
   nqLogBootstrapStage(phaseText + ' (' + Math.round((phase - 1) * NQ_BOOTSTRAP_PROGRESS_STEP) + '%)');
 }
+nqSetBootstrapPhase(1);
 
 function nqSetBootstrapRunning() {
   nqSetBootstrapProgress(NQ_BOOTSTRAP_PROGRESS_MAX);
   if (loaderStatusElement)
-    loaderStatusElement.textContent = 'running...';
-  nqLogBootstrapStage('running... (' + NQ_BOOTSTRAP_PROGRESS_MAX + '%)');
+    loaderStatusElement.textContent = NQ_BOOTSTRAP_RUNNING_TEXT;
+  nqLogBootstrapStage(NQ_BOOTSTRAP_RUNNING_TEXT + ' (' + NQ_BOOTSTRAP_PROGRESS_MAX + '%)');
 }
 
 function nqIsRuntimeStatusText(text) {
@@ -82,7 +83,7 @@ function nqIsRuntimeStatusText(text) {
     return true;
   if (text === 'loading...')
     return true;
-  if (text === 'running...')
+  if (text === NQ_BOOTSTRAP_RUNNING_TEXT)
     return true;
   if (text === 'all downloads complete.')
     return true;

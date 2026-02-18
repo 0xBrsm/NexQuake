@@ -250,16 +250,10 @@
 
     function getCdTrackButtonState(trackPath, runtime) {
       var runtimePath = runtime && runtime.path ? String(runtime.path).replace(/\\/g, '/').toLowerCase() : '';
-      var userPrefix = String(ctx.USERFS || '').replace(/\\/g, '/').toLowerCase();
       var pathLower = String(trackPath || '').replace(/\\/g, '/').toLowerCase();
       var isPlaying = runtime && (runtime.state === 'playing' || runtime.state === 'loading');
       var isPaused = runtime && runtime.state === 'paused';
       var isCurrentTrack;
-
-      if (runtimePath && userPrefix && runtimePath.indexOf(userPrefix + '/') === 0)
-        runtimePath = runtimePath.slice(userPrefix.length);
-      if (runtimePath && runtimePath.charAt(0) !== '/')
-        runtimePath = '/' + runtimePath;
 
       var trackNumber = getCdTrackNumber(trackPath);
       isCurrentTrack = !!(runtimePath && runtimePath === pathLower);

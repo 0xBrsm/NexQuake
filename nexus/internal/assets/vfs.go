@@ -1,4 +1,4 @@
-package gamedata
+package assets
 
 import (
 	"cmp"
@@ -31,15 +31,15 @@ type vfsManifestBundle struct {
 // headerVFSPrefetchConcurrency is the HTTP header name for VFS prefetch concurrency.
 const headerVFSPrefetchConcurrency = "X-NQ-VFS-Prefetch-Concurrency"
 
-// NewDataManifestBundleHandler returns all mod manifests in one response.
-func NewDataManifestBundleHandler(dataDir string, pakCache *PakIndexCache, prefetchConcurrency int) http.HandlerFunc {
+// NewGameManifestBundleHandler returns all mod manifests in one response.
+func NewGameManifestBundleHandler(gameDir string, pakCache *PakIndexCache, prefetchConcurrency int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 
-		mods, err := ListMods(dataDir)
+		mods, err := ListMods(gameDir)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -53,7 +53,7 @@ func NewDataManifestBundleHandler(dataDir string, pakCache *PakIndexCache, prefe
 			Mods: make(map[string][]vfsManifestEntry, len(mods)),
 		}
 		for _, mod := range mods {
-			manifest, manifestErr := buildVFSManifest(dataDir, mod, pakCache)
+			manifest, manifestErr := buildVFSManifest(gameDir, mod, pakCache)
 			if manifestErr != nil {
 				http.Error(w, manifestErr.Error(), http.StatusInternalServerError)
 				return
@@ -68,14 +68,14 @@ func NewDataManifestBundleHandler(dataDir string, pakCache *PakIndexCache, prefe
 }
 
 // buildVFSManifest produces a sorted manifest of all files available for one mod.
-func buildVFSManifest(dataDir, mod string, pakCache *PakIndexCache) ([]vfsManifestEntry, error) {
+func buildVFSManifest(gameDir, mod string, pakCache *PakIndexCache) ([]vfsManifestEntry, error) {
 	layers := []string{"common", "client"}
 
 	// Later layers overwrite earlier ones.
 	byKey := make(map[string]vfsManifestEntry)
 
 	for _, layer := range layers {
-		if err := overlayLayerIntoManifest(byKey, dataDir, mod, layer, pakCache); err != nil {
+		if err := overlayLayerIntoManifest(byKey, gameDir, mod, layer, pakCache); err != nil {
 			return nil, err
 		}
 	}
@@ -90,8 +90,8 @@ func buildVFSManifest(dataDir, mod string, pakCache *PakIndexCache) ([]vfsManife
 
 var pakNumberRE = regexp.MustCompile(`(?i)^pak(\d+)\.pak$`)
 
-func overlayLayerIntoManifest(byKey map[string]vfsManifestEntry, dataDir, mod, layer string, pakCache *PakIndexCache) error {
-	root := filepath.Join(dataDir, mod, layer)
+func overlayLayerIntoManifest(byKey map[string]vfsManifestEntry, gameDir, mod, layer string, pakCache *PakIndexCache) error {
+	root := filepath.Join(gameDir, mod, layer)
 	st, err := os.Stat(root)
 	if err != nil || !st.IsDir() {
 		return nil
@@ -155,7 +155,7 @@ func overlayLayerIntoManifest(byKey map[string]vfsManifestEntry, dataDir, mod, l
 
 		byKey[key] = vfsManifestEntry{
 			Path: key,
-			URL:  "/data/" + escapeURLPathPreserveSlashes(filepath.ToSlash(filepath.Join(mod, layer, rel))),
+			URL:  "/game/" + escapeURLPathPreserveSlashes(filepath.ToSlash(filepath.Join(mod, layer, rel))),
 			Size: size,
 		}
 		return nil
@@ -275,13 +275,13 @@ func escapeURLPathPreserveSlashes(p string) string {
 
 // ---- Server runtime filesystem layout ----
 
-// ListMods returns valid game directory names found under dataDir that either:
+// ListMods returns valid game directory names found under gameDir that either:
 // - contain at least one layer directory (common, client, or server), or
 // - are empty directories (used for client-only config mods with no data yet).
-func ListMods(dataDir string) ([]string, error) {
-	ents, err := os.ReadDir(dataDir)
+func ListMods(gameDir string) ([]string, error) {
+	ents, err := os.ReadDir(gameDir)
 	if err != nil {
-		return nil, fmt.Errorf("read DATA_DIR: %w", err)
+		return nil, fmt.Errorf("read GAME_DIR: %w", err)
 	}
 
 	var mods []string
@@ -296,7 +296,7 @@ func ListMods(dataDir string) ([]string, error) {
 		if !isValidQuakeGameDirName(name) {
 			continue
 		}
-		modDir := filepath.Join(dataDir, name)
+		modDir := filepath.Join(gameDir, name)
 		// Treat directories as mods when they have layer dirs, or when they are
 		// intentionally empty placeholders for client-side config mods.
 		if !dirHasAnyLayer(modDir) && !dirIsEmpty(modDir) {
@@ -342,8 +342,8 @@ func dirIsEmpty(modDir string) bool {
 }
 
 // PrepareRuntimeBasedir creates an ephemeral overlay basedir with symlinks into
-// sourceDataDir for each mod. The returned directory is writable for the server.
-func PrepareRuntimeBasedir(sourceDataDir string, mods []string) (string, error) {
+// sourceGameDir for each mod. The returned directory is writable for the server.
+func PrepareRuntimeBasedir(sourceGameDir string, mods []string) (string, error) {
 	runtimeRoot, err := os.MkdirTemp("", "nexquake-nexus-basedir-")
 	if err != nil {
 		return "", fmt.Errorf("create runtime basedir: %w", err)
@@ -352,7 +352,7 @@ func PrepareRuntimeBasedir(sourceDataDir string, mods []string) (string, error) 
 	// Materialize each detected mod as a merged directory:
 	//   <mod>/common < <mod>/server
 	for _, mod := range mods {
-		if err := materializeMergedModDir(runtimeRoot, sourceDataDir, mod); err != nil {
+		if err := materializeMergedModDir(runtimeRoot, sourceGameDir, mod); err != nil {
 			return "", err
 		}
 	}

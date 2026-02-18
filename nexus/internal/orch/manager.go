@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/0xBrsm/NexQuake/nexus/internal/gamedata"
+	"github.com/0xBrsm/NexQuake/nexus/internal/assets"
 	"github.com/creack/pty"
 )
 
@@ -101,7 +101,7 @@ type ServerSnapshot struct {
 
 // ServerManager orchestrates all managed game servers.
 type ServerManager struct {
-	dataDir string
+	gameDir string
 	logsDir string
 	infof   func(string, ...any)
 	debugf  func(string, ...any)
@@ -218,7 +218,7 @@ func identityLogLine(line string, _ time.Time) string {
 
 // NewServerManager creates a new server manager with injected logging.
 func NewServerManager(
-	dataDir, logsDir string,
+	gameDir, logsDir string,
 	infof, consoleInfof, debugf, warnf, errorf func(string, ...any),
 	formatLogLine func(string, time.Time) string,
 ) *ServerManager {
@@ -241,7 +241,7 @@ func NewServerManager(
 		formatLogLine = identityLogLine
 	}
 	return &ServerManager{
-		dataDir:         dataDir,
+		gameDir:         gameDir,
 		logsDir:         logsDir,
 		infof:           infof,
 		debugf:          debugf,
@@ -538,11 +538,11 @@ func (m *ServerManager) Snapshots() []ServerSnapshot {
 
 // StartAll launches all servers from the servers.ini plan.
 func (m *ServerManager) StartAll() error {
-	if m.dataDir == "" {
-		return fmt.Errorf("DATA_DIR is empty")
+	if m.gameDir == "" {
+		return fmt.Errorf("GAME_DIR is empty")
 	}
-	if st, err := os.Stat(m.dataDir); err != nil || !st.IsDir() {
-		return fmt.Errorf("DATA_DIR is not a directory: %s", m.dataDir)
+	if st, err := os.Stat(m.gameDir); err != nil || !st.IsDir() {
+		return fmt.Errorf("GAME_DIR is not a directory: %s", m.gameDir)
 	}
 	if m.logsDir == "" {
 		return fmt.Errorf("LOGS_DIR is empty")
@@ -557,7 +557,7 @@ func (m *ServerManager) StartAll() error {
 	}
 	m.infof("Launching %d servers...", len(launches))
 
-	runtimeBasedir, err := gamedata.PrepareRuntimeBasedir(m.dataDir, mods)
+	runtimeBasedir, err := assets.PrepareRuntimeBasedir(m.gameDir, mods)
 	if err != nil {
 		return err
 	}

@@ -3,6 +3,8 @@
 // ---------------------------------------------------------------
 (function() {
   var USERFS_ROOT = '/NexQuake';
+  var USER_GAME_ROOT = USERFS_ROOT + '/game';
+  var USER_CD_ROOT = USERFS_ROOT + '/cd';
   var USER_EXTS = nqGetUserFileExts();
   var shutdownRequested = false;
 
@@ -19,7 +21,8 @@
 
   try {
     Module.nqPersistUserFiles = syncUserFS;
-    Module.nqUserFSRoot = USERFS_ROOT;
+    Module.nqUserFSRoot = USER_GAME_ROOT;
+    Module.nqCdUserFSRoot = USER_CD_ROOT;
     Module.nqUserFileExts = USER_EXTS.slice();
   } catch (e) {}
 

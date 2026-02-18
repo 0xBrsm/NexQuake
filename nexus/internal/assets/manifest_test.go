@@ -1,4 +1,4 @@
-package gamedata
+package assets
 
 import (
 	"encoding/base64"
@@ -29,10 +29,10 @@ func decodeStartBundle(t *testing.T, body []byte) startManifestBundle {
 }
 
 func TestHashedAssetGateway_StartAndAssetFetch(t *testing.T) {
-	dataDir := t.TempDir()
+	gameDir := t.TempDir()
 	cdDir := t.TempDir()
 
-	commonDir := filepath.Join(dataDir, "id1", "common")
+	commonDir := filepath.Join(gameDir, "id1", "common")
 	if err := os.MkdirAll(commonDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestHashedAssetGateway_StartAndAssetFetch(t *testing.T) {
 		t.Fatalf("write cd file: %v", err)
 	}
 
-	gateway := NewHashedAssetGateway(dataDir, cdDir, NewPakIndexCache(), 9)
+	gateway := NewHashedAssetGateway(gameDir, cdDir, NewPakIndexCache(), 9)
 
 	startReq := httptest.NewRequest(http.MethodGet, "/start", nil)
 	startRec := httptest.NewRecorder()
@@ -108,8 +108,8 @@ func TestHashedAssetGateway_StartAndAssetFetch(t *testing.T) {
 }
 
 func TestHashedAssetGateway_RangeRequests(t *testing.T) {
-	dataDir := t.TempDir()
-	commonDir := filepath.Join(dataDir, "id1", "common")
+	gameDir := t.TempDir()
+	commonDir := filepath.Join(gameDir, "id1", "common")
 	if err := os.MkdirAll(commonDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestHashedAssetGateway_RangeRequests(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	gateway := NewHashedAssetGateway(dataDir, filepath.Join(t.TempDir(), "missing"), NewPakIndexCache(), 4)
+	gateway := NewHashedAssetGateway(gameDir, filepath.Join(t.TempDir(), "missing"), NewPakIndexCache(), 4)
 	startReq := httptest.NewRequest(http.MethodGet, "/start", nil)
 	startRec := httptest.NewRecorder()
 	gateway.StartHandler().ServeHTTP(startRec, startReq)

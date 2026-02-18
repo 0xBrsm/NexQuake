@@ -4,8 +4,11 @@
     var normalizeGameName = nqNormalizeGameName;
     var getBaseGameName = nqGetBaseGameName;
     var safeMkdirTree = nqSafeMkdirTree;
-    var REMOTE_ROOT = '/.nqremote';
+    var REMOTE_ROOT = NEXQUAKE_REMOTE_ROOT;
     var USERFS_ROOT = '/NexQuake';
+    var USER_GAME_ROOT = USERFS_ROOT + '/game';
+    var USER_CD_ROOT = USERFS_ROOT + '/cd';
+    var USER_LINK_BASENAME = '.usr';
 
     function ensureGameDir(mod) {
       mod = normalizeGameName(mod);
@@ -15,6 +18,7 @@
 
     // Create the baseline remote mount root.
     ensureGameDir(getBaseGameName());
+    try { FS.chdir(REMOTE_ROOT); } catch (e) {}
 
     function ensureDirForPath(path) {
       var parts = String(path).split('/').filter(Boolean);
@@ -23,8 +27,9 @@
       safeMkdirTree('/' + parts.join('/'));
     }
 
-    // Remote assets live under /.nqremote/<mod> as lazy VFS entries.
-    // User-writable content lives in /NexQuake/<mod> (IDBFS), exposed at /<mod> via symlink.
+    // Remote assets live under REMOTE_ROOT/<mod> as lazy VFS entries.
+    // User-writable mod content lives in /NexQuake/game/<mod> (IDBFS), linked into REMOTE_ROOT/.usr/<mod>.
+    // User CD uploads live in /NexQuake/cd and are exposed at /cd.
     // Quake searchpaths are layered: remote first, user last (so user overrides win).
     if (!Module.nexquakeRemoteFiles) Module.nexquakeRemoteFiles = Object.create(null);
     if (!Module.nexquakeInstalledManifests) Module.nexquakeInstalledManifests = Object.create(null);
@@ -230,7 +235,7 @@
         .finally(function() { Module.nexquakePrefetchBusy = 0; });
     };
 
-    // Install virtualized manifests into /.nqremote/<mod> roots.
+    // Install virtualized manifests into REMOTE_ROOT/<mod> roots.
     // Files are installed as lazy-backed VFS entries (download on first read).
     var baseGame = getBaseGameName();
     var manifestDependencyId = 'manifest:' + baseGame;
@@ -337,16 +342,18 @@
           FS.syncfs(true, function(err) {
             if (err) console.warn('Failed to sync saved data:', err);
             try {
-              safeMkdirTree(USERFS_ROOT + '/' + baseGame);
-              safeMkdirTree(USERFS_ROOT + '/cd');
-              try { FS.symlink(USERFS_ROOT + '/cd', '/cd'); } catch (e2) {}
-              try { FS.symlink(USERFS_ROOT + '/' + baseGame, '/' + baseGame); } catch (e3) {}
-              FS.readdir(USERFS_ROOT).forEach(function(name) {
-                if (name === '.' || name === '..' || name === baseGame || name === 'cd') return;
+              safeMkdirTree(REMOTE_ROOT);
+              safeMkdirTree(USER_GAME_ROOT + '/' + baseGame);
+              safeMkdirTree(USER_CD_ROOT);
+              try { FS.symlink(USER_GAME_ROOT, REMOTE_ROOT + '/' + USER_LINK_BASENAME); } catch (e1) {}
+              try { FS.symlink(USER_CD_ROOT, '/cd'); } catch (e2) {}
+              try { FS.symlink(REMOTE_ROOT + '/' + USER_LINK_BASENAME + '/' + baseGame, '/' + baseGame); } catch (e3) {}
+              FS.readdir(USER_GAME_ROOT).forEach(function(name) {
+                if (name === '.' || name === '..' || name === baseGame) return;
                 var st = null;
-                try { st = FS.stat(USERFS_ROOT + '/' + name); } catch (e4) {}
+                try { st = FS.stat(USER_GAME_ROOT + '/' + name); } catch (e4) {}
                 if (st && FS.isDir(st.mode))
-                  try { FS.symlink(USERFS_ROOT + '/' + name, '/' + name); } catch (e5) {}
+                  try { FS.symlink(USER_GAME_ROOT + '/' + name, '/' + name); } catch (e5) {}
               });
             } catch (linkErr) {
               console.warn('Failed to link user dirs:', linkErr);
@@ -379,6 +386,9 @@
     }
 
     var manifestBundle = null;
+    var manifestRefreshIntervalMs = 13 * 60 * 1000;
+    var manifestRefreshInFlight = null;
+    var manifestRefreshLoopStarted = false;
 
     function normalizeStartBundle(rawBundle) {
       var out = Object.create(null);
@@ -421,6 +431,51 @@
       });
     }
 
+    function installStartBundle(bundle) {
+      var activeGame = normalizeGameName(Module.nexquakeActiveGame || baseGame);
+      manifestBundle = bundle.game;
+      preloadAllManifestRoots();
+      Module.nexquakeCdRemoteManifest = buildRemoteCdManifest(bundle.cd);
+      if (!Module.nexquakeInstalledManifests || !Module.nexquakeInstalledManifests[activeGame])
+        activeGame = baseGame;
+      Module.nexquakeActiveGame = activeGame;
+      if (activeGame !== baseGame && typeof Module.nexquakeSwitchGameData === 'function')
+        Module.nexquakeSwitchGameData(activeGame);
+    }
+
+    function refreshStartBundle() {
+      if (manifestRefreshInFlight)
+        return manifestRefreshInFlight;
+      manifestRefreshInFlight = fetchStartBundle()
+        .then(normalizeStartBundle)
+        .then(installStartBundle)
+        .finally(function() {
+          manifestRefreshInFlight = null;
+        });
+      return manifestRefreshInFlight;
+    }
+
+    function startManifestRefreshLoop() {
+      if (manifestRefreshLoopStarted)
+        return;
+      manifestRefreshLoopStarted = true;
+      setInterval(function() {
+        refreshStartBundle().catch(function(err) {
+          console.warn('Failed to refresh manifest bundle:', err);
+        });
+      }, manifestRefreshIntervalMs);
+    }
+
+    Module.nexquakeRefreshRemoteManifest = function() {
+      return refreshStartBundle();
+    };
+
+    Module.nexquakeOnWebSocketOpen = function() {
+      refreshStartBundle().catch(function(err) {
+        console.warn('Failed to refresh manifest bundle on websocket open:', err);
+      });
+    };
+
     Module.nexquakeSwitchGameData = function(mod) {
       mod = normalizeGameName(mod);
       try {
@@ -428,22 +483,17 @@
           throw new Error('manifest missing for ' + mod);
         }
         Module.nexquakeActiveGame = mod;
-        safeMkdirTree(USERFS_ROOT + '/' + mod);
-        try { FS.symlink(USERFS_ROOT + '/' + mod, '/' + mod); } catch (e2) {}
+        safeMkdirTree(USER_GAME_ROOT + '/' + mod);
+        try { FS.symlink(REMOTE_ROOT + '/' + USER_LINK_BASENAME + '/' + mod, '/' + mod); } catch (e2) {}
       } catch (err) {
         console.error('Failed to install /' + mod + ' manifest:', err);
       }
     };
 
-    fetchStartBundle()
-      .then(normalizeStartBundle)
-      .then(function(bundle) {
-        manifestBundle = bundle.game;
-        preloadAllManifestRoots();
-        Module.nexquakeCdRemoteManifest = buildRemoteCdManifest(bundle.cd);
-      })
+    refreshStartBundle()
       .then(function() {
         Module.nexquakeActiveGame = baseGame;
+        startManifestRefreshLoop();
         nqSetBootstrapPhase(3);
         Module.addRunDependency(syncDependencyId);
         Module.removeRunDependency(manifestDependencyId);

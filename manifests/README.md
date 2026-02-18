@@ -1,13 +1,13 @@
 # Quickstart Manifests
 
-Manifests let you play immediately without setting up a data directory or volume mount. Set `QUICKSTART=<name>` and Nexus downloads everything needed on first boot -- shareware PAK, libre PAK1, mod files -- directly into the data directory. No manual file management required.
+Manifests let you play immediately without setting up a game directory or volume mount. Set `QUICKSTART=<name>` and Nexus downloads everything needed on first boot -- shareware PAK, libre PAK1, mod files -- directly into the game directory. No manual file management required.
 
 ## How It Works
 
 1. On startup, Nexus checks for `${QUICKSTART:-minimal}.json` in the manifests directory
-2. If `${DATA_DIR}` is writable and the target game directory isn't already populated, Nexus downloads the listed assets
+2. If `${GAME_DIR}` is writable and the target game directory isn't already populated, Nexus downloads the listed assets
 3. Each manifest entry specifies a game directory and download URLs organized by layer (common/client/server)
-4. Assets are extracted and placed into `${DATA_DIR}/<mod>/<layer>/`
+4. Assets are extracted and placed into `${GAME_DIR}/<mod>/<layer>/`
 5. On subsequent boots, populated directories are skipped (idempotent)
 
 ## Available Manifests
@@ -45,14 +45,14 @@ QUICKSTART=full docker compose up --build
 QUICKSTART=ctf4 docker compose up --build
 ```
 
-No `data/` directory, no volume mounts, no PAK file management. Nexus handles everything.
+No `game/` directory, no volume mounts, no PAK file management. Nexus handles everything.
 
 ## Providing Your Own Data
 
 Manifests are a convenience for getting started. For production or if you have retail PAK files:
 
-1. Create a `data/` directory with your PAK files (see the [main README](../README.md) for layout)
-2. Bind-mount it as `${DATA_DIR}`
+1. Create a `game/` directory with your PAK files (see the [main README](../README.md) for layout)
+2. Bind-mount it as `${GAME_DIR}`
 3. The bind mount shadows the built-in manifests, so Nexus uses your data directly
 
 ## Schema

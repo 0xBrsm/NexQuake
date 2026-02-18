@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gorilla/websocket"
 )
@@ -33,7 +34,7 @@ type Router struct {
 	clientIP  [4]byte
 	sourceKey string
 	sourceIP  string
-	isAdmin   bool
+	isAdmin   atomic.Bool
 
 	alloc    *IPAllocator
 	sessions *SessionRegistry
@@ -91,7 +92,6 @@ func NewRouter(
 		clientIP:  clientIP,
 		sourceKey: strings.TrimSpace(sourceKey),
 		sourceIP:  strings.TrimSpace(sourceIP),
-		isAdmin:   isAdmin,
 		alloc:     alloc,
 		sessions:  sessions,
 		dispatch:  dispatch,
@@ -100,6 +100,7 @@ func NewRouter(
 		ctx:       ctx,
 		cancel:    cancel,
 	}
+	router.isAdmin.Store(isAdmin)
 	sessions.track(router)
 	return router, nil
 }
@@ -145,7 +146,12 @@ func (r *Router) SourceIP() string {
 
 // IsAdmin reports whether this router has admin privileges.
 func (r *Router) IsAdmin() bool {
-	return r.isAdmin
+	return r.isAdmin.Load()
+}
+
+// PromoteAdmin marks this router as an admin session.
+func (r *Router) PromoteAdmin() {
+	r.isAdmin.Store(true)
 }
 
 // NoteServerRoutePort records the last server port this client sent to.

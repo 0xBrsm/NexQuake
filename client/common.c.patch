@@ -1,13 +1,16 @@
 --- common.c
 +++ common.c
-@@ -21,3 +21,6 @@
+@@ -20,6 +20,9 @@
+ // common.c -- misc functions used in client and server
  
  #include "quakedef.h"
 +#ifdef __EMSCRIPTEN__
 +#include <emscripten/emscripten.h>
 +#endif
  
-@@ -1239,6 +1239,7 @@
+ #define NUM_SAFE_ARGVS  7
+ 
+@@ -1239,6 +1242,7 @@
  
  char    com_cachedir[MAX_OSPATH];
  char    com_gamedir[MAX_OSPATH];
@@ -15,20 +18,33 @@
  
  typedef struct searchpath_s
  {
-@@ -1249,6 +1250,12 @@
+@@ -1249,6 +1253,12 @@
  
  searchpath_t    *com_searchpaths;
  
 +static searchpath_t *com_base_searchpaths;
 +static char com_base_gamedir[MAX_OSPATH];
-+static char com_active_game[16] = GAMENAME;
++static const char *com_nquser_root = ".usr";
 +extern int fs_hunklevel;
 +extern void Host_WriteConfiguration(void);
 +
  /*
  ============
  COM_Path_f
-@@ -1753,6 +1763,9 @@
+@@ -1724,6 +1735,12 @@
+ 
+ }
+ 
++static void COM_AddNQGameDirectories (const char *basedir, const char *gamedir)
++{
++	COM_AddGameDirectory (va("%s/%s", basedir, gamedir));
++	COM_AddGameDirectory (va("%s/%s/%s", basedir, com_nquser_root, gamedir));
++}
++
+ /*
+ ================
+ COM_InitFilesystem
+@@ -1753,6 +1773,9 @@
  			basedir[j-1] = 0;
  	}
  
@@ -38,38 +54,36 @@
  //
  // -cachedir <path>
  // Overrides the system supplied cache directory (NULL or /qcache)
-@@ -1774,10 +1774,17 @@
+@@ -1774,12 +1797,16 @@
  //
  // start up with GAMENAME by default (id1)
  //
 -	COM_AddGameDirectory (va("%s/"GAMENAME, basedir) );
-+	COM_AddGameDirectory (va("%s/.nqremote/"GAMENAME, basedir) );
-+	COM_AddGameDirectory (va("%s/"GAMENAME, basedir) );
++	COM_AddNQGameDirectories (basedir, GAMENAME);
  
  	if (COM_CheckParm ("-rogue"))
 -		COM_AddGameDirectory (va("%s/rogue", basedir) );
 +	{
-+		COM_AddGameDirectory (va("%s/.nqremote/rogue", basedir) );
-+		COM_AddGameDirectory (va("%s/rogue", basedir) );
++		COM_AddNQGameDirectories (basedir, "rogue");
 +	}
  	if (COM_CheckParm ("-hipnotic"))
 -		COM_AddGameDirectory (va("%s/hipnotic", basedir) );
 +	{
-+		COM_AddGameDirectory (va("%s/.nqremote/hipnotic", basedir) );
-+		COM_AddGameDirectory (va("%s/hipnotic", basedir) );
++		COM_AddNQGameDirectories (basedir, "hipnotic");
 +	}
  
-@@ -1788,7 +1795,8 @@
- 	i = COM_CheckParm ("-game");
+ //
+ // -game <gamedir>
+@@ -1789,7 +1816,7 @@
  	if (i && i < com_argc-1)
  	{
  		com_modified = true;
 -		COM_AddGameDirectory (va("%s/%s", basedir, com_argv[i+1]));
-+		COM_AddGameDirectory (va("%s/.nqremote/%s", basedir, com_argv[i+1]));
-+		COM_AddGameDirectory (va("%s/%s", basedir, com_argv[i+1]));
++		COM_AddNQGameDirectories (basedir, com_argv[i+1]);
  	}
  
-@@ -1822,5 +1835,77 @@
+ //
+@@ -1822,6 +1849,71 @@
  
  	if (COM_CheckParm ("-proghack"))
  		proghack = true;
@@ -77,8 +91,6 @@
 +	com_base_searchpaths = com_searchpaths;
 +	Q_strncpy(com_base_gamedir, com_gamedir, MAX_OSPATH - 1);
 +	com_base_gamedir[MAX_OSPATH - 1] = 0;
-+	Q_strncpy(com_active_game, GAMENAME, sizeof(com_active_game) - 1);
-+	com_active_game[sizeof(com_active_game) - 1] = 0;
 +	fs_hunklevel = Hunk_LowMark();
 +
 +#ifdef __EMSCRIPTEN__
@@ -87,8 +99,8 @@
 +		Module.nexquakeBaseGameName = UTF8ToString($0);
 +	}, GAMENAME);
 +#endif
-+}
-+
+ }
+ 
 +void COM_SwitchGame(const char *gamedir)
 +{
 +	char mod[16];
@@ -116,7 +128,7 @@
 +	}
 +#endif
 +	Host_WriteConfiguration();
-+
+ 
 +#ifdef __EMSCRIPTEN__
 +	EM_ASM({
 +		if (typeof Module === 'undefined') return;
@@ -137,13 +149,9 @@
 +
 +	if (Q_strcasecmp(mod, GAMENAME) != 0 && com_basedir[0])
 +	{
-+		COM_AddGameDirectory(va("%s/.nqremote/%s", com_basedir, mod));
-+		COM_AddGameDirectory(va("%s/%s", com_basedir, mod));
++		COM_AddNQGameDirectories (com_basedir, mod);
 +	}
 +
-+	Q_strncpy(com_active_game, mod, sizeof(com_active_game) - 1);
-+	com_active_game[sizeof(com_active_game) - 1] = 0;
 +	if (per_mod_config)
 +		Cbuf_InsertText("exec quake.rc\n");
- }
- 
++}

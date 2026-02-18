@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/0xBrsm/NexQuake/nexus/internal/gamedata"
+	"github.com/0xBrsm/NexQuake/nexus/internal/assets"
 
 	"github.com/google/shlex"
 )
@@ -29,7 +29,7 @@ var unsupportedLaunchArgs = map[string]struct{}{
 }
 
 func (m *ServerManager) planLaunches() ([]serverLaunch, []string, error) {
-	iniPath := filepath.Join(m.dataDir, "servers.ini")
+	iniPath := filepath.Join(m.gameDir, "servers.ini")
 	startedAt := time.Now().UTC()
 	entries, ok, err := loadServersIni(iniPath, startedAt, m.warnf)
 	if err != nil {
@@ -51,8 +51,8 @@ func (m *ServerManager) planLaunches() ([]serverLaunch, []string, error) {
 		m.debugf("Using launch plan: %s (%d server entries)", iniPath, len(entries))
 	}
 
-	// Build merged runtime dirs from whatever mods exist in DATA_DIR.
-	mods, err := gamedata.ListMods(m.dataDir)
+	// Build merged runtime dirs from whatever mods exist in GAME_DIR.
+	mods, err := assets.ListMods(m.gameDir)
 	if err != nil {
 		return nil, nil, err
 	}

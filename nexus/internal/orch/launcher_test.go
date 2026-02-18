@@ -337,14 +337,14 @@ func TestPlanLaunches_DefaultWhenServersINIMissing(t *testing.T) {
 }
 
 func TestPlanLaunches_LeavesBareNQServerUnchanged(t *testing.T) {
-	dataDir := t.TempDir()
-	path := filepath.Join(dataDir, "servers.ini")
+	gameDir := t.TempDir()
+	path := filepath.Join(gameDir, "servers.ini")
 	content := "nqserver -dedicated 8 -game ctf\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write servers.ini: %v", err)
 	}
 
-	m := NewServerManager(dataDir, t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m := NewServerManager(gameDir, t.TempDir(), nil, nil, nil, nil, nil, nil)
 	launches, _, err := m.planLaunches()
 	if err != nil {
 		t.Fatalf("planLaunches() error = %v", err)

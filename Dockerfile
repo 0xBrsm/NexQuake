@@ -48,8 +48,8 @@ RUN set -eu; \
 FROM ${WOLFI_BASE_IMAGE}
 WORKDIR /app
 
-RUN mkdir -p ./bin ./data ./logs
-COPY manifests/ ./data
+RUN mkdir -p ./bin ./game ./logs
+COPY manifests/ ./game
 
 COPY --from=nexus-builder /out/nexus ./bin/nexus
 COPY --from=server-builder /out/nqserver ./bin/nqserver

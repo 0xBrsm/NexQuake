@@ -152,10 +152,13 @@
           openGameOptionsMenu();
         return;
       }
-      if (target && typeof target.closest === 'function' && target.closest('#nq-dir-label'))
-        return;
-      if (!(target && typeof target.closest === 'function' && target.closest('#nq-vfs-list li[data-path]')))
-        ctx.setTabsOpen(false);
+      if (target && typeof target.closest === 'function') {
+        if (target.closest('#nq-dir-label') ||
+            target.closest('#nq-tabs-wrap') ||
+            target.closest('#nq-vfs-list li[data-path]'))
+          return;
+      }
+      ctx.setTabsOpen(false);
     }, true);
 
     if (typeof canvasElement !== 'undefined' && canvasElement) {
@@ -242,7 +245,6 @@
       dragLi = null;
       dragSourcePath = '';
       clearDropTarget();
-      ctx.setTabsOpen(false);
     });
 
     ctx.tabs.addEventListener('click', function(ev) {
@@ -303,7 +305,6 @@
       dragSourcePath = '';
       clearDropTarget();
       ctx.moveFileToDir(src, dir);
-      ctx.setTabsOpen(false);
     });
 
     ctx.list.addEventListener('click', function(ev) {
@@ -343,7 +344,7 @@
         return;
 
       if (btn.classList.contains('nq-dl')) {
-        Module.exportFile(ctx.USERFS + displayPath);
+        Module.exportFile(displayPath);
       } else if (btn.classList.contains('nq-del')) {
         ctx.requestDeleteFile(displayPath)
           .catch(reportError('Delete failed', 'Delete failed:'));
@@ -359,7 +360,7 @@
         return;
       if (!displayPath.toLowerCase().endsWith('.cfg'))
         return;
-      ctx.openEditor(displayPath, ctx.USERFS + displayPath);
+      ctx.openEditor(displayPath);
     });
 
     ctx.setPanelOpen = setPanelOpen;

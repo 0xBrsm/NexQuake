@@ -7,8 +7,8 @@ services:
       - "${HTTP_PORT:-1337}:${HTTP_PORT:-1337}"
     volumes:
       # Game data (id1, mods, mission packs) - read-only.
-      # Note: nexus can auto-bootstrap missing game data only when /app/data is writable.
-      - ./data:/app/data:ro
+      # Note: nexus can auto-bootstrap missing game data only when /app/game is writable.
+      - ./game:/app/game:ro
       # Server logs, demos, temp files - read-write
       - ./logs:/app/logs:rw
     environment:

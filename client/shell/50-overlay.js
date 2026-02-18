@@ -38,7 +38,8 @@
     dirLabel: document.getElementById('nq-dir-label'),
     tabsMeasureCtx: document.createElement('canvas').getContext('2d'),
 
-    USERFS: (Module && Module.nqUserFSRoot) ? Module.nqUserFSRoot : '/NexQuake',
+    USERFS: (Module && Module.nqUserFSRoot) ? Module.nqUserFSRoot : '/NexQuake/game',
+    CD_USERFS: (Module && Module.nqCdUserFSRoot) ? Module.nqCdUserFSRoot : '/NexQuake/cd',
     USER_EXTS: userExts,
     USER_FILE_ACCEPT: userExts.map(function(ext) { return '.' + ext; }).join(','),
     USER_FILE_DESC: userExts.map(function(ext) { return '.' + ext; }).join(' '),

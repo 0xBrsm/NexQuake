@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/0xBrsm/NexQuake/nexus/internal/admin"
-	"github.com/0xBrsm/NexQuake/nexus/internal/gamedata"
+	"github.com/0xBrsm/NexQuake/nexus/internal/assets"
 	"github.com/0xBrsm/NexQuake/nexus/internal/nqnet"
 	"github.com/0xBrsm/NexQuake/nexus/internal/orch"
 )
@@ -67,13 +67,13 @@ func main() {
 
 	// Default QUICKSTART is "minimal"; supports CSV (e.g. "ctf,arena,tf").
 	// Missing manifests are silently skipped.
-	if err := gamedata.BootstrapGameData(runCtx, cfg.dataDir, infof); err != nil {
+	if err := assets.BootstrapGameData(runCtx, cfg.gameDir, infof); err != nil {
 		fatalf("Game data bootstrap failed: %v", err)
 	}
 
 	// Start dedicated servers (one per mod directory).
 	serverMgr := orch.NewServerManager(
-		cfg.dataDir,
+		cfg.gameDir,
 		cfg.logsDir,
 		infof,
 		infofNoTail,
@@ -95,7 +95,7 @@ func main() {
 		serverInfoPoller = nil
 	}
 
-	pakCache := gamedata.NewPakIndexCache()
+	pakCache := assets.NewPakIndexCache()
 	mux := newMux(cfg, pakCache)
 
 	server := &http.Server{
@@ -137,7 +137,7 @@ func main() {
 
 type runtimeConfig struct {
 	httpPort               string
-	dataDir                string
+	gameDir                string
 	cdDir                  string
 	logsDir                string
 	binDir                 string
@@ -149,10 +149,10 @@ type runtimeConfig struct {
 
 func loadRuntimeConfig() runtimeConfig {
 	binDir := getEnv("BIN_DIR", "/app/bin")
-	dataDir := getEnv("DATA_DIR", "/app/data")
+	gameDir := getEnv("GAME_DIR", "/app/game")
 	return runtimeConfig{
 		httpPort:               getEnv("HTTP_PORT", "1337"),
-		dataDir:                dataDir,
+		gameDir:                gameDir,
 		cdDir:                  getEnv("CD_DIR", "/app/cd"),
 		logsDir:                getEnv("LOGS_DIR", "/app/logs"),
 		binDir:                 binDir,
@@ -297,7 +297,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	if isAdmin {
 		infof("Admin connected: %s (%s)", displayAddr, userIdentity)
 	} else {
-		debugf("Client connected: %s (%s)", displayAddr, userIdentity)
+		infof("Client connected: %s (%s)", displayAddr, userIdentity)
 	}
 
 	dispatch := nqnet.FrameDispatch{
@@ -323,14 +323,14 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	if isAdmin {
 		infof("Admin disconnected: %s", displayAddr)
 	} else {
-		debugf("Client disconnected: %s", displayAddr)
+		infof("Client disconnected: %s", displayAddr)
 	}
 
 }
 
-func newMux(cfg runtimeConfig, pakCache *gamedata.PakIndexCache) *http.ServeMux {
+func newMux(cfg runtimeConfig, pakCache *assets.PakIndexCache) *http.ServeMux {
 	mux := http.NewServeMux()
-	assetGateway := gamedata.NewHashedAssetGateway(cfg.dataDir, cfg.cdDir, pakCache, cfg.vfsPrefetchConcurrency)
+	assetGateway := assets.NewHashedAssetGateway(cfg.gameDir, cfg.cdDir, pakCache, cfg.vfsPrefetchConcurrency)
 
 	// Health check endpoint (Go 1.22+ method-based routing)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {

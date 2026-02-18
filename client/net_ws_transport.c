@@ -149,6 +149,18 @@ static EM_BOOL _WebSocket_onopen(int eventType, const EmscriptenWebSocketOpenEve
 
 	ws_onopen_handled = true;
 	Sys_Printf("_WebSocket_onopen: connected\n");
+#ifdef __EMSCRIPTEN__
+	EM_ASM({
+		if (typeof Module === 'undefined') return;
+		if (typeof Module.nexquakeOnWebSocketOpen !== 'function') return;
+		try {
+			Module.nexquakeOnWebSocketOpen();
+		} catch (e) {
+			if (typeof console !== 'undefined' && console.warn)
+				console.warn('nexquakeOnWebSocketOpen failed:', e);
+		}
+	});
+#endif
 	return EM_TRUE;
 }
 

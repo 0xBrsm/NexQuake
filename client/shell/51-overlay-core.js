@@ -54,7 +54,9 @@
 
     function ensureCdDirs() {
       var root = ctx.CD_DIR.replace(/\/$/, '');
-      var backup = (ctx.USERFS + ctx.CD_DIR).replace(/\/$/, '');
+      var backup = String(ctx.CD_USERFS || '').replace(/\/$/, '');
+      if (!backup)
+        return;
       ctx.safeMkdirTree(backup);
       try { FS.symlink(backup, root); } catch (e) {}
     }

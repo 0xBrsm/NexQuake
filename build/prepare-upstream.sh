@@ -127,12 +127,14 @@ if [[ "${kind}" == "client" ]]; then
     echo "failed to resolve GAMENAME from ${OUT_DIR}/quakedef.h" >&2
     exit 1
   fi
+  client_remote_root_basename="nexusfs"
 
   client_gamename_escaped="$(printf '%s' "${client_gamename}" | sed -e 's/[\/&]/\\&/g')"
   sed -i "s/__NEXQUAKE_GAMENAME__/${client_gamename_escaped}/g" "${OUT_DIR}/shell.html"
 
   client_version="$(cat "${OUT_DIR}/VERSION" 2>/dev/null || echo "unknown")"
   sed -i "s/__NEXQUAKE_VERSION__/${client_version}/g" "${OUT_DIR}/shell.html"
+  client_remote_root_basename_escaped="$(printf '%s' "${client_remote_root_basename}" | sed -e 's/[\/&]/\\&/g')"
 
   mapfile -t client_pre_js_files < <(find "${OUT_DIR}/shell" -maxdepth 1 -type f -name '*.js' | sort)
   if [[ "${#client_pre_js_files[@]}" -eq 0 ]]; then
@@ -141,6 +143,7 @@ if [[ "${kind}" == "client" ]]; then
   fi
   cat "${client_pre_js_files[@]}" > "${OUT_DIR}/nq-pre.js"
   sed -i "s/__NEXQUAKE_GAMENAME__/${client_gamename_escaped}/g" "${OUT_DIR}/nq-pre.js"
+  sed -i "s/__NEXQUAKE_REMOTE_ROOT_BASENAME__/${client_remote_root_basename_escaped}/g" "${OUT_DIR}/nq-pre.js"
 
   mkdir -p "${OUT_DIR}/${client_gamename}"
 fi

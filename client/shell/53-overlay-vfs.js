@@ -31,7 +31,6 @@
           if (st && FS.isDir(st.mode)) add('/' + name + '/');
         });
       }
-
       dirs.sort(function(a, b) { return a === baseDir ? -1 : b === baseDir ? 1 : a.localeCompare(b); });
       return dirs;
     }
@@ -73,10 +72,29 @@
       return path.toLowerCase().endsWith('.cfg');
     }
 
-    function openEditor(displayPath, backupPath) {
+    function toUserFsPath(displayPath) {
+      var root = String(ctx.USERFS || '').replace(/\/$/, '');
+      var rel = String(displayPath || '').trim();
+      if (!root || !rel || !rel.startsWith('/'))
+        return rel;
+      return root + rel;
+    }
+
+    function toCdFsPath(displayPath) {
+      var root = String(ctx.CD_USERFS || '').replace(/\/$/, '');
+      var rel = String(displayPath || '').trim();
+      var prefix = String(ctx.CD_DIR || '/cd/');
+      if (!root || !rel || !rel.startsWith('/'))
+        return rel;
+      if (rel.indexOf(prefix) === 0)
+        return root + '/' + rel.slice(prefix.length).replace(/^\/+/, '');
+      return rel;
+    }
+
+    function openEditor(displayPath) {
       try {
-        var data = FS.readFile(backupPath, { encoding: 'utf8' });
-        ctx.editingFile = { display: displayPath, backup: backupPath };
+        var data = FS.readFile(displayPath, { encoding: 'utf8' });
+        ctx.editingFile = { display: displayPath, backup: displayPath };
         ctx.editorPath.textContent = displayPath;
         ctx.editorText.value = data;
         ctx.editor.classList.add('open');
@@ -96,10 +114,6 @@
       return true;
     }
 
-    function safeSymlink(target, path) {
-      try { FS.symlink(target, path); } catch (e) {}
-    }
-
     function syncAndRefresh() {
       ctx.safeSyncFS();
       ctx.refresh();
@@ -111,11 +125,14 @@
     }
 
     async function deleteFile(displayPath) {
-      var backupPath = ctx.USERFS + displayPath;
+      var fsPath;
       var runtimeState;
       var stateForDeletedTrack;
 
       try {
+        fsPath = ctx.isCdDir(ctx.currentDir)
+          ? toCdFsPath(displayPath)
+          : toUserFsPath(displayPath);
         if (ctx.isCdDir(ctx.currentDir)) {
           runtimeState = ctx.getCdRuntimeState();
           stateForDeletedTrack = ctx.getCdTrackButtonState(displayPath, runtimeState);
@@ -127,7 +144,7 @@
             }
           }
         }
-        ctx.safeUnlink(backupPath);
+        ctx.safeUnlink(fsPath);
         syncAndRefresh();
       } catch (e) {
         reportMutationFailure('Delete failed', e);
@@ -137,7 +154,7 @@
     async function requestDeleteFile(displayPath) {
       if (!displayPath)
         return;
-      if (!await ctx.confirmAsync('Delete ' + displayPath + '?', 'Delete'))
+      if (!await ctx.confirmAsync('Delete ' + displayPath + '?', 'delete'))
         return;
       await deleteFile(displayPath);
     }
@@ -147,10 +164,10 @@
       var dstDir = String(targetDir || '').trim();
       var name;
       var dstPath;
-      var srcBackup;
+      var srcFsPath;
+      var dstFsPath;
       var dstDirPath;
-      var dstBackupDir;
-      var dstBackupPath;
+      var dstFsDirPath;
 
       if (!srcPath || !dstDir)
         return;
@@ -167,21 +184,19 @@
       if (dstPath === srcPath)
         return;
 
-      srcBackup = ctx.USERFS + srcPath;
+      srcFsPath = toUserFsPath(srcPath);
+      dstFsPath = toUserFsPath(dstPath);
       dstDirPath = dstDir.replace(/\/$/, '');
-      dstBackupDir = ctx.USERFS + dstDirPath;
-      dstBackupPath = dstBackupDir + '/' + name;
-
-      if (ctx.safeStat(dstBackupPath)) {
-        if (!await ctx.confirmAsync('Overwrite ' + dstPath + '?', 'Overwrite'))
+      dstFsDirPath = toUserFsPath(dstDirPath);
+      if (ctx.safeStat(dstFsPath)) {
+        if (!await ctx.confirmAsync('Overwrite ' + dstPath + '?', 'overwrite'))
           return;
       }
 
       try {
-        ctx.safeMkdirTree(dstBackupDir);
-        safeSymlink(dstBackupDir, dstDirPath);
-        ctx.safeUnlink(dstBackupPath);
-        FS.rename(srcBackup, dstBackupPath);
+        ctx.safeMkdirTree(dstFsDirPath);
+        ctx.safeUnlink(dstFsPath);
+        FS.rename(srcFsPath, dstFsPath);
         syncAndRefresh();
       } catch (e) {
         reportMutationFailure('Move failed', e);
@@ -214,13 +229,11 @@
       isCdMode = ctx.isCdDir(ctx.currentDir);
 
       if (isCdMode) {
-        var cdBackupRoot = (ctx.USERFS + ctx.CD_DIR).replace(/\/$/, '');
+        var cdBackupRoot = String(ctx.CD_USERFS || '').replace(/\/$/, '');
 
         ctx.ensureCdDirs();
         files = collectFiles(cdBackupRoot, ctx.isCdFile)
-          .map(function(path) {
-            return path.indexOf(ctx.USERFS + '/') === 0 ? path.slice(ctx.USERFS.length) : path;
-          })
+          .map(function(path) { return path.indexOf(cdBackupRoot + '/') === 0 ? (ctx.CD_DIR + path.slice(cdBackupRoot.length + 1)) : ''; })
           .filter(function(path) {
             return path.startsWith('/');
           });
@@ -234,7 +247,7 @@
         runtime = ctx.getCdRuntimeState();
       } else {
         files = collectFiles(ctx.USERFS, ctx.isUserFile)
-          .map(function(path) { return path.indexOf(ctx.USERFS + '/') === 0 ? path.slice(ctx.USERFS.length) : path; })
+          .map(function(path) { return path.indexOf(ctx.USERFS + '/') === 0 ? path.slice(ctx.USERFS.length) : ''; })
           .filter(function(path) { return path.startsWith('/'); });
         files = files.filter(function(path) { return path.indexOf(ctx.currentDir) === 0; });
       }

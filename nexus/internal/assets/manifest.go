@@ -1,4 +1,4 @@
-package gamedata
+package assets
 
 import (
 	"crypto/rand"
@@ -63,7 +63,7 @@ type gatewaySession struct {
 // HashedAssetGateway serves a bootstrap manifest and hash-addressed asset
 // requests for both VFS game data and CD tracks.
 type HashedAssetGateway struct {
-	dataDir             string
+	gameDir             string
 	cdDir               string
 	pakCache            *PakIndexCache
 	prefetchConcurrency int
@@ -74,16 +74,16 @@ type HashedAssetGateway struct {
 	assetsByHash map[string]hashedAsset
 }
 
-func NewHashedAssetGateway(dataDir, cdDir string, pakCache *PakIndexCache, prefetchConcurrency int) *HashedAssetGateway {
+func NewHashedAssetGateway(gameDir, cdDir string, pakCache *PakIndexCache, prefetchConcurrency int) *HashedAssetGateway {
 	if pakCache == nil {
 		pakCache = NewPakIndexCache()
 	}
 	return &HashedAssetGateway{
-		dataDir:             dataDir,
+		gameDir:             gameDir,
 		cdDir:               cdDir,
 		pakCache:            pakCache,
 		prefetchConcurrency: prefetchConcurrency,
-		sessionTTL:          15 * time.Minute,
+		sessionTTL:          37 * time.Minute,
 		sessions:            make(map[string]*gatewaySession),
 		assetsByHash:        make(map[string]hashedAsset),
 	}
@@ -197,7 +197,7 @@ func (g *HashedAssetGateway) pruneExpiredLocked(now time.Time) {
 }
 
 func (g *HashedAssetGateway) buildSnapshot(ref string) (*hashedSnapshot, error) {
-	mods, err := ListMods(g.dataDir)
+	mods, err := ListMods(g.gameDir)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +208,7 @@ func (g *HashedAssetGateway) buildSnapshot(ref string) (*hashedSnapshot, error) 
 	assets := make(map[string]hashedAsset)
 
 	for _, mod := range mods {
-		manifest, manifestErr := buildVFSManifest(g.dataDir, mod, g.pakCache)
+		manifest, manifestErr := buildVFSManifest(g.gameDir, mod, g.pakCache)
 		if manifestErr != nil {
 			return nil, manifestErr
 		}
@@ -267,8 +267,8 @@ func (g *HashedAssetGateway) buildSnapshot(ref string) (*hashedSnapshot, error) 
 
 func (g *HashedAssetGateway) resolveVFSAsset(assetURL, fallbackName string) (hashedAsset, error) {
 	switch {
-	case strings.HasPrefix(assetURL, "/data/"):
-		return resolveEscapedFileAsset(g.dataDir, strings.TrimPrefix(assetURL, "/data/"))
+	case strings.HasPrefix(assetURL, "/game/"):
+		return resolveEscapedFileAsset(g.gameDir, strings.TrimPrefix(assetURL, "/game/"))
 	case strings.HasPrefix(assetURL, "/pak-extract/"):
 		rel := strings.TrimPrefix(assetURL, "/pak-extract/")
 		parts, err := decodeEscapedParts(rel)
@@ -288,7 +288,7 @@ func (g *HashedAssetGateway) resolveVFSAsset(assetURL, fallbackName string) (has
 			return hashedAsset{}, fmt.Errorf("invalid pak path: %q", internal)
 		}
 
-		pakPath := filepath.Join(g.dataDir, mod, layer, pakName)
+		pakPath := filepath.Join(g.gameDir, mod, layer, pakName)
 		idx, err := g.pakCache.Get(pakPath)
 		if err != nil {
 			return hashedAsset{}, err

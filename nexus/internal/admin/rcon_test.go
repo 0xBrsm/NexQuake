@@ -48,6 +48,24 @@ func TestHandleAdminFrame_UsageIncludesImplicitTargetForm(t *testing.T) {
 	}
 }
 
+func TestHandleAdminFrame_PromotesSessionAfterValidPassword(t *testing.T) {
+	r, ch := nqnet.NewTestRouter(false)
+	auth := &Auth{rconPassword: "pw"}
+
+	if r.IsAdmin() {
+		t.Fatalf("expected client session before auth")
+	}
+
+	HandleAdminFrame(r, []byte("pw\x000\x00help"), auth, &Env{})
+	reply := readAdminReply(t, ch)
+	if !strings.Contains(reply, "Nexus commands:") {
+		t.Fatalf("expected help reply after auth, got %q", reply)
+	}
+	if !r.IsAdmin() {
+		t.Fatalf("expected session to be promoted to admin after valid password")
+	}
+}
+
 func TestExecNexusCommand_Help(t *testing.T) {
 	env := &Env{
 		ServerSnapshots:  func() []orch.ServerSnapshot { return nil },

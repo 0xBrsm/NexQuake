@@ -8,8 +8,15 @@ var canvasElement = document.getElementById('canvas');
 var outputElement = document.getElementById('output');
 var exportElement = document.getElementById('exportFile');
 var NEXQUAKE_GAMENAME = '__NEXQUAKE_GAMENAME__';
+var NEXQUAKE_REMOTE_ROOT = '/__NEXQUAKE_REMOTE_ROOT_BASENAME__';
 var NQ_USER_FILE_EXTS = ['cfg', 'sav', 'dem', 'pcx', 'pak'];
 var NQ_CD_DIR = '/cd/';
+var NQ_BOOTSTRAP_PHASE_TEXT = Object.freeze({
+  1: 'instantiating wasm...',
+  2: 'building vfs...',
+  3: 'syncing saved data...'
+});
+var NQ_BOOTSTRAP_RUNNING_TEXT = 'running...';
 var nqGameStarted = false;
 var nqRuntimeReady = false;
 
@@ -17,8 +24,6 @@ if (loaderElement)
   loaderElement.classList.remove('enter-mode');
 if (loaderProgressBar)
   loaderProgressBar.style.width = '0%';
-if (loaderStatusElement)
-  loaderStatusElement.textContent = 'instantiating WASM...';
 if (loaderReloadButton) {
   loaderReloadButton.textContent = 'ENTER';
   loaderReloadButton.disabled = true;

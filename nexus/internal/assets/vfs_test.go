@@ -1,4 +1,4 @@
-package gamedata
+package assets
 
 import (
 	"encoding/json"
@@ -12,11 +12,11 @@ import (
 )
 
 func TestBuildVFSManifest_LayersAndPakExplode(t *testing.T) {
-	dataDir := t.TempDir()
+	gameDir := t.TempDir()
 	mod := "id1"
 
-	commonDir := filepath.Join(dataDir, mod, "common")
-	clientDir := filepath.Join(dataDir, mod, "client")
+	commonDir := filepath.Join(gameDir, mod, "common")
+	clientDir := filepath.Join(gameDir, mod, "client")
 	if err := os.MkdirAll(filepath.Join(commonDir, "gfx"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestBuildVFSManifest_LayersAndPakExplode(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	manifest, err := buildVFSManifest(dataDir, mod, NewPakIndexCache())
+	manifest, err := buildVFSManifest(gameDir, mod, NewPakIndexCache())
 	if err != nil {
 		t.Fatalf("buildVFSManifest: %v", err)
 	}
@@ -54,21 +54,21 @@ func TestBuildVFSManifest_LayersAndPakExplode(t *testing.T) {
 		return vfsManifestEntry{}, false
 	}
 
-	if e, ok := get("foo.txt"); !ok || !strings.HasPrefix(e.URL, "/data/id1/common/foo.txt") {
+	if e, ok := get("foo.txt"); !ok || !strings.HasPrefix(e.URL, "/game/id1/common/foo.txt") {
 		t.Fatalf("expected foo.txt from common, got: ok=%v entry=%+v", ok, e)
 	}
 
 	// Should come from client (override), not /pak-extract from common.
-	if e, ok := get("gfx/palette.lmp"); !ok || !strings.HasPrefix(e.URL, "/data/id1/client/gfx/palette.lmp") {
+	if e, ok := get("gfx/palette.lmp"); !ok || !strings.HasPrefix(e.URL, "/game/id1/client/gfx/palette.lmp") {
 		t.Fatalf("expected gfx/palette.lmp from client override, got: ok=%v entry=%+v", ok, e)
 	}
 }
 
 func TestBuildVFSManifest_LooseBeatsPakWithinLayer(t *testing.T) {
-	dataDir := t.TempDir()
+	gameDir := t.TempDir()
 	mod := "id1"
 
-	commonDir := filepath.Join(dataDir, mod, "common")
+	commonDir := filepath.Join(gameDir, mod, "common")
 	if err := os.MkdirAll(filepath.Join(commonDir, "gfx"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestBuildVFSManifest_LooseBeatsPakWithinLayer(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	manifest, err := buildVFSManifest(dataDir, mod, NewPakIndexCache())
+	manifest, err := buildVFSManifest(gameDir, mod, NewPakIndexCache())
 	if err != nil {
 		t.Fatalf("buildVFSManifest: %v", err)
 	}
@@ -101,16 +101,16 @@ func TestBuildVFSManifest_LooseBeatsPakWithinLayer(t *testing.T) {
 	if !found {
 		t.Fatalf("missing gfx/palette.lmp")
 	}
-	if !strings.HasPrefix(got.URL, "/data/id1/common/gfx/palette.lmp") {
+	if !strings.HasPrefix(got.URL, "/game/id1/common/gfx/palette.lmp") {
 		t.Fatalf("expected loose file to win over pak, got url=%q", got.URL)
 	}
 }
 
 func TestBuildVFSManifest_PakOrderWithinLayer(t *testing.T) {
-	dataDir := t.TempDir()
+	gameDir := t.TempDir()
 	mod := "id1"
 
-	commonDir := filepath.Join(dataDir, mod, "common")
+	commonDir := filepath.Join(gameDir, mod, "common")
 	if err := os.MkdirAll(commonDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestBuildVFSManifest_PakOrderWithinLayer(t *testing.T) {
 		"docs/readme.txt": []byte("from pak1"),
 	})
 
-	manifest, err := buildVFSManifest(dataDir, mod, NewPakIndexCache())
+	manifest, err := buildVFSManifest(gameDir, mod, NewPakIndexCache())
 	if err != nil {
 		t.Fatalf("buildVFSManifest: %v", err)
 	}
@@ -144,28 +144,28 @@ func TestBuildVFSManifest_PakOrderWithinLayer(t *testing.T) {
 	}
 }
 
-func TestNewDataManifestBundleHandler_ReturnsDirectModManifests(t *testing.T) {
-	dataDir := t.TempDir()
+func TestNewGameManifestBundleHandler_ReturnsDirectModManifests(t *testing.T) {
+	gameDir := t.TempDir()
 
-	if err := os.MkdirAll(filepath.Join(dataDir, "id1", "common"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(gameDir, "id1", "common"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(dataDir, "ctf", "common"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(gameDir, "ctf", "common"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(dataDir, "cfgmod"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(gameDir, "cfgmod"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "id1", "common", "base.txt"), []byte("id1"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(gameDir, "id1", "common", "base.txt"), []byte("id1"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "ctf", "common", "ctf.txt"), []byte("ctf"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(gameDir, "ctf", "common", "ctf.txt"), []byte("ctf"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
-	handler := NewDataManifestBundleHandler(dataDir, NewPakIndexCache(), 7)
+	handler := NewGameManifestBundleHandler(gameDir, NewPakIndexCache(), 7)
 
-	req := httptest.NewRequest(http.MethodGet, "/data-manifest", nil)
+	req := httptest.NewRequest(http.MethodGet, "/game-manifest", nil)
 	rec := httptest.NewRecorder()
 	handler(rec, req)
 
@@ -208,10 +208,10 @@ func TestNewDataManifestBundleHandler_ReturnsDirectModManifests(t *testing.T) {
 	}
 }
 
-func TestNewDataManifestBundleHandler_NoModsReturnsNotFound(t *testing.T) {
-	dataDir := t.TempDir()
-	handler := NewDataManifestBundleHandler(dataDir, NewPakIndexCache(), 4)
-	req := httptest.NewRequest(http.MethodGet, "/data-manifest", nil)
+func TestNewGameManifestBundleHandler_NoModsReturnsNotFound(t *testing.T) {
+	gameDir := t.TempDir()
+	handler := NewGameManifestBundleHandler(gameDir, NewPakIndexCache(), 4)
+	req := httptest.NewRequest(http.MethodGet, "/game-manifest", nil)
 	rec := httptest.NewRecorder()
 
 	handler(rec, req)
@@ -222,34 +222,34 @@ func TestNewDataManifestBundleHandler_NoModsReturnsNotFound(t *testing.T) {
 }
 
 func TestListMods_IncludesEmptyModDirs(t *testing.T) {
-	dataDir := t.TempDir()
+	gameDir := t.TempDir()
 
-	if err := os.MkdirAll(filepath.Join(dataDir, "id1", "common"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(gameDir, "id1", "common"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(dataDir, "mod2", "server"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(gameDir, "mod2", "server"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(dataDir, "cfgmod"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(gameDir, "cfgmod"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(dataDir, "junk"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(gameDir, "junk"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "junk", "note.txt"), []byte("junk"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(gameDir, "junk", "note.txt"), []byte("junk"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(dataDir, ".hidden", "common"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(gameDir, ".hidden", "common"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(dataDir, "thismodnameistoolong", "common"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(gameDir, "thismodnameistoolong", "common"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(dataDir, "bad\tname", "common"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(gameDir, "bad\tname", "common"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	mods, err := ListMods(dataDir)
+	mods, err := ListMods(gameDir)
 	if err != nil {
 		t.Fatalf("ListMods: %v", err)
 	}
@@ -272,12 +272,12 @@ func TestListMods_IncludesEmptyModDirs(t *testing.T) {
 }
 
 func TestMaterializeMergedModDir_ServerOverridesCommon_AndIgnoresRoot(t *testing.T) {
-	dataDir := t.TempDir()
+	gameDir := t.TempDir()
 	runtimeRoot := t.TempDir()
 	mod := "id1"
 
-	commonDir := filepath.Join(dataDir, mod, "common")
-	serverDir := filepath.Join(dataDir, mod, "server")
+	commonDir := filepath.Join(gameDir, mod, "common")
+	serverDir := filepath.Join(gameDir, mod, "server")
 	if err := os.MkdirAll(commonDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -291,11 +291,11 @@ func TestMaterializeMergedModDir_ServerOverridesCommon_AndIgnoresRoot(t *testing
 	if err := os.WriteFile(filepath.Join(serverDir, "file.txt"), []byte("server"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, mod, "root.txt"), []byte("root"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(gameDir, mod, "root.txt"), []byte("root"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
-	if err := materializeMergedModDir(runtimeRoot, dataDir, mod); err != nil {
+	if err := materializeMergedModDir(runtimeRoot, gameDir, mod); err != nil {
 		t.Fatalf("materializeMergedModDir: %v", err)
 	}
 
@@ -313,12 +313,12 @@ func TestMaterializeMergedModDir_ServerOverridesCommon_AndIgnoresRoot(t *testing
 }
 
 func TestMaterializeMergedModDir_DoesNotSymlinkDirs(t *testing.T) {
-	dataDir := t.TempDir()
+	gameDir := t.TempDir()
 	runtimeRoot := t.TempDir()
 	mod := "ctf"
 
-	commonDir := filepath.Join(dataDir, mod, "common", "maps")
-	serverDir := filepath.Join(dataDir, mod, "server", "maps")
+	commonDir := filepath.Join(gameDir, mod, "common", "maps")
+	serverDir := filepath.Join(gameDir, mod, "server", "maps")
 	if err := os.MkdirAll(commonDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -334,7 +334,7 @@ func TestMaterializeMergedModDir_DoesNotSymlinkDirs(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	if err := materializeMergedModDir(runtimeRoot, dataDir, mod); err != nil {
+	if err := materializeMergedModDir(runtimeRoot, gameDir, mod); err != nil {
 		t.Fatalf("materializeMergedModDir: %v", err)
 	}
 

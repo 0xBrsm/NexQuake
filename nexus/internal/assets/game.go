@@ -1,4 +1,4 @@
-package gamedata
+package assets
 
 import (
 	"archive/zip"
@@ -28,12 +28,12 @@ type gameDataEntry struct {
 
 // BootstrapGameData installs game data from quickstart manifests.
 // logf is used for informational log messages (may be nil).
-func BootstrapGameData(ctx context.Context, dataDir string, logf func(string, ...any)) error {
+func BootstrapGameData(ctx context.Context, gameDir string, logf func(string, ...any)) error {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
 
-	entries, src, err := loadGameDataEntries(dataDir)
+	entries, src, err := loadGameDataEntries(gameDir)
 	if err != nil {
 		return err
 	}
@@ -41,9 +41,9 @@ func BootstrapGameData(ctx context.Context, dataDir string, logf func(string, ..
 		return nil
 	}
 
-	if !dirWritable(dataDir) {
+	if !dirWritable(gameDir) {
 		if strings.TrimSpace(os.Getenv("QUICKSTART")) != "" {
-			logf("Game data bootstrap skipped (not writable): %s", dataDir)
+			logf("Game data bootstrap skipped (not writable): %s", gameDir)
 		}
 		return nil
 	}
@@ -51,31 +51,31 @@ func BootstrapGameData(ctx context.Context, dataDir string, logf func(string, ..
 	for i, ent := range entries {
 		game := strings.TrimSpace(ent.Game)
 		if game == "" {
-			return fmt.Errorf("gamedata.json[%d]: missing game", i)
+			return fmt.Errorf("quickstart[%d]: missing game", i)
 		}
 
 		if len(ent.Server) == 0 && len(ent.Common) == 0 && len(ent.Client) == 0 {
-			return fmt.Errorf("gamedata.json[%d]: no layers for %s (config=%s)", i, game, src)
+			return fmt.Errorf("quickstart[%d]: no layers for %s (config=%s)", i, game, src)
 		}
 
-		if err := installLayer(ctx, dataDir, game, "common", ent.Common, ent.Force); err != nil {
-			return fmt.Errorf("gamedata.json[%d]: %w (config=%s)", i, err, src)
+		if err := installLayer(ctx, gameDir, game, "common", ent.Common, ent.Force); err != nil {
+			return fmt.Errorf("quickstart[%d]: %w (config=%s)", i, err, src)
 		}
-		if err := installLayer(ctx, dataDir, game, "server", ent.Server, ent.Force); err != nil {
-			return fmt.Errorf("gamedata.json[%d]: %w (config=%s)", i, err, src)
+		if err := installLayer(ctx, gameDir, game, "server", ent.Server, ent.Force); err != nil {
+			return fmt.Errorf("quickstart[%d]: %w (config=%s)", i, err, src)
 		}
-		if err := installLayer(ctx, dataDir, game, "client", ent.Client, ent.Force); err != nil {
-			return fmt.Errorf("gamedata.json[%d]: %w (config=%s)", i, err, src)
+		if err := installLayer(ctx, gameDir, game, "client", ent.Client, ent.Force); err != nil {
+			return fmt.Errorf("quickstart[%d]: %w (config=%s)", i, err, src)
 		}
 	}
 	return nil
 }
 
-func installLayer(ctx context.Context, dataDir, game, layer string, sources []string, force bool) error {
+func installLayer(ctx context.Context, gameDir, game, layer string, sources []string, force bool) error {
 	if len(sources) == 0 {
 		return nil
 	}
-	destRoot := filepath.Join(dataDir, game, layer)
+	destRoot := filepath.Join(gameDir, game, layer)
 	if dirHasEntries(destRoot) && !force {
 		return nil
 	}
@@ -209,7 +209,7 @@ func copyToFile(path string, r io.Reader) error {
 	return err
 }
 
-func loadGameDataEntries(dataDir string) ([]gameDataEntry, string, error) {
+func loadGameDataEntries(gameDir string) ([]gameDataEntry, string, error) {
 	raw := strings.TrimSpace(os.Getenv("QUICKSTART"))
 	if raw == "" {
 		raw = "minimal"
@@ -225,7 +225,7 @@ func loadGameDataEntries(dataDir string) ([]gameDataEntry, string, error) {
 			return nil, "env:QUICKSTART", fmt.Errorf("invalid QUICKSTART name: %q", name)
 		}
 
-		path := filepath.Join(dataDir, name+".json")
+		path := filepath.Join(gameDir, name+".json")
 		b, err := os.ReadFile(path)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {

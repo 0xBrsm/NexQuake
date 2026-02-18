@@ -27,6 +27,7 @@ func HandleAdminFrame(r *nqnet.Router, payload []byte, auth *Auth, env *Env) {
 			r.SendAdminReply("unauthorized\n")
 			return
 		}
+		r.PromoteAdmin()
 	}
 
 	args = strings.TrimSpace(args)

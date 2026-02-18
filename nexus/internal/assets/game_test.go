@@ -1,4 +1,4 @@
-package gamedata
+package assets
 
 import (
 	"archive/zip"
@@ -21,7 +21,7 @@ func TestBootstrapGameData_Smoke(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// internal/gamedata is two levels deeper than src/nexus
+	// internal/assets is two levels deeper than src/nexus
 	quake106 := filepath.Clean(filepath.Join(wd, "..", "..", "..", "assets", "quake106.zip"))
 	lqpak1 := filepath.Clean(filepath.Join(wd, "..", "..", "..", "assets", "lq-pak1.zip"))
 
@@ -29,8 +29,8 @@ func TestBootstrapGameData_Smoke(t *testing.T) {
 		t.Skip("assets not present in this checkout")
 	}
 
-	dataDir := t.TempDir()
-	cfgPath := filepath.Join(dataDir, "minimal.json")
+	gameDir := t.TempDir()
+	cfgPath := filepath.Join(gameDir, "minimal.json")
 
 	if err := os.WriteFile(cfgPath, []byte(`[
   {
@@ -46,11 +46,11 @@ func TestBootstrapGameData_Smoke(t *testing.T) {
 
 	t.Setenv("QUICKSTART", "minimal")
 
-	if err := BootstrapGameData(context.Background(), dataDir, nil); err != nil {
+	if err := BootstrapGameData(context.Background(), gameDir, nil); err != nil {
 		t.Fatalf("BootstrapGameData: %v", err)
 	}
 
-	root := filepath.Join(dataDir, "id1", "common")
+	root := filepath.Join(gameDir, "id1", "common")
 	if !fileExists(filepath.Join(root, "pak0.pak")) {
 		t.Fatalf("missing pak0.pak in %s", root)
 	}
@@ -190,21 +190,21 @@ func TestSplitCSV(t *testing.T) {
 }
 
 func TestLoadGameDataEntries_CSV(t *testing.T) {
-	dataDir := t.TempDir()
+	gameDir := t.TempDir()
 
 	// Create two manifest files.
 	m1 := `[{"game":"ctf","common":["file:///fake/ctf.zip"]}]`
 	m2 := `[{"game":"arena","server":["file:///fake/arena.zip"]}]`
-	if err := os.WriteFile(filepath.Join(dataDir, "ctf.json"), []byte(m1), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(gameDir, "ctf.json"), []byte(m1), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "arena.json"), []byte(m2), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(gameDir, "arena.json"), []byte(m2), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	t.Setenv("QUICKSTART", "ctf,arena")
 
-	entries, src, err := loadGameDataEntries(dataDir)
+	entries, src, err := loadGameDataEntries(gameDir)
 	if err != nil {
 		t.Fatalf("loadGameDataEntries: %v", err)
 	}
@@ -223,17 +223,17 @@ func TestLoadGameDataEntries_CSV(t *testing.T) {
 }
 
 func TestLoadGameDataEntries_CSV_SkipsMissing(t *testing.T) {
-	dataDir := t.TempDir()
+	gameDir := t.TempDir()
 
 	// Only create one of the two manifests.
 	m1 := `[{"game":"ctf","common":["file:///fake/ctf.zip"]}]`
-	if err := os.WriteFile(filepath.Join(dataDir, "ctf.json"), []byte(m1), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(gameDir, "ctf.json"), []byte(m1), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	t.Setenv("QUICKSTART", "ctf,nonexistent")
 
-	entries, _, err := loadGameDataEntries(dataDir)
+	entries, _, err := loadGameDataEntries(gameDir)
 	if err != nil {
 		t.Fatalf("loadGameDataEntries: %v", err)
 	}
@@ -246,10 +246,10 @@ func TestLoadGameDataEntries_CSV_SkipsMissing(t *testing.T) {
 }
 
 func TestLoadGameDataEntries_SingleMissingIsNoOp(t *testing.T) {
-	dataDir := t.TempDir()
+	gameDir := t.TempDir()
 	t.Setenv("QUICKSTART", "nonexistent")
 
-	entries, _, err := loadGameDataEntries(dataDir)
+	entries, _, err := loadGameDataEntries(gameDir)
 	if err != nil {
 		t.Fatalf("loadGameDataEntries: %v", err)
 	}
@@ -259,10 +259,10 @@ func TestLoadGameDataEntries_SingleMissingIsNoOp(t *testing.T) {
 }
 
 func TestLoadGameDataEntries_InvalidName(t *testing.T) {
-	dataDir := t.TempDir()
+	gameDir := t.TempDir()
 	t.Setenv("QUICKSTART", "ctf,../escape")
 
-	_, _, err := loadGameDataEntries(dataDir)
+	_, _, err := loadGameDataEntries(gameDir)
 	if err == nil {
 		t.Fatal("expected error for path-traversal name, got nil")
 	}
