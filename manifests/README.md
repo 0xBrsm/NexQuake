@@ -1,10 +1,10 @@
 # Manifests
 
-Manifests let you play immediately without setting up a game directory or volume mount. Set `QUICKSTART=<name[,name...]>` and Nexus downloads everything needed on first boot -- shareware PAK, libre PAK1, mod files -- directly into the game directory. No manual file management required.
+Manifests let you play immediately without setting up a game directory or volume mount. Set `QUICKSTART=<name[,name...]>` and Nexus downloads everything needed on first boot directly into the game directory. No manual file management required.
 
 ## How It Works
 
-1. On startup, Nexus resolves `${QUICKSTART:-minimal}` as one or more manifest names (comma-separated, in order)
+1. On startup, Nexus resolves `${QUICKSTART:-id1}` as one or more manifest names (comma-separated, in order)
 2. If `${GAME_DIR}` is writable and the target game directory isn't already populated, Nexus downloads the listed assets
 3. Each manifest entry specifies a game directory and download URLs organized by layer (common/client/server)
 4. Assets are extracted and placed into `${GAME_DIR}/<mod>/<layer>/`
@@ -14,12 +14,10 @@ Manifests let you play immediately without setting up a game directory or volume
 
 | Manifest | `QUICKSTART=` | What You Get |
 |----------|---------------|--------------|
-| `minimal.json` | `minimal` (default) | Quake shareware (Episode 1) + LibreQuake PAK1. Enough to load mods and play multiplayer. |
-| `full.json` | `full` | Everything in `minimal` plus Rocket Arena and Capture the Flag (3Wave CTF) mods with dedicated server configs. Full multiplayer setup. |
-| `og.json` | `og` | Everything in `minimal` plus original 3Wave CTF v2.51 (server-only). Lighter CTF variant. |
-| `ctf4.json` | `ctf4` | Everything in `minimal` plus 3Wave CTF v4.21d with common assets and server configs. |
-
-All manifests include `id1` with the Quake 1.06 shareware (`quake106.zip`) and the LibreQuake PAK1 (`lq-pak1.zip`).
+| `id1.json` | `id1` (default) | Quake shareware (Episode 1) + LibreQuake PAK1. Enough to load mods and play multiplayer. |
+| `full.json` | `full` | Everything in `id1` plus Rocket Arena and Capture the Flag (3Wave CTF) mods with dedicated server configs. Full multiplayer setup. |
+| `og.json` | `og` | Everything in `id1` plus original 3Wave CTF v2.51 (server-only). Lighter CTF variant. |
+| `ctf4.json` | `ctf4` | Everything in `id1` plus 3Wave CTF v4.21d with common assets and server configs. |
 
 ## The LibreQuake PAK1
 
@@ -44,7 +42,7 @@ QUICKSTART=full docker compose up --build
 QUICKSTART=ctf4 docker compose up --build
 
 # Compose multiple manifests (applied in order)
-QUICKSTART=minimal,ctf4 docker compose up --build
+QUICKSTART=id1,ctf4 docker compose up --build
 ```
 
 No `game/` directory, no volume mounts, no PAK file management. Nexus handles everything.

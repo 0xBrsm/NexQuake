@@ -30,7 +30,7 @@ func TestBootstrapGameData_Smoke(t *testing.T) {
 	}
 
 	gameDir := t.TempDir()
-	cfgPath := filepath.Join(gameDir, "minimal.json")
+	cfgPath := filepath.Join(gameDir, "id1.json")
 
 	if err := os.WriteFile(cfgPath, []byte(`[
   {
@@ -44,7 +44,7 @@ func TestBootstrapGameData_Smoke(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("QUICKSTART", "minimal")
+	t.Setenv("QUICKSTART", "id1")
 
 	if err := BootstrapGameData(context.Background(), gameDir, nil); err != nil {
 		t.Fatalf("BootstrapGameData: %v", err)
@@ -167,7 +167,7 @@ func TestSplitCSV(t *testing.T) {
 		input string
 		want  []string
 	}{
-		{"minimal", []string{"minimal"}},
+		{"id1", []string{"id1"}},
 		{"ctf,arena,tf", []string{"ctf", "arena", "tf"}},
 		{" ctf , arena , tf ", []string{"ctf", "arena", "tf"}},
 		{"ctf,,arena", []string{"ctf", "arena"}},
@@ -186,6 +186,30 @@ func TestSplitCSV(t *testing.T) {
 				t.Errorf("splitCSV(%q)[%d] = %q, want %q", tt.input, i, got[i], tt.want[i])
 			}
 		}
+	}
+}
+
+func TestLoadGameDataEntries_DefaultQuickstartID1(t *testing.T) {
+	gameDir := t.TempDir()
+	t.Setenv("QUICKSTART", "")
+
+	m := `[{"game":"id1","common":["file:///fake/id1.zip"]}]`
+	if err := os.WriteFile(filepath.Join(gameDir, "id1.json"), []byte(m), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, src, err := loadGameDataEntries(gameDir)
+	if err != nil {
+		t.Fatalf("loadGameDataEntries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].Game != "id1" {
+		t.Fatalf("entries[0].Game = %q, want %q", entries[0].Game, "id1")
+	}
+	if !strings.Contains(src, "id1.json") {
+		t.Fatalf("source string missing id1 manifest path: %q", src)
 	}
 }
 

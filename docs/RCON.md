@@ -1,10 +1,12 @@
 # RCON Commands
 
-Nexus uses port 0 on the WebSocket connection for administrative commands. You can issue these commands using the in-game console (`~` key) if you are authenticated as an admin.
+Nexus implements a system-wide admin protocol using the `rcon` command. You can issue these commands using the in-game console (`~` key) if you are authenticated as an admin.
 
-Authentication is handled either by per-frame `rcon_password` or by connection-level OIDC JWT auth (`AUTH_ISSUER`/`AUTH_AUDIENCE`, optional `AUTH_JWT_HEADER`).
+Authentication is handled either by connection-level OIDC JWT auth or by in-game `rcon_password`. The rcon password is a non-archived cvar that will not be saved to config.cfg when set and it's recommended not to add it to config.cfg directly, though this will enable automatic elevation on connection.
 
 ## Command Reference
+
+The rcon syntax is `rcon <host|port|nexus> <cmd>`. If you are connected to a server `rcon <cmd>` will send directly to that server. If you are connected to no server `rcon <cmd>` will send directly to Nexus.
 
 | Command | Usage | Description |
 |---------|-------|-------------|

@@ -1,6 +1,6 @@
 # Upstream WinQuake Bugfix Patches
 
-Optional patches for bugs in the original id Software WinQuake source. These target the vanilla codebase and contain no NexQuake-specific changes. Applied by default during `prepare-upstream.sh`; set `BUGFIX=0` to opt out. Similar fixes exist in major source ports (Quakespasm, TyrQuake, Mark V).
+Optional patches for bugs in the original id Software WinQuake source. These target the vanilla codebase and contain no NexQuake-specific changes. Applied by default during `prepare-upstream.sh`; set `BUGFIX=0` to opt out.
 
 ## Overview
 

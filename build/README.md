@@ -49,9 +49,3 @@ Clean the workspace:
 rm -rf src/build/tmp/client src/build/tmp/server src/build/tmp/bin    # clean working copies
 rm -rf src/build/tmp/WinQuake                                          # force re-checkout
 ```
-
-## Important Rules
-
-- **Never modify `build/tmp/WinQuake/`** directly. Always work on copies.
-- **Never commit `build/tmp/`**. It's in `.gitignore`.
-- Changes to the upstream source are made via `.patch` files in `src/client/` or `src/server/`, not by editing the checkout.

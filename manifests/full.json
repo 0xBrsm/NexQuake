@@ -10,6 +10,11 @@
     "server": ["https://github.com/0xBrsm/QuakeMods/raw/refs/heads/main/NetQuake/3wave421d.zip"]
   },
   {
+    "game": "fortress",
+    "common": ["https://github.com/Jason2Brownlee/TeamFortressQuakeArchive/raw/refs/heads/main/bin/tf28.zip",
+                "https://github.com/Jason2Brownlee/TeamFortressQuakeArchive/raw/refs/heads/main/bin/tf281.zip"]
+  },
+  {
     "game": "id1",
     "common": ["https://github.com/0xBrsm/QuakeMods/raw/refs/heads/main/NetQuake/quake106.zip",
                 "https://github.com/0xBrsm/QuakeMods/raw/refs/heads/main/NetQuake/lq-pak1.zip"]

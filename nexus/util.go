@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -67,17 +65,17 @@ func initLogging() {
 }
 
 func applyOperatorConsoleTimestampEnv() {
-	raw := strings.ToLower(strings.TrimSpace(os.Getenv("LOG_CONSOLE_TIMESTAMPS")))
+	raw := strings.TrimSpace(os.Getenv("CONSOLE_TIMESTAMPS"))
 	if raw == "" {
 		return
 	}
 	switch raw {
-	case "1", "true", "on", "yes":
+	case "1":
 		operatorConsoleTimestamp.Store(true)
-	case "0", "false", "off", "no":
+	case "0":
 		operatorConsoleTimestamp.Store(false)
 	default:
-		warnf("Unknown LOG_CONSOLE_TIMESTAMPS=%q (expected: on|off); defaulting to on", raw)
+		warnf("Unknown CONSOLE_TIMESTAMPS=%q (expected: 0|1); defaulting to 1", raw)
 		operatorConsoleTimestamp.Store(true)
 	}
 }
@@ -330,20 +328,6 @@ func getEnvIntMin(key string, defaultValue, minValue int) int {
 func fileExists(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && !st.IsDir()
-}
-
-func sha256File(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func contentTypeOverride(h http.Handler) http.Handler {

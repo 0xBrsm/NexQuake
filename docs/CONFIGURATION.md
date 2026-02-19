@@ -10,7 +10,6 @@ NexQuake is designed to be drop-in compatible with any protocol 15 (NetQuake) de
 |------|---------|-------------|
 | `HTTP_PORT` | `1337` | Main HTTP and WebSocket listener port. |
 | `CORS_ALLOWED_ORIGIN` | empty | CORS `Access-Control-Allow-Origin` header value. Only set when serving assets cross-origin. |
-| `NQSERVER_IP` | `127.13.37.9` | Internal loopback IP address for the dedicated servers. Nexus binds each client's UDP relay socket to a virtual IP and forwards datagrams to `NQSERVER_IP:<port>`. |
 
 ## Authentication
 
@@ -19,8 +18,8 @@ NexQuake is designed to be drop-in compatible with any protocol 15 (NetQuake) de
 | `AUTH_RCON_PASSWORD` | empty | Shared secret for `rcon_password`. If set, enables admin sessions. |
 | `AUTH_ISSUER` | empty | OIDC Issuer URL (e.g. `https://accounts.google.com`). |
 | `AUTH_AUDIENCE` | empty | OIDC Audience (Client ID). |
-| `AUTH_JWT_HEADER` | `Authorization` | Custom HTTP header for OIDC JWT token. |
-| `AUTH_ADMIN_ID` | empty | Comma-separated list of OIDC claims (`email:user@example.com`, `groups:admins`) required for admin access. Logs will identify users by their request token's `email`, `preferred_username`, or `sub`. |
+| `AUTH_JWT_HEADER` | `Authorization` | HTTP header for OIDC JWT token. |
+| `AUTH_ADMIN_ID` | empty | Comma-separated list of OIDC claims (e.g. `email:user@example.com`, `group:admins`) required for admin access. Logs will identify users by their request token's `email`, `preferred_username`, or `sub`. |
 | `AUTH_CLIENT_IP_HEADER` | empty | HTTP header to trust for client IP resolution (e.g. `CF-Connecting-IP`, `X-Forwarded-For`, `X-Real-IP`). If unset or the header value is invalid, falls back to the direct connection IP. |
 
 ## Paths & Data
@@ -32,13 +31,13 @@ NexQuake is designed to be drop-in compatible with any protocol 15 (NetQuake) de
 | `LOGS_DIR` | `/app/logs` | Where Nexus and server logs are written. |
 | `BIN_DIR` | `/app/bin` | Location of server binaries (`nqserver`). |
 | `CLIENT_DIR` | `/app/bin/nqwasm` | Location of WASM client assets (`index.wasm`, `index.html`). |
-| `CLIENT_BATCH_SIZE` | `16` | Concurrency for VFS prefetching (PAK streaming). |
-| `DEBUG_STARTUP` | `0` | Set to `1` for verbose startup logging (artifact fingerprints). |
+| `CL_CONCURRENCY` | `16` | Concurrency for VFS prefetching (PAK streaming). |
 
 ## Startup Options
 
 | Variable | Default | Description |
 |------|---------|-------------|
-| `QUICKSTART` | `minimal` | Bootstrap manifest name. Supports comma-separated lists (e.g. `minimal,ctf4`). See `src/manifests/README.md`. |
+| `QUICKSTART` | `id1` | Bootstrap manifest name. Supports comma-separated lists (e.g. `id1,ctf4`). See `src/manifests/README.md`. |
 | `LOG_LEVEL` | `info` | Logging verbosity. Accepts: `error`, `warn`, `info`, `debug`. |
-| `LOG_CONSOLE_TIMESTAMPS` | `on` | Timestamps on operator console log lines. Accepts: `on`/`off` (or `1`/`0`, `true`/`false`, `yes`/`no`). |
+| `CONSOLE_TIMESTAMPS` | `1` | Timestamps on operator console log lines. Accepts: `0`, `1`. |
+| `DEBUG_RELAY` | `0` | Logs UDP relay traffic with source/destination, length, and byte preview. Accepts: `0`, `1`. |

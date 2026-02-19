@@ -1,71 +1,69 @@
 # NexQuake
 
-Quake was released June 22, 1996 and changed video-gaming forever. **NexQuake** was built to recapture that experience without the setup friction. Playing Quake is now as easy as clicking a link, joining a server, and fragging your friends. The same brutal, satisfying gameplay that shipped in 1996, running natively in your browser in 2026.
+Quake was released thirty years ago and changed video-gaming forever. For many of us, it was our first foray into true multiplayer gaming. NexQuake was built to recapture that experience without the setup hassle. With NexQuake, playing old-school Quake is as easy as clicking a link, picking a server, and pwning your friends. The same brutal, fast-paced gameplay from 1996, running natively in your browser in 2026.
 
-## What It Is
+- **Zero friction**: Convince your friends to click a link, and now you're playing.
+- **Authentic gameplay**: Same movement, same weapons, same music, same feel.
+- **Real multiplayer**: Pick your mods, run as many game servers as you want.
+- **Self-hostable**: Pull one Docker image, open one port, go frag.
 
-NexQuake is a WebAssembly port of Quake with browser-native multiplayer. It takes the original id Software engine, compiles it to WASM, and connects players to dedicated servers through a lightweight Go relay that tunnels UDP over WebSocket.
+Ready to play? Bunny-hop over to [QUICKSTART](./docs/QUICKSTART.md). Or read on to learn more.
 
-The result is default Quake (software renderer, original physics, original UI) playable in any modern browser with real-time multiplayer. No plugins, no installs, no compromise on the classic experience.
+## The Details
 
-## Why It Exists
-
-Modern source ports do amazing things. They also require downloading binaries, configuring engines, finding servers, and troubleshooting compatibility. The original Quake was pick-up-and-play: you installed it and fragged. NexQuake brings that simplicity back.
-
-The goals are straightforward:
-
-- **Zero friction**: A URL is the entire install process
-- **Authentic gameplay**: Same movement, same weapons, same feel
-- **Real multiplayer**: Dedicated servers with the standard NetQuake protocol
-- **Self-hostable**: Pull one Docker image, open one port, go frag
-
-## How It Works
-
-Three components work together:
+NexQuake is a WebAssembly port of Quake with browser-native multiplayer. It runs the original id Software engine in the browser and connects players back to dedicated game servers on the host through a lightweight Go relay that tunnels UDP over WebSocket.
 
 ```
-Browser  --WebSocket-->  Nexus  --UDP-->  NetQuake Server
+Browser Client  --WebSocket-->  Nexus  --UDP-->  NetQuake Server
 ```
 
-**The WASM Browser Client** is the Quake engine compiled to WebAssembly with Emscripten. It uses WebGL2 for rendering (GPU-side palette conversion from the original 8-bit framebuffer), WebAudio for sound, and HTML5 events for input. Game files are streamed on demand from the server through a virtual filesystem.
+The result is the original Quake multiplayer experience (software rendered, original physics, original UI) with no plugins, no user installs, and no compromise on the classic experience.
 
-**Nexus** is a Go orchestration server that serves client files, serves game data, manages servers, and tunnels multiplayer traffic. Each WebSocket frame carries a small routing header plus a raw NetQuake UDP datagram. Nexus acts as a transparent relay with multi-server routing; it never parses game packets.
+**The Browser Client** is the Quake engine compiled to WebAssembly with Emscripten. It uses WebGL2 for rendering (GPU-side palette conversion from the original 8-bit framebuffer), WebAudio for sound, and HTML5 events for input. Game files and background music are streamed on demand from the server through a virtual filesystem.
 
-**The Dedicated Server** is the original NetQuake engine running headless. Stock protocol, stock gameplay. Nexus spawns and manages server instances, one per game directory (mod).
+**Nexus** is a Go orchestration server that serves client files, serves game data, manages servers, and tunnels multiplayer traffic. Each WebSocket frame carries a small routing header plus a raw NetQuake protocol 15 datagram. Nexus acts as a transparent relay with multi-server routing; it never parses game packets.
 
-Players use the standard Quake multiplayer connection experience; either use the Multiplayer menu or from the console (`~`) type `slist` to browse servers and `connect <host>` to join.
+**The Dedicated Server** is any original NetQuake engine running `-dedicated`. Stock protocol, stock gameplay. Nexus spawns and manages server instances with runtime flags and server cfgs just like the days of old.
 
-## Features
+Players use the standard Quake multiplayer connection experience; either through the Multiplayer menu or from the console (`~`) type `slist` to browse servers and `connect <host>` to join.
 
-- **Browser-native**: Runs in Chrome, Firefox, Safari, Edge, and any browser with WebGL2
-- **Real multiplayer**: Dedicated NetQuake servers with the standard protocol
-- **Software renderer**: GPU-accelerated palette conversion of the original 8-bit framebuffer
-- **Persistent saves**: Config and saves survive browser sessions via IndexedDB
-- **Mod support**: Game directory switching at runtime without page reload
-- **Self-contained**: Single Docker image, single port, optional TLS via reverse proxy
-- **Auto-bootstrap**: Shareware game data downloads automatically on first run
+### Features
 
-## Documentation
+- **Browser-native**: Runs in Chrome, Firefox, Safari, Edge, and any browser with WebGL2.
+- **Real multiplayer**: Dedicated NetQuake servers centrally managed through Nexus.
+- **Mod support**: Game directory switching at runtime without page reload.
+- **Software renderer**: GPU-accelerated palette conversion of the original 8-bit framebuffer.
+- **CD audio emulation**: Load up the original Quake soundtrack in .ogg or .mp3 format.
+- **Persistent saves**: Config and saves survive browser sessions via IndexedDB.
+- **Self-contained**: Single Docker image, single port.
+- **Easy to secure**: Supports OIDC via JWT tokens or just run it behind a reverse proxy.
+- **Auto-bootstrap**: Shareware/freeware game data downloads automatically on first run.
 
-- **[Quick Start](docs/QUICKSTART.md)**: Get up and running with Docker.
+### Documentation
+
+- **[Repo Overview](docs/README.md)**: Index to all the documentation in the repo.
+- **[Quick Start](docs/QUICKSTART.md)**: Get up and running quickly with Docker.
 - **[Configuration](docs/CONFIGURATION.md)**: Environment variables and networking setup.
 - **[Usage Guide](docs/USAGE.md)**: Managing game data, mods, and servers.
-- **[Architecture](docs/ARCHITECTURE.md)**: Technical deep dive into system design.
+- **[UI Overlay Guide](docs/UI.md)**: Using the in-browser shell overlay for files, cfg editing, uploads, and CD controls.
 - **[RCON Commands](docs/RCON.md)**: Server administration reference.
+- **[Architecture](docs/ARCHITECTURE.md)**: Technical deep dive into system design.
 - **[Bug Fixes](bugfix/README.md)**: Security and stability patches for the upstream WinQuake source.
 
 ## Project Layout
 
 ```
-client/           WASM client platform layer and WebSocket networking
-server/           Dedicated server Makefile and patches
-nexus/            Go relay, file serving, server orchestration
-manifests/        Game data bootstrap configs
+bugfix/           Patches for critical bugs in the Quake source
 build/            Build system and upstream checkout scripts
+client/           WASM client platform layer and WebSocket networking
 docs/             Detailed documentation and guides
-Dockerfile        Multi-stage production image
-compose.yml       Docker Compose configuration
+manifests/        Game data bootstrap configs
+nexus/            Go relay, file serving, server orchestration
+server/           Dedicated server Makefile and patches
 ATTRIBUTIONS.md   Source provenance and GPL lineage
+compose.yml       Docker Compose configuration
+Dockerfile        Multi-stage production image
+README.md         You're still reading it (go play Quake!)
 ```
 
 ## License

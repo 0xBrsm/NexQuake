@@ -212,7 +212,7 @@ func copyToFile(path string, r io.Reader) error {
 func loadGameDataEntries(gameDir string) ([]gameDataEntry, string, error) {
 	raw := strings.TrimSpace(os.Getenv("QUICKSTART"))
 	if raw == "" {
-		raw = "minimal"
+		raw = "id1"
 	}
 
 	names := splitCSV(raw)

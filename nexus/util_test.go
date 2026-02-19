@@ -66,3 +66,32 @@ func writeTestPak(t *testing.T, pakPath string, files map[string][]byte) {
 		t.Fatalf("write pak: %v", err)
 	}
 }
+
+func TestApplyOperatorConsoleTimestampEnv(t *testing.T) {
+	t.Run("accepts 1", func(t *testing.T) {
+		t.Setenv("CONSOLE_TIMESTAMPS", "1")
+		setOperatorConsoleTimestamps(false)
+		applyOperatorConsoleTimestampEnv()
+		if !operatorConsoleTimestampsEnabled() {
+			t.Fatalf("expected operator console timestamps enabled for 1")
+		}
+	})
+
+	t.Run("accepts 0", func(t *testing.T) {
+		t.Setenv("CONSOLE_TIMESTAMPS", "0")
+		setOperatorConsoleTimestamps(true)
+		applyOperatorConsoleTimestampEnv()
+		if operatorConsoleTimestampsEnabled() {
+			t.Fatalf("expected operator console timestamps disabled for 0")
+		}
+	})
+
+	t.Run("rejects non 0-1 values", func(t *testing.T) {
+		t.Setenv("CONSOLE_TIMESTAMPS", "on")
+		setOperatorConsoleTimestamps(false)
+		applyOperatorConsoleTimestampEnv()
+		if !operatorConsoleTimestampsEnabled() {
+			t.Fatalf("expected default enabled state for invalid value")
+		}
+	})
+}

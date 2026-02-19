@@ -1,5 +1,5 @@
 services:
-  nexus:
+  nexquake:
     build:
       context: .
       dockerfile: Dockerfile

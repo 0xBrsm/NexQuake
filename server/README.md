@@ -1,10 +1,8 @@
 # Dedicated Server
 
-A Linux build of the complete WinQuake engine, compiled with null drivers and run in headless dedicated mode.
+NexQuake is built to support any dedicated Quake server running protocol 15. A Linux build of the complete WinQuake engine is provided here for ease of use, compiled with `sys_linux.c` and null drivers for graphics, sound, input, and CD. This avoids symbol resolution issues that occur when trying to build only the server code, since WinQuake's client and server are tightly coupled.
 
-## Approach
-
-Builds the **complete WinQuake engine for Linux** with null drivers for graphics, sound, input, and CD, then runs in dedicated mode (`-dedicated`). This avoids symbol resolution issues that occur when trying to build only the server code, since WinQuake's client and server are tightly coupled. Despite the "Win" in WinQuake, the engine compiles cleanly on Linux with `sys_linux.c` as the system layer.
+Three quality-of-life improvements are also included; native .ent support for maps, ephemeral port assignment, and a mapcycle cvar.
 
 ## Files
 
@@ -13,11 +11,11 @@ Builds the **complete WinQuake engine for Linux** with null drivers for graphics
 | `Makefile.dedicated` | Build configuration. Compiles the full WinQuake source with null drivers (`vid_null`, `snd_null`, `cd_null`, `in_null`). Handles cross-compilation, bitness selection, and architecture-specific flags via `PLATFORM` env var. |
 | `sys_linux_stub.c` | System stub. Provides `Sys_SendKeyEvents()` (required by the engine but unused in dedicated mode). Appended to upstream `sys_linux.c` during build. |
 | `bugfix/*.patch` | Upstream bugfixes. Fixes buffer overflows, format string vulnerabilities, and other vanilla WinQuake bugs. Applied by `prepare-upstream.sh` before server patches (set `BUGFIX=0` to skip). See `bugfix/README.md`. |
-| `sv_main.c.patch` | Entity overrides. Loads `maps/<map>.ent` files to override entity placement in BSP maps without modifying the BSP file. |
-| `net_udp.c.patch` | Ephemeral port fix. Updates `net_hostport` after bind when the server starts with `-port 0`, so Nexus and operators see a reachable non-zero port. |
-| `host.c.patch` | Map-cycle cvar registration. Adds the `mapcycle` cvar declaration and registers it during host init. |
-| `pr_cmds.c.patch` | Map-cycle changelevel hook. Intercepts QuakeC-driven `changelevel` and applies map selection from `mapcycle` (CSV or file). |
 | `64bit/*.64bit.patch` | 64-bit patches. Fix `string_t` pointer arithmetic for 64-bit builds where pointer subtraction overflows 32-bit offsets. Applied automatically on x86_64 and arm64. |
+| `host.c.patch` | Optional automated map rotation cvar registration. Adds the `mapcycle` cvar declaration and registers it during host init. |
+| `pr_cmds.c.patch` | Optional map rotation changelevel hook. Intercepts QuakeC-driven `changelevel` and applies map selection from `mapcycle` (CSV or file). See [`USAGE.md`](../docs/USAGE.md) for details. |
+| `net_udp.c.patch` | Optional ephemeral port fix. Updates `net_hostport` after bind when the server starts with `-port 0`, so Nexus and operators see a reachable non-zero port. Makes configuring multiple servers much cleaner. |
+| `sv_main.c.patch` | Optional entity overrides. Loads `maps/<map>.ent` files used in some mods (e.g. CTF) to override entity placement in BSP maps without requiring modification of the BSP file. |
 
 ## Building
 
@@ -57,17 +55,6 @@ The automated build script (`build/build-server.sh`) handles all of this.
 ```bash
 ./nqserver -dedicated -port 26000
 ```
-
-### Map Cycle
-
-`mapcycle` supports two formats:
-
-- Filename (preferred when the path exists): `mapcycle mapcycle.txt`
-- Inline list fallback: `mapcycle dm2,dm3,dm4`
-- Inline list fallback with spaces: `mapcycle "dm2 dm3 dm4"`
-
-The engine tries to load the cvar value as a file first; if not found, it tokenizes the value itself.
-Parsing uses Quake token rules (`COM_Parse`): commas/newlines/tabs are treated as separators and `//` comments are ignored.
 
 ## Architecture Support
 

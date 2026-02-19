@@ -43,7 +43,7 @@ func main() {
 	globalAuth = auth
 
 	// Initialize networking layer.
-	nqServerIP := parseNQServerIP(os.Getenv("NQSERVER_IP"))
+	nqServerIP := net.ParseIP(nqnet.DefaultNQServerIP).To4()
 	ipAlloc := nqnet.NewIPAllocator(nqServerIP)
 	sessionReg := nqnet.NewSessionRegistry()
 	globalIPAllocator = ipAlloc
@@ -61,11 +61,7 @@ func main() {
 		fatalf("WASM client not found: %s", cfg.clientDir)
 	}
 
-	if cfg.debugStartup {
-		logArtifactFingerprints(cfg)
-	}
-
-	// Default QUICKSTART is "minimal"; supports CSV (e.g. "ctf,arena,tf").
+	// Default QUICKSTART is "id1"; supports CSV (e.g. "id1,ctf4").
 	// Missing manifests are silently skipped.
 	if err := assets.BootstrapGameData(runCtx, cfg.gameDir, infof); err != nil {
 		fatalf("Game data bootstrap failed: %v", err)
@@ -143,7 +139,6 @@ type runtimeConfig struct {
 	binDir                 string
 	clientDir              string
 	corsOrigin             string
-	debugStartup           bool
 	vfsPrefetchConcurrency int
 }
 
@@ -158,8 +153,7 @@ func loadRuntimeConfig() runtimeConfig {
 		binDir:                 binDir,
 		clientDir:              getEnv("CLIENT_DIR", filepath.Join(binDir, "nqwasm")),
 		corsOrigin:             getEnv("CORS_ALLOWED_ORIGIN", ""),
-		debugStartup:           getEnv("DEBUG_STARTUP", "") == "1",
-		vfsPrefetchConcurrency: getEnvIntMin("CLIENT_BATCH_SIZE", 16, 1),
+		vfsPrefetchConcurrency: getEnvIntMin("CL_CONCURRENCY", 16, 1),
 	}
 }
 
@@ -229,24 +223,6 @@ func runHealthcheck(httpPort string) error {
 	return nil
 }
 
-func logArtifactFingerprints(cfg runtimeConfig) {
-	infof("Artifact fingerprints:")
-	if exe, err := os.Executable(); err == nil {
-		if sum, err := sha256File(exe); err == nil {
-			infof("  nexus   %s  %s", sum, exe)
-		}
-	}
-	serverPath := filepath.Join(cfg.binDir, "nqserver")
-	if sum, err := sha256File(serverPath); err == nil {
-		infof("  nqserver %s  %s", sum, serverPath)
-	}
-	wasmPath := filepath.Join(cfg.clientDir, "index.wasm")
-	if sum, err := sha256File(wasmPath); err == nil {
-		infof("  wasm    %s  %s", sum, wasmPath)
-	}
-	infof("")
-}
-
 // Global singletons, initialized in main() before any goroutines.
 var (
 	globalIPAllocator     *nqnet.IPAllocator
@@ -255,21 +231,6 @@ var (
 	globalAdminEnv        *admin.Env
 	globalServerManager   *orch.ServerManager
 )
-
-func parseNQServerIP(raw string) net.IP {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		raw = nqnet.DefaultNQServerIP
-	}
-
-	ip := net.ParseIP(raw).To4()
-	if ip != nil {
-		return ip
-	}
-
-	warnf("invalid NQSERVER_IP=%q; using %s", raw, nqnet.DefaultNQServerIP)
-	return net.ParseIP(nqnet.DefaultNQServerIP).To4()
-}
 
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	isAdmin, userIdentity := globalAuth.IdentifyRequest(r)

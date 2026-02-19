@@ -1,13 +1,13 @@
 # Nexus
 
-Go HTTP server that ties everything together: serves the WASM client, serves game data, tunnels multiplayer traffic over WebSocket, and manages dedicated server processes.
+Go orchestration server that ties everything together: serves the WASM client, serves game data, tunnels multiplayer traffic over WebSocket, and manages dedicated server processes.
 
 ## Entry
 
 | File | Purpose |
 |------|---------|
 | `main.go` | HTTP server setup, route registration, WebSocket handler, CLI subcommands (`--version`, `--healthcheck`), auth init, server manager startup, signal handling, graceful shutdown. |
-| `util.go` | Leveled logging (stderr + file + ring buffer for `rcon tail`), version info (`-ldflags`), env helpers, HTTP middleware (CORS, cache-control, content-type override). |
+| `util.go` | Leveled logging (stderr + file + ring buffer for `rcon tail`), path hashing, version info (`-ldflags`), env helpers, HTTP middleware (CORS, cache-control, content-type override). |
 
 ## Packages
 
@@ -15,32 +15,30 @@ Go HTTP server that ties everything together: serves the WASM client, serves gam
 |-----|---------|
 | `internal/nqnet/` | **Networking.** WebSocket upgrader, WebSocket<->UDP router, session registry, virtual IP allocator, tunnel frame helpers. |
 | `internal/orch/` | **Orchestration.** Dedicated server launch planning, process lifecycle, server console capture/tail, server-info poller for `slist`. |
-| `internal/admin/` | **Admin.** Auth (OIDC JWT + per-frame `rcon_password`), admin frame handler (`rcon`), nexus command dispatcher. |
-| `internal/assets/` | **Game data.** Bootstrap manifests, VFS manifest builder, PAK indexing, and hash-addressed asset gateway. |
+| `internal/admin/` | **Admin.** Auth (OIDC JWT + in-game `rcon_password`), admin frame handler for commands, Nexus command dispatcher. |
+| `internal/assets/` | **Game data.** Bootstrap manifests, VFS manifest builder, PAK indexing, BGM audio handling, and hash-addressed asset gateway. |
 
 ### `internal/assets/` — Game Data
 
 | File | Purpose |
 |------|---------|
 | `internal/assets/vfs.go` | **Manifest builder.** Scans `${GAME_DIR}/<mod>/common` + `${GAME_DIR}/<mod>/client`, builds JSON manifests with Quake-like precedence (loose > PAK, higher PAK number wins). |
-| `internal/assets/cd.go` | **CD index.** Scans `${CD_DIR}` for `.ogg`/`.mp3` tracks. |
-| `internal/assets/pak.go` | **PAK parser.** Indexes PAK headers and exposes file offsets/sizes for extraction. |
+| `internal/assets/cd.go` | **CD index.** Scans `${CD_DIR}` for `.ogg`/`.mp3` BGM tracks. |
+| `internal/assets/pak.go` | **PAK parser.** Indexes PAK headers and exposes file offsets/sizes for real-time extraction. |
 | `internal/assets/manifest.go` | **Runtime gateway.** Serves `/start` bootstrap + `/nq/<hash>` asset requests for VFS and CD audio. |
-| `internal/assets/game.go` | **Bootstrap.** Downloads game data on first run from a quickstart manifest (e.g. `minimal.json`). Only activates when `${GAME_DIR}` is writable. |
+| `internal/assets/quickstart.go` | **Bootstrap.** Downloads game data on first run from a quickstart manifest (e.g. `id1.json`). Only functions when `${GAME_DIR}` is writable. |
 
 ### Quake 1.06 Extraction (`quake106/`)
 
-The `quake106` package is a standalone Go library that extracts PAK0.PAK directly from the original Quake 1.06 shareware distribution (`quake106.zip`). It implements LZH (LH5) decompression from scratch -- no cgo, no external dependencies -- to decompress `resource.1` inside the zip and extract the shareware PAK file and license text.
-
-This is what makes Nexus's auto-bootstrap work: on first run, if no game data exists, Nexus downloads `quake106.zip`, hands it to this package, and gets a verified `pak0.pak` out the other side. Every step is SHA256-verified (zip, resource, extracted PAK) so the pipeline rejects corrupted or tampered downloads. This verification is required to conform with id Software's shareware license, which permits redistribution of the original, unmodified archive only.
+A standalone Go library that extracts `pak0.pak` directly from the original Quake 1.06 shareware distribution (`quake106.zip`). See the [quake106 README](./quake106/README.md) for details.
 
 | File | Purpose |
 |------|---------|
-| `quake106.go` | LZH decompression + PAK extraction. SHA256 verification at every stage. |
+| `quake106.go` | LZH decompression + PAK extraction with SHA256 verification. |
 
 ### `internal/orch/` — Orchestration
 
-Manages dedicated server processes. Parses `servers.ini` into a launch plan, starts processes under PTY for console capture, polls server-info for the slist cache, and exposes operations for the admin rcon interface.
+Manages dedicated server processes. Parses old-school, .bat-style `servers.ini` into a launch plan, starts processes under PTY for console capture, polls server-info for the slist cache, and exposes operations for the admin rcon interface.
 
 | File | Purpose |
 |------|---------|
@@ -57,7 +55,7 @@ Authenticates admin sessions and handles rcon commands dispatched from the WebSo
 
 | File | Purpose |
 |------|---------|
-| `auth.go` | Authentication. OIDC JWT verification (`AUTH_ISSUER`, `AUTH_AUDIENCE`, optional `AUTH_JWT_HEADER`, matcher list `AUTH_ADMIN_ID`) for connection-level admin identity, plus `AUTH_RCON_PASSWORD` for per-frame shared-secret auth. |
+| `auth.go` | Authentication. OIDC JWT verification (`AUTH_ISSUER`, `AUTH_AUDIENCE`, `AUTH_JWT_HEADER`, matcher list `AUTH_ADMIN_ID`) for connection-level admin identity, plus optional `AUTH_RCON_PASSWORD` for in-game shared-secret auth. |
 | `rcon.go` | Admin frame handler. Parses the rcon payload (password, optional target port, command), authorizes the frame, and dispatches to either a Nexus-level command or a server-level command. |
 | `cmds.go` | Nexus-level admin command registry and execution: `help`, `tail`, `slist`, `sessions`, `start`, `stop`, `restart`, `remove`, `launch`, `ban`. |
 
@@ -76,4 +74,4 @@ CGO_ENABLED=0 go build -o nexus .
 
 ## Dependencies
 
-Go 1.24+. Primary deps: `github.com/gorilla/websocket` (WebSocket), `github.com/coreos/go-oidc/v3` (OIDC JWT), `github.com/creack/pty` (server console PTY), `github.com/google/shlex` (command splitting).
+Go 1.24+. Primary deps: `github.com/gorilla/websocket` (WebSocket), `github.com/coreos/go-oidc/v3` (OIDC JWT), `github.com/creack/pty` (server console PTY), `github.com/google/shlex` (arg splitting).

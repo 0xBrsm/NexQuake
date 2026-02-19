@@ -69,7 +69,7 @@ func InitAuth(ctx context.Context, infof, debugf func(string, ...any)) (*Auth, e
 		methods = append(methods, "IdP")
 	}
 	if rconPassword != "" {
-		methods = append(methods, "rcon_password(frame)")
+		methods = append(methods, "rcon_password")
 	}
 	if len(methods) == 0 {
 		infof("Admin access disabled")

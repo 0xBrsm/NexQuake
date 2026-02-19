@@ -2,7 +2,7 @@
 
 The browser client: Quake compiled to WebAssembly with a from-scratch native WASM platform layer for software rendering. See [`ARCHITECTURE.md`](../docs/ARCHITECTURE.md) for the full technical breakdown (GPU-side palette conversion, audio pipeline, input handling).
 
-These files overlay the upstream id Software Quake source during build. The build system clones `id-Software/Quake`, applies patches, copies these overlays in, and compiles with Emscripten. The output is `index.html`, `shell.css`, `favicon.svg`, `index.js`, and `index.wasm`.
+The client patches and overlays are a mix of required and additive features. These files overlay the upstream id Software Quake source during build. The build system clones `id-Software/Quake`, applies patches, copies these overlays in, and compiles with Emscripten. The output is `index.html`, `shell.css`, `favicon.svg`, `index.js`, and `index.wasm`.
 
 ## Features
 
@@ -15,9 +15,9 @@ Required. Quake's original platform code targets DOS/Win32 system calls (VGA fra
 | `sys_wasm.c` | System layer: `emscripten_set_main_loop`, file I/O, timing, IDBFS persistence, deferred shutdown. |
 | `vid_wasm.c` | Video and input: WebGL2 context, GPU-side palette rendering (R8 framebuffer + RGBA palette + fragment shader lookup), HTML5 input callbacks, pointer lock. |
 | `snd_wasm.c` | Audio: WASM heap ring buffer read by a `ScriptProcessorNode` callback. Single-threaded, no locks. |
-| `cd_wasm.c` | CD audio: `EM_JS` bridges to the shell JS CD pipeline (`20-cdaudio.js`). |
-| `chase.c.patch` | Explicit extern prototype for `SV_RecursiveHullCheck` — WASM rejects the implicit declaration. |
-| `net.h.patch` | Strict `PollProcedure` function pointer signature — WASM enforces exact signature matching. |
+| `cd_wasm.c` | Emulated CD audio: `EM_JS` bridges to the shell JS CD pipeline (`20-cdaudio.js`). |
+| `chase.c.patch` | Explicit extern prototype for `SV_RecursiveHullCheck`. WASM rejects the implicit declaration. |
+| `net.h.patch` | Strict `PollProcedure` function pointer signature. WASM enforces exact signature matching. |
 | `net_main.c.patch` | `void*` poll signatures and `emscripten_sleep` yields in blocking loops. |
 | `net_dgrm.c.patch` | `void*` poll signatures and `emscripten_sleep` yields during connect. |
 
@@ -33,19 +33,19 @@ Required. Browsers cannot open UDP sockets. This feature replaces Quake's UDP ne
 
 ### 3. Mod Switching
 
-Quality-of-life. Original Quake requires restarting the executable to change mods. Since the browser client loads via a URL, restarting means a full page reload and re-downloading all assets. This feature adds runtime game directory switching so the client can seamlessly connect to servers running different mods (e.g. `id1` to `ctf`). On connect, the client detects the server's mod from `hostcache`, snapshots/restores the filesystem search paths, and notifies JavaScript to fetch the new mod's data.
+Quality-of-life addition. Original Quake requires restarting the executable to change mods that rely on client-side resources. Since the browser client loads via a URL, restarting means a full page reload and re-downloading all assets. This feature adds runtime game directory switching so the client can seamlessly connect to servers running different mods (e.g. `id1` to `ctf`) without reloading. On connect, the client detects the server's game mod from `hostcache`, snapshots/restores the filesystem search paths, and notifies JavaScript to fetch the new game mod's data.
 
 | File | Purpose |
 |------|---------|
 | `common.h.patch` | `COM_SwitchGame` declaration. |
-| `common.c.patch` | Implementation: baseline search path snapshot, restore, `.usr` user-overlay links, JS notification via `Module.nexquakeSwitchGameData()`. |
+| `common.c.patch` | Core implementation. Baseline search path snapshot, restore, `.usr` user-overlay links, JS notification via `Module.nexquakeSwitchGameData()`. |
 | `host.c.patch` | Adds `fs_hunklevel` for safe Hunk free/realloc during directory switch. |
 | `cl_main.c.patch` | Resets game directory to base on disconnect. |
 | `cl_parse.c.patch` | Auto-switches mod on connect based on server's gamedir. |
 
 ### 4. RCON
 
-Quality-of-life. Stock WinQuake has no dedicated `rcon` client command; it forwards commands with `cmd` to the currently connected server. NexQuake adds a browser-safe `rcon` command over the Nexus control channel so operators can target a server by hostcache name/port (or Nexus control) from the client.
+Quality-of-life addition. Stock WinQuake has no dedicated `rcon` client command; the closest analog is `cmd`, which only forwards commands to the currently connected server. NexQuake adds a browser-safe `rcon` command over the Nexus control channel so operators can target any server by hostcache name/port or Nexus itself for system-wide actions. See [RCON](../docs/RCON.md) for details.
 
 | File | Purpose |
 |------|---------|
@@ -53,7 +53,7 @@ Quality-of-life. Stock WinQuake has no dedicated `rcon` client command; it forwa
 
 ### 5. Nexus Server List
 
-Quality-of-life. Quake's original server browser sends LAN broadcast packets and waits 1.5 seconds for responses. In the browser, there is no LAN. Nexus provides an aggregated server list over the relay connection. This feature parses the batched response format, adds a gamedir column so players can see which mod each server runs, and provides UI improvements (centered layout, console auto-close, `smenu` shortcut command).
+Quality-of-life addition. Quake's original server browser sends LAN broadcast packets and waits 1.5 seconds for responses. NexQuake runs on a loopback network, which does not support broadcast. Instead, Nexus provides an aggregated server list over the relay connection. This feature parses the batched response format, adds a gamedir column so players can see which mod each server runs, and provides UI improvements (centered layout, console auto-close, `smenu` shortcut command).
 
 | File | Purpose |
 |------|---------|
@@ -64,7 +64,7 @@ Quality-of-life. Quake's original server browser sends LAN broadcast packets and
 
 ### 6. Asset Prefetch
 
-Quality-of-life. Without this, connecting to a server triggers sequential synchronous downloads of every model and sound file, one at a time, over HTTP. On a typical map this means dozens of assets loaded in series, producing multi-second connect times. This feature enqueues all precache paths into a JavaScript pipeline that fetches them concurrently (16 parallel workers), reducing connect time to roughly the cost of the single slowest asset.
+Quality-of-life addition. Without this, connecting to a server triggers sequential synchronous downloads of models and sound files one at a time over HTTP. On a typical map this means dozens of assets loaded in series, producing multi-second connect times. This feature enqueues all precache paths into a JavaScript pipeline that fetches them concurrently (default 16 parallel workers), reducing connect time to roughly the cost of the single slowest asset.
 
 | File | Purpose |
 |------|---------|
@@ -80,7 +80,7 @@ On page load, the shell fetches a manifest bundle from `/start`, builds a virtua
 
 **CD Audio** — `20-cdaudio.js`, `cd_wasm.c`
 
-Quake's CD audio system originally played music tracks from a physical CD-ROM drive. NexQuake replaces this with digital audio streaming through a two-tier resolution system. When the engine requests a track number, JavaScript first scans the user's local `/cd/` directory for files whose filenames contain the track number (e.g. `track02.ogg`, `#3.mp3`). If no local file matches, it falls back to the remote CD manifest served by Nexus. Playback uses an HTML5 `<audio>` element with smooth fade transitions on pause/stop and automatic resume on user gesture to handle browser autoplay policies. On the C side, `cd_wasm.c` implements Quake's `CDAudio_*` API by calling into JavaScript via `EM_JS` bridges, tracking the `bgmvolume` cvar each frame. Users can upload their own music files through the overlay, which take priority over server-provided tracks.
+Quake's CD audio system originally played music tracks from a physical CD-ROM drive. NexQuake replaces this with digital audio streaming through a two-tier resolution system. When the engine requests a track number, JavaScript first scans the user's `/cd/` browser store for uploaded files whose filenames contain the track number (e.g. `track02.ogg`, `#3.mp3`). If no local file matches, it falls back to the remote CD manifest served by Nexus. Playback uses an HTML5 `<audio>` element with smooth fade transitions on pause/stop and automatic resume on user gesture to handle browser autoplay policies. On the C side, `cd_wasm.c` implements Quake's `CDAudio_*` API by calling into JavaScript via `EM_JS` bridges, tracking the `bgmvolume` cvar each frame. Users can upload their own music files through the overlay, which take priority over server-provided tracks.
 
 **Overlay UI** — `50-overlay.js`, `51-overlay-core.js`, `52-overlay-cd.js`, `53-overlay-vfs.js`, `54-overlay-upload.js`, `59-overlay-events.js`
 
