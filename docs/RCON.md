@@ -2,7 +2,7 @@
 
 Nexus implements a system-wide admin protocol using the `rcon` command. You can issue these commands using the in-game console (`~` key) if you are authenticated as an admin.
 
-Authentication is handled either by connection-level OIDC JWT auth or by in-game `rcon_password`. The rcon password is a non-archived cvar that will not be saved to config.cfg when set and it's recommended not to add it to config.cfg directly, though this will enable automatic elevation on connection.
+Authentication is handled either by connection-level OIDC JWT auth or by in-game `rcon_password`. The rcon password is a non-archived cvar that will not be saved to `config.cfg` when set. Adding it to your `config.cfg` directly isn't recommended, though this will enable automatic elevation on connection.
 
 ## Targeting
 

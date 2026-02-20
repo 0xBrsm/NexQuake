@@ -7,7 +7,7 @@ Go orchestration server that ties everything together: serves the WASM client, s
 | File | Purpose |
 |------|---------|
 | `main.go` | HTTP server setup, route registration, WebSocket handler, CLI subcommands (`--version`, `--healthcheck`), auth init, server manager startup, signal handling, graceful shutdown. |
-| `util.go` | Leveled logging (stderr + file + ring buffer for `rcon tail`), path hashing, version info (`-ldflags`), env helpers, HTTP middleware (CORS, cache-control, content-type override). |
+| `util.go` | Leveled logging (stderr + file + ring buffer for `rcon tail`), path hashing, version info (`-ldflags`), env helpers, HTTP middleware (browser isolation headers, cache-control, content-type override). |
 
 ## Packages
 
@@ -16,7 +16,7 @@ Go orchestration server that ties everything together: serves the WASM client, s
 | `internal/nqnet/` | **Networking.** WebSocket upgrader, WebSocket<->UDP router, session registry, virtual IP allocator, tunnel frame helpers. |
 | `internal/orch/` | **Orchestration.** Dedicated server launch planning, process lifecycle, server console capture/tail, server-info poller for `slist`. |
 | `internal/admin/` | **Admin.** Auth (OIDC JWT + in-game `rcon_password`), admin frame handler for commands, Nexus command dispatcher. |
-| `internal/assets/` | **Game data.** Bootstrap manifests, VFS manifest builder, PAK indexing, BGM audio handling, and hash-addressed asset gateway. |
+| `internal/assets/` | **Game data.** Quickstart manifests, VFS manifest builder, PAK indexing, BGM audio handling, and hash-addressed asset gateway. |
 
 ### `internal/assets/` — Game Data
 
@@ -25,8 +25,8 @@ Go orchestration server that ties everything together: serves the WASM client, s
 | `internal/assets/vfs.go` | **Manifest builder.** Scans `${GAME_DIR}/<mod>/common` + `${GAME_DIR}/<mod>/client`, builds JSON manifests with Quake-like precedence (loose > PAK, higher PAK number wins). |
 | `internal/assets/cd.go` | **CD index.** Scans `${CD_DIR}` for `.ogg`/`.mp3` BGM tracks. |
 | `internal/assets/pak.go` | **PAK parser.** Indexes PAK headers and exposes file offsets/sizes for real-time extraction. |
-| `internal/assets/manifest.go` | **Runtime gateway.** Serves `/start` bootstrap + `/nq/<hash>` asset requests for VFS and CD audio. |
-| `internal/assets/quickstart.go` | **Bootstrap.** Downloads game data on first run from a quickstart manifest (e.g. `id1.json`). Only functions when `${GAME_DIR}` is writable. |
+| `internal/assets/manifest.go` | **Runtime gateway.** Serves `/start` quickstart + `/nq/<hash>` asset requests for VFS and CD audio. |
+| `internal/assets/game.go` | **Quickstart + installers.** Seeds `servers.ini` and installs missing mod layers from `CFG_DIR/game.json` based on `QUICKSTART` and `servers.ini -game` entries. Also contains archive/download install helpers. |
 
 ### Quake 1.06 Extraction (`quake106/`)
 
@@ -42,7 +42,7 @@ Manages dedicated server processes. Parses old-school, .bat-style `servers.ini` 
 
 | File | Purpose |
 |------|---------|
-| `launcher.go` | `servers.ini` parser (with `@macro` expansion), launch plan builder, argument validation. |
+| `launcher.go` | `servers.ini` parser (with `@macro` + `%arg` expansion), launch plan builder, argument validation. |
 | `manager.go` | Server manager wiring + process lifecycle: start under PTY, wait for exit, graceful and forced shutdown. |
 | `state.go` | In-memory server registry/state model, resolved port/search-path updates, and snapshot generation for operator/admin views. |
 | `ops.go` | High-level server operations (start/stop/restart/remove/launch by port or index). Resolves targets, coordinates state transitions. |

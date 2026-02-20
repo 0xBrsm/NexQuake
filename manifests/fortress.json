@@ -1,7 +1,0 @@
-[
-  {
-    "game": "fortress",
-    "common": ["https://github.com/Jason2Brownlee/TeamFortressQuakeArchive/raw/refs/heads/main/bin/tf28.zip",
-                "https://github.com/Jason2Brownlee/TeamFortressQuakeArchive/raw/refs/heads/main/bin/tf281.zip"]
-  }
-]

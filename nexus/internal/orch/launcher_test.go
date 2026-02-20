@@ -146,6 +146,121 @@ func TestLoadServerLaunchesFromINI_RespectsQuotes(t *testing.T) {
 	}
 }
 
+func TestLoadServerLaunchesFromINI_SubstitutesTemplateFromSeenFlag(t *testing.T) {
+	entries, found, err := loadServersINI(t, "nqserver -game ctf +hostname %game\n")
+	if err != nil {
+		t.Fatalf("loadServersIni() error = %v", err)
+	}
+	if !found {
+		t.Fatalf("expected found=true")
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	want := []string{"-game", "ctf", "+hostname", "ctf"}
+	if len(entries[0].Args) != len(want) {
+		t.Fatalf("expected args %v, got %v", want, entries[0].Args)
+	}
+	for i := range want {
+		if entries[0].Args[i] != want[i] {
+			t.Fatalf("expected args %v, got %v", want, entries[0].Args)
+		}
+	}
+}
+
+func TestLoadServerLaunchesFromINI_SubstitutesTemplateFromSeenPlusCommand(t *testing.T) {
+	entries, found, err := loadServersINI(t, "nqserver +hostname ctf -game %hostname\n")
+	if err != nil {
+		t.Fatalf("loadServersIni() error = %v", err)
+	}
+	if !found {
+		t.Fatalf("expected found=true")
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	want := []string{"+hostname", "ctf", "-game", "ctf"}
+	if len(entries[0].Args) != len(want) {
+		t.Fatalf("expected args %v, got %v", want, entries[0].Args)
+	}
+	for i := range want {
+		if entries[0].Args[i] != want[i] {
+			t.Fatalf("expected args %v, got %v", want, entries[0].Args)
+		}
+	}
+}
+
+func TestLoadServerLaunchesFromINI_TemplateBeforeFlagStillSubstitutes(t *testing.T) {
+	entries, found, err := loadServersINI(t, "nqserver +hostname %game -game ctf\n")
+	if err != nil {
+		t.Fatalf("loadServersIni() error = %v", err)
+	}
+	if !found {
+		t.Fatalf("expected found=true")
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	want := []string{"+hostname", "ctf", "-game", "ctf"}
+	if len(entries[0].Args) != len(want) {
+		t.Fatalf("expected args %v, got %v", want, entries[0].Args)
+	}
+	for i := range want {
+		if entries[0].Args[i] != want[i] {
+			t.Fatalf("expected args %v, got %v", want, entries[0].Args)
+		}
+	}
+}
+
+func TestLoadServerLaunchesFromINI_TemplateUsesFirstFlagMatch(t *testing.T) {
+	entries, found, err := loadServersINI(t, "nqserver -game ctf -game arena +hostname %game\n")
+	if err != nil {
+		t.Fatalf("loadServersIni() error = %v", err)
+	}
+	if !found {
+		t.Fatalf("expected found=true")
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	want := []string{"-game", "ctf", "-game", "arena", "+hostname", "ctf"}
+	if len(entries[0].Args) != len(want) {
+		t.Fatalf("expected args %v, got %v", want, entries[0].Args)
+	}
+	for i := range want {
+		if entries[0].Args[i] != want[i] {
+			t.Fatalf("expected args %v, got %v", want, entries[0].Args)
+		}
+	}
+}
+
+func TestLoadServerLaunchesFromINI_SubstitutesTemplateAfterGroupExpansion(t *testing.T) {
+	content := strings.Join([]string{
+		"@default -game ctf +hostname %game",
+		"nqserver @default",
+	}, "\n") + "\n"
+
+	entries, found, err := loadServersINI(t, content)
+	if err != nil {
+		t.Fatalf("loadServersIni() error = %v", err)
+	}
+	if !found {
+		t.Fatalf("expected found=true")
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	want := []string{"-game", "ctf", "+hostname", "ctf"}
+	if len(entries[0].Args) != len(want) {
+		t.Fatalf("expected args %v, got %v", want, entries[0].Args)
+	}
+	for i := range want {
+		if entries[0].Args[i] != want[i] {
+			t.Fatalf("expected args %v, got %v", want, entries[0].Args)
+		}
+	}
+}
+
 func TestLoadServerLaunchesFromINI_ExpandsGroups(t *testing.T) {
 	content := strings.Join([]string{
 		"; defaults",

@@ -61,10 +61,11 @@ func main() {
 		fatalf("WASM client not found: %s", cfg.clientDir)
 	}
 
-	// Default QUICKSTART is "id1"; supports CSV (e.g. "id1,ctf4").
-	// Missing manifests are silently skipped.
-	if err := assets.BootstrapGameData(runCtx, cfg.gameDir, infof); err != nil {
-		fatalf("Game data bootstrap failed: %v", err)
+	// Bootstraps servers.ini (only if missing) and seeds missing mod data based on
+	// servers.ini -game entries and CFG_DIR/game.json. `base` catalog entries are
+	// always included in the install set, and QUICKSTART defaults to `ffa`.
+	if err := assets.QuickstartGame(runCtx, cfg.gameDir, cfg.cfgDir, infof); err != nil {
+		fatalf("Quickstart failed: %v", err)
 	}
 
 	// Start dedicated servers (one per mod directory).
@@ -134,11 +135,11 @@ func main() {
 type runtimeConfig struct {
 	httpPort               string
 	gameDir                string
+	cfgDir                 string
 	cdDir                  string
 	logsDir                string
 	binDir                 string
 	clientDir              string
-	corsOrigin             string
 	vfsPrefetchConcurrency int
 	clientAutoSMenu        bool
 	clientSendArgs         []string
@@ -151,11 +152,11 @@ func loadRuntimeConfig() runtimeConfig {
 	return runtimeConfig{
 		httpPort:               getEnv("HTTP_PORT", "1337"),
 		gameDir:                gameDir,
+		cfgDir:                 getEnv("CFG_DIR", "/app/etc"),
 		cdDir:                  getEnv("CD_DIR", "/app/cd"),
 		logsDir:                getEnv("LOGS_DIR", "/app/logs"),
 		binDir:                 binDir,
-		clientDir:              getEnv("CLIENT_DIR", filepath.Join(binDir, "nqwasm")),
-		corsOrigin:             getEnv("CORS_ALLOWED_ORIGIN", ""),
+		clientDir:              getEnv("CLIENT_DIR", "/app/client"),
 		vfsPrefetchConcurrency: getEnvIntMin("CL_CONCURRENCY", 16, 0),
 		clientAutoSMenu:        getEnvBool01("CL_SMENU", false),
 		clientSendArgs:         getEnvArgs("CL_SEND_ARGS", nil),
@@ -325,12 +326,12 @@ func newMux(cfg runtimeConfig, pakCache *assets.PakIndexCache) *http.ServeMux {
 	mux.HandleFunc("GET /ws", handleWebSocket)
 
 	// Bootstrap + hash-addressed asset delivery for browser runtime.
-	mux.Handle("/start", addCORSHeaders(http.HandlerFunc(assetGateway.StartHandler()), cfg.corsOrigin))
-	mux.Handle("/nq/", addCORSHeaders(http.HandlerFunc(assetGateway.AssetHandler()), cfg.corsOrigin))
+	mux.Handle("/start", addIsolationHeaders(http.HandlerFunc(assetGateway.StartHandler())))
+	mux.Handle("/nq/", addIsolationHeaders(http.HandlerFunc(assetGateway.AssetHandler())))
 
 	// Serve client files (WASM, HTML, JS, CSS)
 	clientFS := http.FileServerFS(os.DirFS(cfg.clientDir))
-	mux.Handle("/", addCORSHeaders(contentTypeOverride(cacheControlClient(clientFS)), cfg.corsOrigin))
+	mux.Handle("/", addIsolationHeaders(contentTypeOverride(cacheControlClient(clientFS))))
 
 	return mux
 }

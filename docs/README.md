@@ -6,7 +6,7 @@ A concise directory of all documentation located within the `src/` tree.
 |----------|-------------|
 | [README.md](../README.md) | **Source Overview.** Guide to the `src` directory structure. |
 | [QUICKSTART.md](QUICKSTART.md) | **Getting Started.** Quick intro for running NexQuake with Docker. |
-| [manifests/README.md](../manifests/README.md) | **Quickstart Manifests.** How to use JSON manifests to automatically download and configure game assets. |
+| [etc/README.md](../etc/README.md) | **Quickstart Catalog.** How `game.json` and `QUICKSTART` drive automatic game-data installs. |
 | [CONFIGURATION.md](CONFIGURATION.md) | **Environment Reference.** Complete list of environment variables for Nexus and networking. |
 | [USAGE.md](USAGE.md) | **Data & Servers.** Managing game data, mods, and the `servers.ini` launch plan. |
 | [UI.md](UI.md) | **Overlay UI Guide.** How to use the in-browser shell overlay for files, cfg editing, uploads, and CD controls. |

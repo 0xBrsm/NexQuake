@@ -407,27 +407,13 @@ func cacheControlClient(h http.Handler) http.Handler {
 	})
 }
 
-// addCORSHeaders wraps a handler to add CORS headers for SharedArrayBuffer support
-func addCORSHeaders(h http.Handler, allowedOrigin string) http.Handler {
+// addIsolationHeaders wraps a handler to add browser isolation headers for SharedArrayBuffer support.
+func addIsolationHeaders(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Required headers for SharedArrayBuffer (WASM threading)
 		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 		w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
 		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
-
-		// Standard CORS headers (optional; only needed for cross-origin deployments).
-		if allowedOrigin != "" {
-			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-			w.Header().Set("Access-Control-Expose-Headers", "X-NexQuake-Ref")
-
-			// Handle preflight
-			if r.Method == "OPTIONS" {
-				w.WriteHeader(http.StatusOK)
-				return
-			}
-		}
 
 		h.ServeHTTP(w, r)
 	})

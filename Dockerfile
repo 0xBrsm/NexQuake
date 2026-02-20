@@ -48,12 +48,12 @@ RUN set -eu; \
 FROM ${WOLFI_BASE_IMAGE}
 WORKDIR /app
 
-RUN mkdir -p ./bin ./game ./logs
-COPY manifests/ ./game
+RUN mkdir -p ./bin ./client ./game ./logs ./etc
+COPY etc/ ./etc
 
 COPY --from=nexus-builder /out/nexus ./bin/nexus
 COPY --from=server-builder /out/nqserver ./bin/nqserver
-COPY --from=wasm-builder /out/nqwasm ./bin/nqwasm
+COPY --from=wasm-builder /out/nqwasm ./client
 
 EXPOSE 1337
 ENTRYPOINT ["/app/bin/nexus"]

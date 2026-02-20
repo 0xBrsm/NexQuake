@@ -16,59 +16,278 @@ import (
 	"time"
 
 	"github.com/0xBrsm/NexQuake/nexus/quake106"
+	"github.com/google/shlex"
 )
 
 type gameDataEntry struct {
-	Game   string   `json:"game"`
+	Game   string   `json:"game,omitempty"`
+	Base   string   `json:"base,omitempty"`
 	Server []string `json:"server,omitempty"`
 	Common []string `json:"common,omitempty"`
 	Client []string `json:"client,omitempty"`
 	Force  bool     `json:"force,omitempty"`
 }
 
-// BootstrapGameData installs game data from quickstart manifests.
-// logf is used for informational log messages (may be nil).
-func BootstrapGameData(ctx context.Context, gameDir string, logf func(string, ...any)) error {
+// QuickstartGame ensures GAME_DIR/servers.ini exists (created only if missing)
+// and bootstraps missing mod data based on the -game values in servers.ini using
+// CFG_DIR/game.json.
+//
+// servers.ini is treated as user-owned:
+//   - If it exists, it is never modified.
+//   - If it does not exist, it is created from CFG_DIR/servers.ini and populated
+//     with one nqserver line for each valid QUICKSTART game entry
+//     (QUICKSTART defaults to "ffa" when unset):
+//     nqserver @def -game <game>
+func QuickstartGame(ctx context.Context, gameDir, cfgDir string, logf func(string, ...any)) error {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
+	gameDir = strings.TrimSpace(gameDir)
+	cfgDir = strings.TrimSpace(cfgDir)
+	if gameDir == "" {
+		return fmt.Errorf("GAME_DIR is empty")
+	}
+	if cfgDir == "" {
+		return fmt.Errorf("CFG_DIR is empty")
+	}
 
-	entries, src, err := loadGameDataEntries(gameDir)
+	catalog, err := loadGameCatalog(cfgDir)
 	if err != nil {
 		return err
 	}
-	if len(entries) == 0 {
-		return nil
+	baseGames := baseGamesInCatalogOrder(catalog)
+
+	serversPath := filepath.Join(gameDir, "servers.ini")
+	st, err := os.Stat(serversPath)
+	switch {
+	case err == nil:
+		if st.IsDir() {
+			return fmt.Errorf("servers.ini path is a directory: %s", serversPath)
+		}
+	case errors.Is(err, os.ErrNotExist):
+		selected := selectGamesFromQuickstart(catalog, logf)
+		if err := createDefaultServersIni(gameDir, cfgDir, serversPath, selected); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("stat %s: %w", serversPath, err)
 	}
 
-	if !dirWritable(gameDir) {
-		if strings.TrimSpace(os.Getenv("QUICKSTART")) != "" {
-			logf("Game data bootstrap skipped (not writable): %s", gameDir)
-		}
-		return nil
+	games, err := listGamesInServersIni(serversPath)
+	if err != nil {
+		return err
+	}
+	for _, game := range baseGames {
+		games[game] = struct{}{}
 	}
 
-	for i, ent := range entries {
-		game := strings.TrimSpace(ent.Game)
-		if game == "" {
-			return fmt.Errorf("quickstart[%d]: missing game", i)
+	byName := make(map[string]gameDataEntry, len(catalog))
+	for _, ent := range catalog {
+		name := catalogEntryName(ent)
+		if name == "" {
+			continue
+		}
+		if _, ok := byName[name]; ok {
+			continue
+		}
+		byName[name] = ent
+	}
+
+	for game := range games {
+		ent, ok := byName[game]
+		if !ok {
+			continue
 		}
 
-		if len(ent.Server) == 0 && len(ent.Common) == 0 && len(ent.Client) == 0 {
-			return fmt.Errorf("quickstart[%d]: no layers for %s (config=%s)", i, game, src)
+		if err := os.MkdirAll(filepath.Join(gameDir, game), 0o755); err != nil {
+			return fmt.Errorf("mkdir mod dir %q: %w", game, err)
 		}
 
 		if err := installLayer(ctx, gameDir, game, "common", ent.Common, ent.Force); err != nil {
-			return fmt.Errorf("quickstart[%d]: %w (config=%s)", i, err, src)
+			return fmt.Errorf("quickstart: %w", err)
 		}
 		if err := installLayer(ctx, gameDir, game, "server", ent.Server, ent.Force); err != nil {
-			return fmt.Errorf("quickstart[%d]: %w (config=%s)", i, err, src)
+			return fmt.Errorf("quickstart: %w", err)
 		}
 		if err := installLayer(ctx, gameDir, game, "client", ent.Client, ent.Force); err != nil {
-			return fmt.Errorf("quickstart[%d]: %w (config=%s)", i, err, src)
+			return fmt.Errorf("quickstart: %w", err)
 		}
 	}
+
 	return nil
+}
+
+func createDefaultServersIni(gameDir, cfgDir, serversPath string, selected []string) error {
+	if err := os.MkdirAll(gameDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir GAME_DIR: %w", err)
+	}
+
+	basePath := filepath.Join(cfgDir, "servers.ini")
+	base, err := os.ReadFile(basePath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", basePath, err)
+	}
+
+	var b strings.Builder
+	b.Write(base)
+	if len(base) != 0 && base[len(base)-1] != '\n' {
+		b.WriteByte('\n')
+	}
+	for _, game := range selected {
+		b.WriteString("nqserver @def -game ")
+		b.WriteString(game)
+		b.WriteByte('\n')
+	}
+	if err := os.WriteFile(serversPath, []byte(b.String()), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", serversPath, err)
+	}
+	return nil
+}
+
+func listGamesInServersIni(path string) (map[string]struct{}, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+
+	out := make(map[string]struct{})
+	lines := strings.Split(string(b), "\n")
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		fields, err := shlex.Split(line)
+		if err != nil || len(fields) == 0 {
+			continue
+		}
+		if strings.HasPrefix(fields[0], "@") {
+			// Macro definition lines are launch templates, not server launches.
+			continue
+		}
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] == "-game" {
+				game := strings.TrimSpace(fields[i+1])
+				if game != "" {
+					out[game] = struct{}{}
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+func loadGameCatalog(cfgDir string) ([]gameDataEntry, error) {
+	path := filepath.Join(cfgDir, "game.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	var entries []gameDataEntry
+	if err := json.Unmarshal(b, &entries); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	for i := range entries {
+		for j := range entries[i].Common {
+			entries[i].Common[j] = normalizeSource(entries[i].Common[j], cfgDir)
+		}
+		for j := range entries[i].Server {
+			entries[i].Server[j] = normalizeSource(entries[i].Server[j], cfgDir)
+		}
+		for j := range entries[i].Client {
+			entries[i].Client[j] = normalizeSource(entries[i].Client[j], cfgDir)
+		}
+	}
+	return entries, nil
+}
+
+func normalizeSource(source, cfgDir string) string {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return ""
+	}
+	if strings.Contains(source, "://") {
+		return source
+	}
+	return "file://" + filepath.Clean(filepath.Join(cfgDir, source))
+}
+
+func selectGamesFromQuickstart(entries []gameDataEntry, logf func(string, ...any)) []string {
+	byName := make(map[string]struct{}, len(entries))
+	order := make([]string, 0, len(entries))
+	for _, ent := range entries {
+		name := strings.TrimSpace(ent.Game)
+		if name == "" {
+			continue
+		}
+		if _, ok := byName[name]; ok {
+			continue
+		}
+		byName[name] = struct{}{}
+		order = append(order, name)
+	}
+
+	selected := make([]string, 0, len(order))
+	seen := make(map[string]struct{}, len(order))
+
+	raw := strings.TrimSpace(os.Getenv("QUICKSTART"))
+	if raw == "" {
+		raw = "ffa"
+	}
+	if strings.EqualFold(raw, "all") {
+		for _, name := range order {
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			selected = append(selected, name)
+		}
+		return selected
+	}
+
+	for _, part := range strings.Split(raw, ",") {
+		name := strings.TrimSpace(part)
+		if name == "" {
+			continue
+		}
+		if _, ok := byName[name]; !ok {
+			logf("quickstart: skipped QUICKSTART entry %q", name)
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		selected = append(selected, name)
+	}
+	return selected
+}
+
+func catalogEntryName(ent gameDataEntry) string {
+	if base := strings.TrimSpace(ent.Base); base != "" {
+		return base
+	}
+	return strings.TrimSpace(ent.Game)
+}
+
+func baseGamesInCatalogOrder(entries []gameDataEntry) []string {
+	var out []string
+	seen := make(map[string]struct{}, len(entries))
+	for _, ent := range entries {
+		base := strings.TrimSpace(ent.Base)
+		if base == "" {
+			continue
+		}
+		if _, ok := seen[base]; ok {
+			continue
+		}
+		seen[base] = struct{}{}
+		out = append(out, base)
+	}
+	return out
 }
 
 func installLayer(ctx context.Context, gameDir, game, layer string, sources []string, force bool) error {
@@ -76,7 +295,7 @@ func installLayer(ctx context.Context, gameDir, game, layer string, sources []st
 		return nil
 	}
 	destRoot := filepath.Join(gameDir, game, layer)
-	if dirHasEntries(destRoot) && !force {
+	if !force && dirHasEntries(destRoot) {
 		return nil
 	}
 	for j, urlStr := range sources {
@@ -92,6 +311,10 @@ func installLayer(ctx context.Context, gameDir, game, layer string, sources []st
 }
 
 func installFromSource(ctx context.Context, urlStr, destRoot string) error {
+	if err := os.MkdirAll(destRoot, 0o755); err != nil {
+		return err
+	}
+
 	tmpPath, cleanup, err := downloadToTemp(ctx, urlStr)
 	if err != nil {
 		return err
@@ -100,13 +323,15 @@ func installFromSource(ctx context.Context, urlStr, destRoot string) error {
 
 	zr, err := zip.OpenReader(tmpPath)
 	if err != nil {
-		return fmt.Errorf("open zip: %w", err)
+		destPath := filepath.Join(destRoot, filepath.Base(strings.TrimSpace(urlStr)))
+		src, err := os.Open(tmpPath)
+		if err != nil {
+			return err
+		}
+		defer src.Close()
+		return copyToFile(destPath, src)
 	}
 	defer zr.Close()
-
-	if err := os.MkdirAll(destRoot, 0o755); err != nil {
-		return err
-	}
 
 	sum, err := sha256FileHex(tmpPath)
 	if err != nil {
@@ -115,18 +340,81 @@ func installFromSource(ctx context.Context, urlStr, destRoot string) error {
 	if sum == quake106.ZipSHA256 {
 		return quake106.ExtractPak0(&zr.Reader, destRoot)
 	}
-
 	return extractZipGeneric(&zr.Reader, destRoot)
+}
+
+// --- Helpers ---
+
+func copyToFile(path string, r io.Reader) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+
+	_, err = io.Copy(f, r)
+	closeErr := f.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
+}
+
+func downloadToTemp(ctx context.Context, urlStr string) (string, func(), error) {
+	tmp, err := os.CreateTemp("", "nexquake-*.tmp")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { _ = os.Remove(tmp.Name()) }
+	fail := func(err error) (string, func(), error) {
+		_ = tmp.Close()
+		cleanup()
+		return "", nil, err
+	}
+
+	var src io.ReadCloser
+	if strings.HasPrefix(urlStr, "file://") {
+		src, err = os.Open(strings.TrimPrefix(urlStr, "file://"))
+		if err != nil {
+			return fail(err)
+		}
+	} else {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
+		if err != nil {
+			return fail(err)
+		}
+		req.Header.Set("User-Agent", "nexquake-nexus")
+
+		resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+		if err != nil {
+			return fail(err)
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			resp.Body.Close()
+			return fail(fmt.Errorf("status %s", resp.Status))
+		}
+		src = resp.Body
+	}
+	defer src.Close()
+
+	if _, err := io.Copy(tmp, src); err != nil {
+		return fail(err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fail(err)
+	}
+	return tmp.Name(), cleanup, nil
 }
 
 func extractZipGeneric(zr *zip.Reader, destRoot string) error {
 	stripPrefix := zipSingleRootPrefix(zr)
 
 	for _, zf := range zr.File {
-		name := strings.ReplaceAll(zf.Name, `\`, `/`)
-		name = strings.TrimLeft(name, "/")
-
-		if name == "" || strings.HasSuffix(name, "/") || zf.FileInfo().IsDir() {
+		name := normalizedZipEntryName(zf)
+		if name == "" {
 			continue
 		}
 		if stripPrefix != "" && strings.HasPrefix(name, stripPrefix) {
@@ -141,17 +429,8 @@ func extractZipGeneric(zr *zip.Reader, destRoot string) error {
 			return err
 		}
 
-		rc, openErr := zf.Open()
-		if openErr != nil {
-			return openErr
-		}
-		copyErr := copyToFile(destPath, rc)
-		closeErr := rc.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		if closeErr != nil {
-			return closeErr
+		if err := copyZipEntry(zf, destPath); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -162,9 +441,8 @@ func zipSingleRootPrefix(zr *zip.Reader) string {
 	sawFile := false
 
 	for _, zf := range zr.File {
-		name := strings.ReplaceAll(zf.Name, `\`, `/`)
-		name = strings.TrimLeft(name, "/")
-		if name == "" || strings.HasSuffix(name, "/") || zf.FileInfo().IsDir() {
+		name := normalizedZipEntryName(zf)
+		if name == "" {
 			continue
 		}
 
@@ -192,141 +470,21 @@ func zipSingleRootPrefix(zr *zip.Reader) string {
 	return root + "/"
 }
 
-// --- Helpers ---
-
-func copyToFile(path string, r io.Reader) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+func normalizedZipEntryName(zf *zip.File) string {
+	name := strings.TrimLeft(strings.ReplaceAll(zf.Name, `\`, `/`), "/")
+	if name == "" || strings.HasSuffix(name, "/") || zf.FileInfo().IsDir() {
+		return ""
 	}
-	f, err := os.Create(path)
+	return name
+}
+
+func copyZipEntry(zf *zip.File, destPath string) error {
+	rc, err := zf.Open()
 	if err != nil {
 		return err
 	}
-	_, err = io.Copy(f, r)
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	return err
-}
-
-func loadGameDataEntries(gameDir string) ([]gameDataEntry, string, error) {
-	raw := strings.TrimSpace(os.Getenv("QUICKSTART"))
-	if raw == "" {
-		raw = "id1"
-	}
-
-	names := splitCSV(raw)
-
-	var allEntries []gameDataEntry
-	var sources []string
-
-	for _, name := range names {
-		if strings.Contains(name, "..") || strings.ContainsAny(name, `/\`) {
-			return nil, "env:QUICKSTART", fmt.Errorf("invalid QUICKSTART name: %q", name)
-		}
-
-		path := filepath.Join(gameDir, name+".json")
-		b, err := os.ReadFile(path)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				// For single-value QUICKSTART, missing manifest is a silent no-op
-				// (preserves backward compatibility). For multi-value, skip silently
-				// so partial manifests still work.
-				if len(names) == 1 {
-					return nil, path, nil
-				}
-				continue
-			}
-			return nil, path, fmt.Errorf("read config %q: %w", name, err)
-		}
-		var entries []gameDataEntry
-		if err := json.Unmarshal(b, &entries); err != nil {
-			return nil, path, fmt.Errorf("parse config %q: %w", name, err)
-		}
-		allEntries = append(allEntries, entries...)
-		sources = append(sources, path)
-	}
-
-	src := strings.Join(sources, ", ")
-	return allEntries, src, nil
-}
-
-// splitCSV splits a comma-separated string into trimmed, non-empty parts.
-func splitCSV(s string) []string {
-	var out []string
-	for _, part := range strings.Split(s, ",") {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			out = append(out, part)
-		}
-	}
-	return out
-}
-
-func downloadToTemp(ctx context.Context, urlStr string) (string, func(), error) {
-	tmp, err := os.CreateTemp("", "nexquake-*.tmp")
-	if err != nil {
-		return "", nil, err
-	}
-	cleanup := func() { _ = os.Remove(tmp.Name()) }
-
-	if strings.HasPrefix(urlStr, "file://") {
-		src, err := os.Open(strings.TrimPrefix(urlStr, "file://"))
-		if err != nil {
-			cleanup()
-			return "", nil, err
-		}
-		defer src.Close()
-		if _, err := io.Copy(tmp, src); err != nil {
-			cleanup()
-			return "", nil, err
-		}
-	} else {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
-		if err != nil {
-			cleanup()
-			return "", nil, err
-		}
-		req.Header.Set("User-Agent", "nexquake-nexus")
-
-		resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
-		if err != nil {
-			cleanup()
-			return "", nil, err
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			cleanup()
-			return "", nil, fmt.Errorf("status %s", resp.Status)
-		}
-		if _, err := io.Copy(tmp, resp.Body); err != nil {
-			cleanup()
-			return "", nil, err
-		}
-	}
-
-	if err := tmp.Close(); err != nil {
-		cleanup()
-		return "", nil, err
-	}
-	return tmp.Name(), cleanup, nil
-}
-
-func dirWritable(dir string) bool {
-	if dir == "" {
-		return false
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return false
-	}
-	f, err := os.CreateTemp(dir, ".nq-test-*")
-	if err != nil {
-		return false
-	}
-	f.Close()
-	os.Remove(f.Name())
-	return true
+	defer rc.Close()
+	return copyToFile(destPath, rc)
 }
 
 func dirHasEntries(dir string) bool {
@@ -335,6 +493,7 @@ func dirHasEntries(dir string) bool {
 		return false
 	}
 	defer f.Close()
+
 	_, err = f.Readdirnames(1)
 	return err == nil
 }

@@ -1,0 +1,34 @@
+[
+  {
+    "game": "arena",
+    "common": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/farena12.zip"],
+    "server": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/fasrv12.zip"]
+  },
+  {
+    "game": "ctf",
+    "common": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/3wctfc.zip"],
+    "server": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/3wave421d.zip"]
+  },
+  {
+    "game": "og-ctf",
+    "server": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/3wave251.zip"]
+  },
+  {
+    "game": "fortress",
+    "common": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/tf28.zip"]
+  },
+  {
+    "game": "ffa",
+    "server": ["server/config.cfg", "server/ffa.txt"]
+  },
+  {
+    "game": "fvf",
+    "common": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/fvf42R.zip"]
+  },
+  {
+    "base": "id1",
+    "common": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/quake106.zip",
+                "https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/lq-pak1.zip"],
+    "client": ["client/config.cfg"]
+  }
+]

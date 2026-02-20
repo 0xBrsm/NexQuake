@@ -17,6 +17,6 @@ The LZH decoding logic is derived from [koron-go/lha](https://github.com/koron-g
 
 ## Shareware Sources
 
-- https://github.com/0xBrsm/QuakeMods/blob/main/quake106.zip
+- https://github.com/0xBrsm/QuakeAssets/blob/main/q1/quake106.zip
 - https://github.com/Jason2Brownlee/QuakeOfficialArchive/blob/main/bin/quake106.zip
 - https://www.gamers.org/pub/idgames/idstuff/quake/quake106.zip

@@ -23,9 +23,9 @@ The result is the original Quake multiplayer experience (software rendered, orig
 
 **Nexus** is a Go orchestration server that serves client files, serves game data, manages servers, and tunnels multiplayer traffic. Each WebSocket frame carries a small routing header plus a raw NetQuake protocol 15 datagram. Nexus acts as a transparent relay with multi-server routing; it never parses game packets.
 
-**The Dedicated Server** is any original NetQuake engine running `-dedicated`. Stock protocol, stock gameplay. Nexus spawns and manages server instances with runtime flags and server cfgs just like the days of old.
+**The Dedicated Server** is any original NetQuake engine running `-dedicated`. Stock protocol, stock gameplay. Nexus spawns and manages server instances with runtime flags and server cfgs just like the days of old. A dedicated server with [a few tweaks](./server/README.md) is included.
 
-Players use the standard Quake multiplayer connection experience; either through the Multiplayer menu or from the console (`~`) type `slist` to browse servers and `connect <host>` to join.
+Players use the standard Quake multiplayer connection experience; use the Multiplayer menu or type `slist` from the console (`~`) to list servers and `connect <host>` to join.
 
 ### Features
 
@@ -33,11 +33,11 @@ Players use the standard Quake multiplayer connection experience; either through
 - **Real multiplayer**: Dedicated NetQuake servers centrally managed through Nexus.
 - **Mod support**: Game directory switching at runtime without page reload.
 - **Software renderer**: GPU-accelerated palette conversion of the original 8-bit framebuffer.
-- **CD audio emulation**: Load up the original Quake soundtrack in .ogg or .mp3 format.
+- **CD audio emulation**: Stream the original Quake soundtrack in .ogg or .mp3 format.
 - **Persistent saves**: Config and saves survive browser sessions via IndexedDB.
 - **Self-contained**: Single Docker image, single port.
 - **Easy to secure**: Supports OIDC via JWT tokens or just run it behind a reverse proxy.
-- **Auto-bootstrap**: Shareware/freeware game data downloads automatically on first run.
+- **Auto-quickstart**: Shareware/freeware game data downloads automatically on first run.
 
 ### Documentation
 
@@ -45,7 +45,7 @@ Players use the standard Quake multiplayer connection experience; either through
 - **[Quick Start](docs/QUICKSTART.md)**: Get up and running quickly with Docker.
 - **[Configuration](docs/CONFIGURATION.md)**: Environment variables and networking setup.
 - **[Usage Guide](docs/USAGE.md)**: Managing game data, mods, and servers.
-- **[UI Overlay Guide](docs/UI.md)**: Using the in-browser shell overlay for files, cfg editing, uploads, and CD controls.
+- **[UI Overlay Guide](docs/UI.md)**: Using the in-browser menu for files, cfg editing, uploads, and CD controls.
 - **[RCON Commands](docs/RCON.md)**: Server administration reference.
 - **[Architecture](docs/ARCHITECTURE.md)**: Technical deep dive into system design.
 - **[Bug Fixes](bugfix/README.md)**: Security and stability patches for the upstream WinQuake source.
@@ -57,7 +57,7 @@ bugfix/           Patches for critical bugs in the Quake source
 build/            Build system and upstream checkout scripts
 client/           WASM client platform layer and WebSocket networking
 docs/             Detailed documentation and guides
-manifests/        Game data bootstrap configs
+etc/              Quickstart catalog (`game.json`) and default runtime configs
 nexus/            Go relay, file serving, server orchestration
 server/           Dedicated server Makefile and patches
 ATTRIBUTIONS.md   Source provenance and GPL lineage

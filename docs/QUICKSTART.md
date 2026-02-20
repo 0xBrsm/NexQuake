@@ -12,17 +12,17 @@ docker run -p 1337:1337 ghcr.io/0xBrsm/nexquake
 
 Open [http://localhost:1337](http://localhost:1337) in your browser.
 
-That's it. Nexus bootstraps game data automatically on first boot using the default manifest, which includes the Quake 1.06 shareware and an open-source [LibreQuake](https://github.com/lavenderdotpet/LibreQuake) `pak1.pak`. This gives you a registered engine with Episode 1 single-player and full multiplayer mod support.
+That's it. Nexus loads game data automatically on first run from `CFG_DIR/game.json`. Entries marked with `base` are always included; by default this includes `id1` (Quake 1.06 shareware plus an open-source [LibreQuake](https://github.com/lavenderdotpet/LibreQuake) `pak1.pak`) so the engine can boot with Episode 1 and full multiplayer mod support. If `QUICKSTART` is unset, Nexus defaults to `ffa` for a vanilla deathmatch server.
 
-## Bootstrapping with More Mods
+## Quickstart with More Mods
 
-Set the `QUICKSTART` variable to pull additional mods at startup:
+Set `QUICKSTART` to choose different game entries at startup (base entries are still included automatically in the quickstart install set):
 
 ```bash
-docker run -p 1337:1337 -e QUICKSTART=id1,ctf,arena ghcr.io/0xBrsm/nexquake
+docker run -p 1337:1337 -e QUICKSTART=ctf,arena ghcr.io/0xBrsm/nexquake
 ```
 
-See the [manifests documentation](../manifests/README.md) for the full list of available packages and how to create your own.
+See the [catalog documentation](../etc/README.md) for available entries and schema details.
 
 ## Using Your Own Data
 

@@ -87,7 +87,7 @@ AudioContext auto-resume on first user gesture handles browser autoplay policies
 
 Quake's CD audio system originally played music tracks from a physical CD-ROM drive. NexQuake replaces this with digital audio streaming from a server-side directory (`CD_DIR`).
 
-Nexus scans `CD_DIR` for `.ogg` and `.mp3` files and includes the resulting track index in the `/start` bootstrap payload. CD audio bytes are then fetched through hash-addressed `/nq/<hash>` URLs (backed internally by the CD stream resolver). Track numbers are extracted from filenames (e.g., `02-intro.ogg` is track 2).
+Nexus scans `CD_DIR` for `.ogg` and `.mp3` files and includes the resulting track index in the `/start` quickstart payload. CD audio bytes are then fetched through hash-addressed `/nq/<hash>` URLs (backed internally by the CD stream resolver). Track numbers are extracted from filenames (e.g., `02-intro.ogg` is track 2).
 
 `cd_wasm.c` replaces the original `cd_audio.c` with Emscripten `EM_JS` bindings that drive an HTML5 `<audio>` element. The JavaScript layer resolves tracks through a two-tier system: first checking user-uploaded files in the Emscripten virtual filesystem, then falling back to the server manifest. Playback respects the `bgmvolume` cvar and handles browser autoplay policies with resume-on-user-gesture logic.
 
@@ -196,9 +196,9 @@ The browser client never downloads full PAK files. Nexus indexes PAK headers on 
 - Files are served with correct HTTP caching headers
 - Works with any PAK file (shareware, full, mods)
 
-### Quickstart Bootstrap
+### Quickstart
 
-On first run, if `${GAME_DIR}` is writable, Nexus downloads game data from a manifest file (e.g., `id1.json`). The default manifest bootstraps Quake 1.06 shareware and a NexQuake version of LibreQuake's `pak1.pak`, which is enough to boot the engine and play single-player. Users can provide their own PAK files for the full game.
+On first run, Nexus loads the quickstart catalog from `${CFG_DIR}/game.json`. If `${GAME_DIR}/servers.ini` is missing, Nexus creates it from `${CFG_DIR}/servers.ini` and adds valid `QUICKSTART` game entries (`ffa` by default). Nexus then builds the effective install set from `servers.ini -game` values plus catalog entries marked with `base` (for example `id1`) and installs missing layer data for each selected entry (`common`, `client`, `server`). The built-in `id1` base entry installs Quake 1.06 shareware plus a NexQuake version of LibreQuake's `pak1.pak`, enough to boot the engine and play single-player. Users can still provide their own PAK files for full retail assets.
 
 Shareware extraction is handled by the [`quake106` package](../nexus/quake106/README.md), which extracts `pak0.pak` directly from the original id Software shareware distribution with SHA256 verification at every stage.
 
