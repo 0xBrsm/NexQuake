@@ -43,7 +43,8 @@ Manages dedicated server processes. Parses old-school, .bat-style `servers.ini` 
 | File | Purpose |
 |------|---------|
 | `launcher.go` | `servers.ini` parser (with `@macro` expansion), launch plan builder, argument validation. |
-| `manager.go` | Server process lifecycle: start under PTY, track by slot/port, wait for exit, graceful and forced shutdown. |
+| `manager.go` | Server manager wiring + process lifecycle: start under PTY, wait for exit, graceful and forced shutdown. |
+| `state.go` | In-memory server registry/state model, resolved port/search-path updates, and snapshot generation for operator/admin views. |
 | `ops.go` | High-level server operations (start/stop/restart/remove/launch by port or index). Resolves targets, coordinates state transitions. |
 | `console.go` | PTY-based server console I/O. Captures output lines, detects listen port from console, supports filtered reads for rcon command capture. |
 | `rcon.go` | Server command execution: writes a command to the PTY, captures output with idle/max timeouts, formats the reply. |
@@ -57,7 +58,8 @@ Authenticates admin sessions and handles rcon commands dispatched from the WebSo
 |------|---------|
 | `auth.go` | Authentication. OIDC JWT verification (`AUTH_ISSUER`, `AUTH_AUDIENCE`, `AUTH_JWT_HEADER`, matcher list `AUTH_ADMIN_ID`) for connection-level admin identity, plus optional `AUTH_RCON_PASSWORD` for in-game shared-secret auth. |
 | `rcon.go` | Admin frame handler. Parses the rcon payload (password, optional target port, command), authorizes the frame, and dispatches to either a Nexus-level command or a server-level command. |
-| `cmds.go` | Nexus-level admin command registry and execution: `help`, `tail`, `slist`, `sessions`, `start`, `stop`, `restart`, `remove`, `launch`, `ban`. |
+| `cmds.go` | Nexus-level command dispatch and non-session admin helpers (`help`, `tail`, `slist`, `start`, `stop`, `restart`, `remove`, `launch`). |
+| `sessions.go` | Session-oriented admin commands and formatting/parsing helpers (`session list`, `session info`, `session ban`, status slot/address matching for targeted kick). |
 
 ## Building
 

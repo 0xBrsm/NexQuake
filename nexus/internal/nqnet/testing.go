@@ -36,6 +36,7 @@ func NewTestRouterWith(isAdmin bool, alloc *IPAllocator, sessions *SessionRegist
 		clientIP:  clientIP,
 		sourceKey: sourceKey,
 		sourceIP:  sourceIP,
+		userID:    "",
 		ctx:       ctx,
 		cancel:    cancel,
 		alloc:     alloc,

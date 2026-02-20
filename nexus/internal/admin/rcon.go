@@ -14,7 +14,7 @@ const defaultServerTailLines = 10
 
 // HandleAdminFrame processes an incoming admin (port 0) frame from a WebSocket client.
 func HandleAdminFrame(r *nqnet.Router, payload []byte, auth *Auth, env *Env) {
-	HandleAdminFrameWithPromotionHook(r, payload, auth, env, nil)
+	HandleAdminFrameWithIdentityAndPromotionHook(r, payload, auth, env, "", nil)
 }
 
 // HandleAdminFrameWithPromotionHook is HandleAdminFrame plus an optional
@@ -24,6 +24,19 @@ func HandleAdminFrameWithPromotionHook(
 	payload []byte,
 	auth *Auth,
 	env *Env,
+	onPromoted func(*nqnet.Router),
+) {
+	HandleAdminFrameWithIdentityAndPromotionHook(r, payload, auth, env, "", onPromoted)
+}
+
+// HandleAdminFrameWithIdentityAndPromotionHook is HandleAdminFrameWithPromotionHook
+// plus an explicit connection identity label used for command audit echoes.
+func HandleAdminFrameWithIdentityAndPromotionHook(
+	r *nqnet.Router,
+	payload []byte,
+	auth *Auth,
+	env *Env,
+	identity string,
 	onPromoted func(*nqnet.Router),
 ) {
 	pw, targetPort, args := splitAdminPayload(payload)
@@ -59,12 +72,34 @@ func HandleAdminFrameWithPromotionHook(
 		r.SendAdminReply(reply)
 		return
 	}
-	reply, err := env.ExecServerCmd(targetPort, args)
+	actorID := resolveAdminActorID(identity, r)
+	reply, err := env.ExecServerCmd(targetPort, args, actorID)
 	if err != nil {
 		r.SendAdminReply(fmt.Sprintf("error: %v\n", err))
 		return
 	}
 	r.SendAdminReply(reply)
+}
+
+func resolveAdminActorID(identity string, r *nqnet.Router) string {
+	identity = strings.TrimSpace(identity)
+	if identity != "" && !strings.EqualFold(identity, "anonymous") {
+		return identity
+	}
+	if r != nil {
+		source := strings.TrimSpace(r.SourceIP())
+		if source != "" {
+			return source
+		}
+		virtualIP := strings.TrimSpace(r.VirtualClientIP())
+		if virtualIP != "" {
+			return virtualIP
+		}
+	}
+	if identity != "" {
+		return identity
+	}
+	return "admin"
 }
 
 // splitAdminPayload parses the binary admin frame into password, target port, and args.

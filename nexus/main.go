@@ -140,6 +140,9 @@ type runtimeConfig struct {
 	clientDir              string
 	corsOrigin             string
 	vfsPrefetchConcurrency int
+	clientAutoSMenu        bool
+	clientSendArgs         []string
+	clientURLArgs          bool
 }
 
 func loadRuntimeConfig() runtimeConfig {
@@ -153,7 +156,10 @@ func loadRuntimeConfig() runtimeConfig {
 		binDir:                 binDir,
 		clientDir:              getEnv("CLIENT_DIR", filepath.Join(binDir, "nqwasm")),
 		corsOrigin:             getEnv("CORS_ALLOWED_ORIGIN", ""),
-		vfsPrefetchConcurrency: getEnvIntMin("CL_CONCURRENCY", 16, 1),
+		vfsPrefetchConcurrency: getEnvIntMin("CL_CONCURRENCY", 16, 0),
+		clientAutoSMenu:        getEnvBool01("CL_SMENU", false),
+		clientSendArgs:         getEnvArgs("CL_SEND_ARGS", nil),
+		clientURLArgs:          getEnvBool01("CL_URL_ARGS", false),
 	}
 }
 
@@ -268,7 +274,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			return listPayload
 		},
 		HandleAdminFrame: func(router *nqnet.Router, payload []byte) {
-			admin.HandleAdminFrameWithPromotionHook(router, payload, globalAuth, globalAdminEnv, func(r *nqnet.Router) {
+			admin.HandleAdminFrameWithIdentityAndPromotionHook(router, payload, globalAuth, globalAdminEnv, userIdentity, func(r *nqnet.Router) {
 				source := strings.TrimSpace(r.SourceIP())
 				if source == "" {
 					source = "unknown"
@@ -278,7 +284,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	router, err := nqnet.NewRouter(conn, sourceKey, sourceIP, isAdmin, globalIPAllocator, globalSessionRegistry, dispatch, warnf, debugf)
+	router, err := nqnet.NewRouter(conn, sourceKey, sourceIP, userIdentity, isAdmin, globalIPAllocator, globalSessionRegistry, dispatch, warnf, debugf)
 	if err != nil {
 		errorf("Failed to create router: %v", err)
 		_ = conn.Close()
@@ -297,7 +303,15 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 func newMux(cfg runtimeConfig, pakCache *assets.PakIndexCache) *http.ServeMux {
 	mux := http.NewServeMux()
-	assetGateway := assets.NewHashedAssetGateway(cfg.gameDir, cfg.cdDir, pakCache, cfg.vfsPrefetchConcurrency)
+	assetGateway := assets.NewHashedAssetGateway(
+		cfg.gameDir,
+		cfg.cdDir,
+		pakCache,
+		cfg.vfsPrefetchConcurrency,
+		cfg.clientAutoSMenu,
+		cfg.clientSendArgs,
+		cfg.clientURLArgs,
+	)
 
 	// Health check endpoint (Go 1.22+ method-based routing)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -323,16 +337,19 @@ func newMux(cfg runtimeConfig, pakCache *assets.PakIndexCache) *http.ServeMux {
 
 func buildAdminEnv() *admin.Env {
 	return &admin.Env{
-		ServerSnapshots:  globalServerManager.Snapshots,
-		StartServer:      globalServerManager.StartServer,
-		StopServer:       globalServerManager.StopServer,
-		RestartServer:    globalServerManager.RestartServer,
-		RemoveServer:     globalServerManager.RemoveServer,
-		LaunchServer:     globalServerManager.LaunchServer,
-		ExecServerCmd:    globalServerManager.ExecServerCommand,
-		TailNexusLog:     tailNexusLogLines,
-		SessionSnapshots: globalSessionRegistry.SnapshotAll,
-		SnapshotByVIP:    globalSessionRegistry.SnapshotByVirtualIP,
-		ReserveAndBlock:  globalIPAllocator.ReserveAndBlock,
+		ServerSnapshots:   globalServerManager.Snapshots,
+		StartServer:       globalServerManager.StartServer,
+		StartServersAll:   globalServerManager.StartServersAll,
+		StopServer:        globalServerManager.StopServer,
+		StopServersAll:    globalServerManager.StopServersAll,
+		RestartServer:     globalServerManager.RestartServer,
+		RestartServersAll: globalServerManager.RestartServersAll,
+		RemoveServer:      globalServerManager.RemoveServer,
+		LaunchServer:      globalServerManager.LaunchServer,
+		ExecServerCmd:     globalServerManager.ExecServerCmd,
+		TailNexusLog:      tailNexusLogLines,
+		SessionSnapshots:  globalSessionRegistry.SnapshotAll,
+		SnapshotByVIP:     globalSessionRegistry.SnapshotByVirtualIP,
+		ReserveAndBlock:   globalIPAllocator.ReserveAndBlock,
 	}
 }

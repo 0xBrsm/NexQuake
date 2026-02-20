@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/google/shlex"
 )
 
 // ---- Logging ----
@@ -325,6 +327,45 @@ func getEnvIntMin(key string, defaultValue, minValue int) int {
 	return value
 }
 
+func getEnvBool01(key string, defaultValue bool) bool {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return defaultValue
+	}
+	switch raw {
+	case "1":
+		return true
+	case "0":
+		return false
+	default:
+		warnf("Invalid %s=%q (expected 0|1); using default (%t)", key, raw, defaultValue)
+		return defaultValue
+	}
+}
+
+func getEnvArgs(key string, defaultValue []string) []string {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return append([]string(nil), defaultValue...)
+	}
+
+	parsed, err := shlex.Split(raw)
+	if err != nil {
+		warnf("Invalid %s=%q (expected shell-style args); using default", key, raw)
+		return append([]string(nil), defaultValue...)
+	}
+
+	out := make([]string, 0, len(parsed))
+	for _, value := range parsed {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
+}
+
 func fileExists(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && !st.IsDir()
@@ -379,7 +420,7 @@ func addCORSHeaders(h http.Handler, allowedOrigin string) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-			w.Header().Set("Access-Control-Expose-Headers", "X-NQ-VFS-Prefetch-Concurrency, X-NexQuake-Ref")
+			w.Header().Set("Access-Control-Expose-Headers", "X-NexQuake-Ref")
 
 			// Handle preflight
 			if r.Method == "OPTIONS" {

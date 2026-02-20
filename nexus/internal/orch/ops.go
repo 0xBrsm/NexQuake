@@ -247,6 +247,30 @@ func (m *ServerManager) StartServer(target int) error {
 	return m.startRecord(rec)
 }
 
+func (m *ServerManager) runServersAll(runOne func(target int) error, ignoreErr func(error) bool) error {
+	servers := m.Snapshots()
+	var errs []error
+	for i := range servers {
+		target := i + 1
+		err := runOne(target)
+		if err == nil {
+			continue
+		}
+		if ignoreErr != nil && ignoreErr(err) {
+			continue
+		}
+		errs = append(errs, fmt.Errorf("target %d: %w", target, err))
+	}
+	return errors.Join(errs...)
+}
+
+func (m *ServerManager) StartServersAll() error {
+	return m.runServersAll(
+		m.StartServer,
+		func(err error) bool { return errors.Is(err, ErrAlreadyRunning) },
+	)
+}
+
 func (m *ServerManager) StopServer(ctx context.Context, target int, killAfter time.Duration) error {
 	if target <= 0 {
 		return fmt.Errorf("invalid target %d", target)
@@ -272,6 +296,13 @@ func (m *ServerManager) StopServer(ctx context.Context, target int, killAfter ti
 	}
 
 	return m.stopServer(ctx, rec, s, killAfter, true)
+}
+
+func (m *ServerManager) StopServersAll(ctx context.Context, killAfter time.Duration) error {
+	return m.runServersAll(
+		func(target int) error { return m.StopServer(ctx, target, killAfter) },
+		func(err error) bool { return errors.Is(err, ErrAlreadyStopped) },
+	)
 }
 
 func (m *ServerManager) RestartServer(ctx context.Context, target int, killAfter time.Duration) error {
@@ -302,6 +333,13 @@ func (m *ServerManager) RestartServer(ctx context.Context, target int, killAfter
 	}
 
 	return m.StartServer(target)
+}
+
+func (m *ServerManager) RestartServersAll(ctx context.Context, killAfter time.Duration) error {
+	return m.runServersAll(
+		func(target int) error { return m.RestartServer(ctx, target, killAfter) },
+		nil,
+	)
 }
 
 func (m *ServerManager) stopServer(ctx context.Context, rec *serverRecord, s *managedServer, killAfter time.Duration, sendSignal bool) error {

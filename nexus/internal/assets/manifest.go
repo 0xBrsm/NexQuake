@@ -19,14 +19,23 @@ import (
 )
 
 const headerNexQuakeRef = "X-NexQuake-Ref"
+const defaultGatewaySessionTTL = 37 * time.Minute
 
 type startManifestEntry struct {
 	Path string `json:"path"`
 }
 
+type startClientConfig struct {
+	PrefetchConcurrency int      `json:"prefetchConcurrency"`
+	SMenuOnFirstLoad    bool     `json:"smenuOnFirstLoad"`
+	SendArgs            []string `json:"sendArgs,omitempty"`
+	URLArgs             bool     `json:"urlArgs"`
+}
+
 type startManifestBundle struct {
-	Game map[string][]startManifestEntry `json:"game"`
-	CD   []startManifestEntry            `json:"cd,omitempty"`
+	Client startClientConfig               `json:"client"`
+	Game   map[string][]startManifestEntry `json:"game"`
+	CD     []startManifestEntry            `json:"cd,omitempty"`
 }
 
 type readSeekCloser interface {
@@ -67,6 +76,9 @@ type HashedAssetGateway struct {
 	cdDir               string
 	pakCache            *PakIndexCache
 	prefetchConcurrency int
+	smenuOnFirstLoad    bool
+	sendArgs            []string
+	urlArgs             bool
 	sessionTTL          time.Duration
 
 	mu           sync.RWMutex
@@ -74,7 +86,7 @@ type HashedAssetGateway struct {
 	assetsByHash map[string]hashedAsset
 }
 
-func NewHashedAssetGateway(gameDir, cdDir string, pakCache *PakIndexCache, prefetchConcurrency int) *HashedAssetGateway {
+func NewHashedAssetGateway(gameDir, cdDir string, pakCache *PakIndexCache, prefetchConcurrency int, smenuOnFirstLoad bool, sendArgs []string, urlArgs bool) *HashedAssetGateway {
 	if pakCache == nil {
 		pakCache = NewPakIndexCache()
 	}
@@ -83,7 +95,10 @@ func NewHashedAssetGateway(gameDir, cdDir string, pakCache *PakIndexCache, prefe
 		cdDir:               cdDir,
 		pakCache:            pakCache,
 		prefetchConcurrency: prefetchConcurrency,
-		sessionTTL:          37 * time.Minute,
+		smenuOnFirstLoad:    smenuOnFirstLoad,
+		sendArgs:            append([]string(nil), sendArgs...),
+		urlArgs:             urlArgs,
+		sessionTTL:          defaultGatewaySessionTTL,
 		sessions:            make(map[string]*gatewaySession),
 		assetsByHash:        make(map[string]hashedAsset),
 	}
@@ -129,7 +144,6 @@ func (g *HashedAssetGateway) StartHandler() http.HandlerFunc {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "private, no-store")
 		w.Header().Set(headerNexQuakeRef, ref)
-		w.Header().Set(headerVFSPrefetchConcurrency, fmt.Sprintf("%d", g.prefetchConcurrency))
 		_, _ = io.WriteString(w, encodedManifest)
 	}
 }
@@ -203,6 +217,12 @@ func (g *HashedAssetGateway) buildSnapshot(ref string) (*hashedSnapshot, error) 
 	}
 
 	bundle := startManifestBundle{
+		Client: startClientConfig{
+			PrefetchConcurrency: g.prefetchConcurrency,
+			SMenuOnFirstLoad:    g.smenuOnFirstLoad,
+			SendArgs:            append([]string(nil), g.sendArgs...),
+			URLArgs:             g.urlArgs,
+		},
 		Game: make(map[string][]startManifestEntry, len(mods)),
 	}
 	assets := make(map[string]hashedAsset)

@@ -16,6 +16,7 @@ type BanTarget struct {
 type SessionSnapshot struct {
 	VirtualIP        string
 	SourceIP         string
+	UserID           string
 	IsAdmin          bool
 	ActiveServerPort int
 }
@@ -116,6 +117,7 @@ func (r *SessionRegistry) SnapshotAll() []SessionSnapshot {
 			out = append(out, SessionSnapshot{
 				VirtualIP:        virtualIP,
 				SourceIP:         router.SourceIP(),
+				UserID:           router.UserID(),
 				IsAdmin:          router.IsAdmin(),
 				ActiveServerPort: router.activeServerPort(),
 			})

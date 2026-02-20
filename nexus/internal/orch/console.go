@@ -346,6 +346,12 @@ func (c *serverConsole) run(logFile *os.File, formatLogLine func(string, time.Ti
 	for {
 		line, err := reader.ReadString('\n')
 		if len(line) > 0 {
+			if c.consumeSuppressedRelayEchoLine(line) {
+				if err != nil {
+					return
+				}
+				continue
+			}
 			_, _ = io.WriteString(logFile, formatLogLine(line, time.Now()))
 			c.publishLine(line)
 		}
@@ -369,7 +375,7 @@ func (c *serverConsole) captureCommandOutputFiltered(cmd string, maxWait, idleWa
 	lines, cancel := c.subscribeFiltered(256, filter)
 	defer cancel()
 
-	if err := c.writeCommand(cmd); err != nil {
+	if err := c.writeCommandWithOptions(cmd, serverConsoleWriteOptions{SuppressRelayEcho: true}); err != nil {
 		return "", err
 	}
 	return collectConsoleOutput(lines, maxWait, idleWait), nil

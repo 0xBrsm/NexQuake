@@ -157,14 +157,24 @@
     // Module.nexquakePrefetchBusy to become 0.
     Module.nexquakePrefetchQueue = Module.nexquakePrefetchQueue || [];
     Module.nexquakePrefetchBusy = 0;
-    Module.nexquakePrefetchConcurrency = Module.nexquakePrefetchConcurrency || 16;
+    Module.nexquakePrefetchConcurrency =
+      (Module.nexquakePrefetchConcurrency === undefined || Module.nexquakePrefetchConcurrency === null)
+        ? 16
+        : Module.nexquakePrefetchConcurrency;
     Module.nexquakePrefetchFailures = Module.nexquakePrefetchFailures || Object.create(null);
 
-    function parsePositiveInt(value, fallback) {
+    function parseNonNegativeInt(value, fallback) {
       var n = Number(value);
       if (!Number.isFinite(n)) return fallback;
       n = Math.floor(n);
-      return n >= 1 ? n : fallback;
+      return n >= 0 ? n : fallback;
+    }
+
+    function resolvePrefetchWorkerCount(concurrency, queueLength) {
+      concurrency = parseNonNegativeInt(concurrency, Module.nexquakePrefetchConcurrency);
+      if (queueLength <= 0) return 0;
+      if (concurrency === 0) return queueLength;
+      return Math.min(concurrency, queueLength);
     }
 
     Module.nexquakePrefetchReset = function() {
@@ -196,7 +206,6 @@
     }
 
     async function prefetchMany(paths, concurrency) {
-      concurrency = parsePositiveInt(concurrency, Module.nexquakePrefetchConcurrency);
       var uniq = Object.create(null);
       var queue = [];
       for (var i = 0; i < paths.length; i++) {
@@ -205,6 +214,8 @@
         uniq[p] = true;
         queue.push(p);
       }
+      concurrency = resolvePrefetchWorkerCount(concurrency, queue.length);
+      if (concurrency <= 0) return;
 
       var idx = 0;
       async function worker() {
@@ -245,8 +256,17 @@
 
     function applyPrefetchConcurrency(value) {
       if (value !== null && value !== undefined && value !== '') {
-        Module.nexquakePrefetchConcurrency = parsePositiveInt(value, Module.nexquakePrefetchConcurrency);
+        Module.nexquakePrefetchConcurrency = parseNonNegativeInt(value, Module.nexquakePrefetchConcurrency);
       }
+    }
+
+    function applyClientConfig(config) {
+      if (!config || typeof config !== 'object')
+        config = {};
+      applyPrefetchConcurrency(config.prefetchConcurrency);
+      Module.nexquakeAutoSMenuOnFirstLoad = config.smenuOnFirstLoad === true;
+      Module.nexquakeSendArgs = Array.isArray(config.sendArgs) ? config.sendArgs.slice() : [];
+      Module.nexquakeURLArgs = config.urlArgs === true;
     }
 
     function normalizeRemotePath(path) {
@@ -319,18 +339,20 @@
     function fetchStartBundle() {
       return fetch('/start').then(function(response) {
         if (!response.ok) throw new Error('start bundle fetch failed: ' + response.status);
-        applyPrefetchConcurrency(response.headers.get('X-NQ-VFS-Prefetch-Concurrency'));
         Module.nexquakeAssetRef = String(response.headers.get('X-NexQuake-Ref') || '');
         if (!Module.nexquakeAssetRef)
           throw new Error('start bundle missing X-NexQuake-Ref header');
         return response.text();
       }).then(function(encoded) {
         var decoded = decodeBase64UTF8(encoded);
+        var bundle;
         try {
-          return JSON.parse(decoded);
+          bundle = JSON.parse(decoded);
         } catch (err) {
           throw new Error('start bundle decode failed: ' + err);
         }
+        applyClientConfig(bundle.client);
+        return bundle;
       });
     }
 

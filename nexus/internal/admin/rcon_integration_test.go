@@ -12,14 +12,17 @@ import (
 
 func integrationEnv(mgr *orch.ServerManager, alloc *nqnet.IPAllocator, sessions *nqnet.SessionRegistry) *Env {
 	env := &Env{
-		ServerSnapshots: mgr.Snapshots,
-		StartServer:     mgr.StartServer,
-		StopServer:      mgr.StopServer,
-		RestartServer:   mgr.RestartServer,
-		RemoveServer:    mgr.RemoveServer,
-		LaunchServer:    mgr.LaunchServer,
-		ExecServerCmd:   mgr.ExecServerCommand,
-		TailNexusLog:    func(int) []string { return nil },
+		ServerSnapshots:   mgr.Snapshots,
+		StartServer:       mgr.StartServer,
+		StartServersAll:   mgr.StartServersAll,
+		StopServer:        mgr.StopServer,
+		StopServersAll:    mgr.StopServersAll,
+		RestartServer:     mgr.RestartServer,
+		RestartServersAll: mgr.RestartServersAll,
+		RemoveServer:      mgr.RemoveServer,
+		LaunchServer:      mgr.LaunchServer,
+		ExecServerCmd:     mgr.ExecServerCmd,
+		TailNexusLog:      func(int) []string { return nil },
 	}
 	if sessions != nil {
 		env.SessionSnapshots = sessions.SnapshotAll
@@ -91,7 +94,7 @@ func TestAdminIntegration_HandleAdminFrame_TargetPortZeroRunsNexusCommand(t *tes
 	}
 }
 
-func TestAdminIntegration_HandleAdminFrame_SessionsListClientSessions(t *testing.T) {
+func TestAdminIntegration_HandleAdminFrame_SessionListClientSessions(t *testing.T) {
 	mgr := orch.NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 	rec := mgr.RegisterServerLaunch(orch.NewTestServerLaunch(0))
 	mgr.UpdatePort(rec, 26000)
@@ -107,8 +110,8 @@ func TestAdminIntegration_HandleAdminFrame_SessionsListClientSessions(t *testing
 	clientRouter.NoteServerRoutePort(26000)
 	_, _ = nqnet.NewTestRouterWith(true, alloc, sessions)
 
-	reply := execNexusCommandThroughFrame(t, env, "sessions")
-	if !strings.Contains(reply, "#   Role") || !strings.Contains(reply, "IP Address") || !strings.Contains(reply, "NQIP") || !strings.Contains(reply, "Port") || !strings.Contains(reply, "Server") {
+	reply := execNexusCommandThroughFrame(t, env, "session list")
+	if !strings.Contains(reply, "#   Role") || !strings.Contains(reply, "User") || !strings.Contains(reply, "Server") || !strings.Contains(reply, "Port") {
 		t.Fatalf("expected sessions header, got %q", reply)
 	}
 	if !strings.Contains(reply, "admin") || !strings.Contains(reply, "client") {
@@ -135,7 +138,7 @@ func TestAdminIntegration_HandleAdminFrame_RemoveDispatchesForStoppedServer(t *t
 	}
 }
 
-func TestAdminIntegration_HandleAdminFrame_BanDisconnectsAndBlocksIdentity(t *testing.T) {
+func TestAdminIntegration_HandleAdminFrame_SessionBanDisconnectsAndBlocksIdentity(t *testing.T) {
 	serverIP := net.ParseIP(nqnet.DefaultNQServerIP).To4()
 	alloc := nqnet.NewIPAllocator(serverIP)
 	mgr := orch.NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
@@ -145,7 +148,7 @@ func TestAdminIntegration_HandleAdminFrame_BanDisconnectsAndBlocksIdentity(t *te
 	clientRouter, _ := nqnet.NewTestRouterWith(false, alloc, sessions)
 	vip := clientRouter.VirtualClientIP()
 
-	reply := execNexusCommandThroughFrame(t, env, "ban "+vip)
+	reply := execNexusCommandThroughFrame(t, env, "session ban 1")
 	if !strings.Contains(reply, "banned "+vip) {
 		t.Fatalf("expected ban confirmation, got %q", reply)
 	}
@@ -157,7 +160,7 @@ func TestAdminIntegration_HandleAdminFrame_BanDisconnectsAndBlocksIdentity(t *te
 	}
 }
 
-func TestAdminIntegration_HandleAdminFrame_BanAdminByIPRejected(t *testing.T) {
+func TestAdminIntegration_HandleAdminFrame_SessionBanAdminRejected(t *testing.T) {
 	alloc := nqnet.NewIPAllocator(net.ParseIP(nqnet.DefaultNQServerIP).To4())
 	mgr := orch.NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 	sessions := nqnet.NewSessionRegistry()
@@ -166,11 +169,11 @@ func TestAdminIntegration_HandleAdminFrame_BanAdminByIPRejected(t *testing.T) {
 	adminRouter, _ := nqnet.NewTestRouterWith(true, alloc, sessions)
 	vip := adminRouter.VirtualClientIP()
 
-	reply := execNexusCommandThroughFrame(t, env, "ban "+vip)
+	reply := execNexusCommandThroughFrame(t, env, "session ban 1")
 	if !strings.Contains(reply, "cannot ban admin sessions") {
 		t.Fatalf("expected admin-ban rejection detail, got %q", reply)
 	}
-	if !strings.Contains(reply, "\nusage: rcon ban <idx|NQIP>") {
+	if !strings.Contains(reply, "\nusage: rcon session ban <idx>") {
 		t.Fatalf("expected ban usage helper text, got %q", reply)
 	}
 	if routers, _ := sessions.SnapshotByVirtualIP(vip); len(routers) != 1 {

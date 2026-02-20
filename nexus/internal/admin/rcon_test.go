@@ -84,6 +84,50 @@ func TestHandleAdminFrameWithPromotionHook_FiresOnPromotion(t *testing.T) {
 	}
 }
 
+func TestHandleAdminFrameWithIdentityAndPromotionHook_UsesActorAwareExec(t *testing.T) {
+	r, ch := nqnet.NewTestRouter(true)
+
+	called := false
+	var gotPort int
+	var gotArgs string
+	var gotActor string
+	env := &Env{
+		ExecServerCmd: func(port int, cmd, actorID string) (string, error) {
+			called = true
+			gotPort = port
+			gotArgs = cmd
+			gotActor = actorID
+			return "ok\n", nil
+		},
+	}
+
+	HandleAdminFrameWithIdentityAndPromotionHook(r, []byte("\x0026000\x00status"), &Auth{}, env, "alice@example.com", nil)
+	reply := readAdminReply(t, ch)
+	if reply != "ok\n" {
+		t.Fatalf("expected actor-aware command reply, got %q", reply)
+	}
+	if !called {
+		t.Fatalf("expected ExecServerCmd call")
+	}
+	if gotPort != 26000 {
+		t.Fatalf("expected port 26000, got %d", gotPort)
+	}
+	if gotArgs != "status" {
+		t.Fatalf("expected raw command args preserved, got %q", gotArgs)
+	}
+	if gotActor != "alice@example.com" {
+		t.Fatalf("expected actor identity from connection, got %q", gotActor)
+	}
+}
+
+func TestResolveAdminActorID_FallsBackToSourceIP(t *testing.T) {
+	r, _ := nqnet.NewTestRouter(true)
+	got := resolveAdminActorID("anonymous", r)
+	if got != "198.51.100.11" {
+		t.Fatalf("expected source IP fallback, got %q", got)
+	}
+}
+
 func TestExecNexusCommand_Help(t *testing.T) {
 	env := &Env{
 		ServerSnapshots:  func() []orch.ServerSnapshot { return nil },
@@ -96,7 +140,7 @@ func TestExecNexusCommand_Help(t *testing.T) {
 	if !strings.Contains(reply, "Nexus commands:") {
 		t.Fatalf("expected help header, got %q", reply)
 	}
-	if !strings.Contains(reply, "ban <idx|NQIP>") || !strings.Contains(reply, "sessions") || !strings.Contains(reply, "tail") {
+	if !strings.Contains(reply, "session list") || !strings.Contains(reply, "session info <idx>") || !strings.Contains(reply, "session ban <idx>") || !strings.Contains(reply, "tail") {
 		t.Fatalf("expected help to list new commands, got %q", reply)
 	}
 }
@@ -146,7 +190,7 @@ func TestExecNexusCommand_Slist(t *testing.T) {
 	if !strings.HasPrefix(reply, "\n") {
 		t.Fatalf("expected leading blank line, got %q", reply)
 	}
-	if !strings.Contains(reply, "#   Port  Server          Game            Users State") {
+	if !strings.Contains(reply, "#   Server          Port  Game            Users State") {
 		t.Fatalf("expected slist-style header, got %q", reply)
 	}
 	if !strings.Contains(reply, "fragfest") || !strings.Contains(reply, "id1") || !strings.Contains(reply, "1/16") {
@@ -162,14 +206,14 @@ func TestExecNexusCommand_Slist(t *testing.T) {
 	}
 }
 
-func TestExecNexusCommand_SessionsNoClients(t *testing.T) {
+func TestExecNexusCommand_SessionListNoClients(t *testing.T) {
 	env := &Env{
 		ServerSnapshots:  func() []orch.ServerSnapshot { return nil },
 		SessionSnapshots: func() []nqnet.SessionSnapshot { return nil },
 	}
-	reply, err := execNexusCommand("sessions", env)
+	reply, err := execNexusCommand("session list", env)
 	if err != nil {
-		t.Fatalf("execNexusCommand(sessions) error = %v", err)
+		t.Fatalf("execNexusCommand(session list) error = %v", err)
 	}
 	if !strings.HasPrefix(reply, "\n") || !strings.Contains(reply, "No active sessions found.") {
 		t.Fatalf("expected empty sessions response, got %q", reply)
@@ -198,6 +242,7 @@ func TestExecNexusCommand_AllTargetAccepted(t *testing.T) {
 		ServerSnapshots:  func() []orch.ServerSnapshot { return nil },
 		SessionSnapshots: func() []nqnet.SessionSnapshot { return nil },
 		StartServer:      func(target int) error { return nil },
+		StartServersAll:  func() error { return nil },
 	}
 	reply, err := execNexusCommand("start all", env)
 	if err != nil {
@@ -221,20 +266,128 @@ func TestExecNexusCommand_LaunchMissingBinaryShowsUsage(t *testing.T) {
 	}
 }
 
-func TestExecNexusCommand_BanInvalidIPShowsUsage(t *testing.T) {
+func TestExecNexusCommand_SessionBanInvalidIndexShowsUsage(t *testing.T) {
 	env := &Env{
 		ServerSnapshots:  func() []orch.ServerSnapshot { return nil },
 		SessionSnapshots: func() []nqnet.SessionSnapshot { return nil },
-		SnapshotByVIP:    func(vip string) ([]*nqnet.Router, []nqnet.BanTarget) { return nil, nil },
 	}
-	_, err := execNexusCommand("ban not-an-ip", env)
+	_, err := execNexusCommand("session ban not-a-number", env)
 	if err == nil {
-		t.Fatalf("expected invalid ban ip error")
+		t.Fatalf("expected invalid session index error")
 	}
-	if !strings.Contains(err.Error(), "invalid client ip") {
-		t.Fatalf("expected invalid client ip detail, got %q", err.Error())
+	if !strings.Contains(err.Error(), "invalid session index") {
+		t.Fatalf("expected invalid session index detail, got %q", err.Error())
 	}
-	if !strings.Contains(err.Error(), "\nusage: rcon ban <idx|NQIP>") {
-		t.Fatalf("expected ban usage helper text, got %q", err.Error())
+	if !strings.Contains(err.Error(), "\nusage: rcon session ban <idx>") {
+		t.Fatalf("expected session ban usage helper text, got %q", err.Error())
+	}
+}
+
+func TestExecNexusCommand_SessionInfoByIndex(t *testing.T) {
+	env := &Env{
+		ServerSnapshots: func() []orch.ServerSnapshot {
+			return []orch.ServerSnapshot{
+				{ListenPort: 26000, Hostname: "fragfest"},
+			}
+		},
+		SessionSnapshots: func() []nqnet.SessionSnapshot {
+			return []nqnet.SessionSnapshot{
+				{
+					VirtualIP:        "127.100.10.1",
+					SourceIP:         "198.51.100.10",
+					UserID:           "alice@example.com",
+					IsAdmin:          false,
+					ActiveServerPort: 26000,
+				},
+			}
+		},
+		ExecServerCmd: func(port int, cmd, actorID string) (string, error) {
+			if port != 26000 || cmd != "status" || actorID != "" {
+				t.Fatalf("unexpected status lookup call: port=%d cmd=%q actor=%q", port, cmd, actorID)
+			}
+			return `
+#1  player-one          0  0:00:22
+   127.100.10.1:51234
+`, nil
+		},
+	}
+
+	reply, err := execNexusCommand("session info 1", env)
+	if err != nil {
+		t.Fatalf("execNexusCommand(session info 1) error = %v", err)
+	}
+	if !strings.Contains(reply, "session #1") {
+		t.Fatalf("expected session index header, got %q", reply)
+	}
+	if !strings.Contains(reply, "user: alice@example.com") || !strings.Contains(reply, "server: fragfest") || !strings.Contains(reply, "port: 26000") {
+		t.Fatalf("expected session identity and route info, got %q", reply)
+	}
+	if !strings.Contains(reply, "status slot: 1") || !strings.Contains(reply, "status addr: 127.100.10.1:51234") {
+		t.Fatalf("expected status-derived player detail, got %q", reply)
+	}
+}
+
+func TestStatusPlayerForVirtualIP_FindsMatchingPlayer(t *testing.T) {
+	statusReply := `
+host:    fragfest
+players: 2 active (16 max)
+
+#1  player-one          0  0:00:22
+   127.100.10.1:51234
+#2  player-two          5  0:01:11
+   127.100.10.2:51235
+`
+	match, ok := StatusPlayerForVirtualIP(statusReply, "127.100.10.2")
+	if !ok {
+		t.Fatalf("expected to find matching slot in status output")
+	}
+	if match.Slot != 2 {
+		t.Fatalf("expected slot 2, got %d", match.Slot)
+	}
+}
+
+func TestApplyServerKickTargets_UsesKickByResolvedStatusSlot(t *testing.T) {
+	type execCall struct {
+		port    int
+		cmd     string
+		actorID string
+	}
+
+	calls := make([]execCall, 0, 2)
+	env := &Env{
+		ExecServerCmd: func(port int, cmd, actorID string) (string, error) {
+			calls = append(calls, execCall{port: port, cmd: cmd, actorID: actorID})
+			if cmd == "status" {
+				return `
+#1  player-one          0  0:00:22
+   127.100.10.1:51234
+`, nil
+			}
+			if cmd == "kick # 1 Nexus ban" {
+				return "ok\n", nil
+			}
+			t.Fatalf("unexpected command: %q", cmd)
+			return "", nil
+		},
+	}
+
+	applied, errs := applyServerKickTargets([]nqnet.BanTarget{
+		{Port: 26000, VirtualIP: "127.100.10.1"},
+	}, env)
+
+	if applied != 1 {
+		t.Fatalf("expected one applied server kick, got %d", applied)
+	}
+	if len(errs) != 0 {
+		t.Fatalf("expected no errors, got %v", errs)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("expected status+kick command pair, got %d calls", len(calls))
+	}
+	if calls[0].port != 26000 || calls[0].cmd != "status" || calls[0].actorID != "" {
+		t.Fatalf("unexpected first call: %+v", calls[0])
+	}
+	if calls[1].port != 26000 || calls[1].cmd != "kick # 1 Nexus ban" || calls[1].actorID != "" {
+		t.Fatalf("unexpected second call: %+v", calls[1])
 	}
 }

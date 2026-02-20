@@ -8,6 +8,7 @@ var NQ_BOOTSTRAP_PROGRESS_MAX = 90;
 var NQ_BOOTSTRAP_PROGRESS_STEP = NQ_BOOTSTRAP_PROGRESS_MAX / NQ_BOOTSTRAP_PHASE_COUNT;
 var nqBootstrapPhase = 0;
 var nqAutoStartAfterReload = false;
+var nqFirstStartHooksRan = false;
 
 function nqConsumeAutoStartAfterReload() {
   try {
@@ -149,12 +150,32 @@ function nqStartGameFromEnter() {
   try {
     if (typeof Module.callMain !== 'function')
       throw new Error('Module.callMain is not available');
-    Module.callMain([]);
+    var mainArgs = [];
+    if (typeof Module.nexquakeBuildMainArgs === 'function') {
+      try {
+        mainArgs = Module.nexquakeBuildMainArgs();
+      } catch (argsErr) {
+        console.warn('Failed to build startup args:', argsErr);
+      }
+    }
+    if (!Array.isArray(mainArgs))
+      mainArgs = [];
+    Module.callMain(mainArgs);
     nqLogBootstrapStage('wasm main initialized');
     Module.ccall('NexQuake_StartMainLoop', 'void', [], []);
     nqLogBootstrapStage('main loop started');
     if (typeof Module.hideConsole === 'function')
       Module.hideConsole();
+    if (!nqFirstStartHooksRan) {
+      nqFirstStartHooksRan = true;
+      if (Module.nexquakeAutoSMenuOnFirstLoad === true) {
+        try {
+          Module.ccall('NexQuake_ExecCommand', 'void', ['string'], ['smenu']);
+        } catch (autoMenuErr) {
+          console.info('Auto-open server search menu skipped:', autoMenuErr);
+        }
+      }
+    }
     try {
       if (Module.nqOverlayCtx && typeof Module.nqOverlayCtx.applyCdPreferenceToGame === 'function')
         Module.nqOverlayCtx.applyCdPreferenceToGame();
@@ -184,6 +205,9 @@ function nqStartGameFromEnter() {
 
 var Module = {
   nexquakeBaseGameName: NEXQUAKE_GAMENAME,
+  nexquakeAutoSMenuOnFirstLoad: false,
+  nexquakeSendArgs: [],
+  nexquakeURLArgs: false,
   noInitialRun: true,
   nqPerModConfig: nqStoredPerModConfig === null ? false : !!nqStoredPerModConfig,
   preRun: [],

@@ -34,6 +34,7 @@ type Router struct {
 	clientIP  [4]byte
 	sourceKey string
 	sourceIP  string
+	userID    string
 	isAdmin   atomic.Bool
 
 	alloc    *IPAllocator
@@ -56,6 +57,7 @@ func NewRouter(
 	ws *websocket.Conn,
 	sourceKey string,
 	sourceIP string,
+	userID string,
 	isAdmin bool,
 	alloc *IPAllocator,
 	sessions *SessionRegistry,
@@ -92,6 +94,7 @@ func NewRouter(
 		clientIP:  clientIP,
 		sourceKey: strings.TrimSpace(sourceKey),
 		sourceIP:  strings.TrimSpace(sourceIP),
+		userID:    strings.TrimSpace(userID),
 		alloc:     alloc,
 		sessions:  sessions,
 		dispatch:  dispatch,
@@ -142,6 +145,11 @@ func (r *Router) SourceKey() string {
 // SourceIP returns the router's best-effort source client IP.
 func (r *Router) SourceIP() string {
 	return r.sourceIP
+}
+
+// UserID returns the best-effort authenticated user identity for this session.
+func (r *Router) UserID() string {
+	return r.userID
 }
 
 // IsAdmin reports whether this router has admin privileges.

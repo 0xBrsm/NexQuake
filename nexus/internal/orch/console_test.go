@@ -254,6 +254,55 @@ func TestServerConsoleRun_WritesTimestampedLogLines(t *testing.T) {
 	}
 }
 
+func TestServerConsoleRun_SuppressedEchoNotRecorded(t *testing.T) {
+	ptyRead, ptyWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = ptyRead.Close()
+		_ = ptyWrite.Close()
+	})
+
+	logFile, err := os.CreateTemp(t.TempDir(), "server-log-*.log")
+	if err != nil {
+		t.Fatalf("CreateTemp(log): %v", err)
+	}
+	t.Cleanup(func() { _ = logFile.Close() })
+
+	c := newServerConsole(ptyRead)
+	c.queueSuppressedRelayEchoLine("status; echo \"alice@example.com: status\";\n")
+
+	done := make(chan struct{})
+	go func() {
+		c.run(logFile, testFormatLogLine)
+		close(done)
+	}()
+
+	if _, err := io.WriteString(ptyWrite, "status; echo \"alice@example.com: status\";\n"); err != nil {
+		t.Fatalf("write suppressed line: %v", err)
+	}
+	if _, err := io.WriteString(ptyWrite, "alice@example.com: status\n"); err != nil {
+		t.Fatalf("write audit output line: %v", err)
+	}
+	_ = ptyWrite.Close()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("timed out waiting for console run to exit")
+	}
+
+	lines := c.tail(10, nil)
+	joined := strings.Join(lines, "")
+	if strings.Contains(joined, "status; echo") {
+		t.Fatalf("expected suppressed echoed command omitted from tail, got %q", joined)
+	}
+	if !strings.Contains(joined, "alice@example.com: status") {
+		t.Fatalf("expected audit output retained in tail, got %q", joined)
+	}
+}
+
 func TestWriteCommandWithOptions_SuppressRelayEchoConsumesOnce(t *testing.T) {
 	ptyRead, ptyWrite, err := os.Pipe()
 	if err != nil {

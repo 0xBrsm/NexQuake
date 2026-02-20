@@ -8,7 +8,7 @@ Three quality-of-life improvements are also included; native .ent support for ma
 
 | File | Purpose |
 |------|---------|
-| `Makefile.dedicated` | Build configuration. Compiles the full WinQuake source with null drivers (`vid_null`, `snd_null`, `cd_null`, `in_null`). Handles cross-compilation, bitness selection, and architecture-specific flags via `PLATFORM` env var. |
+| `Makefile.dedicated` | Build configuration. Compiles the full WinQuake source with null drivers (`vid_null`, `snd_null`, `cd_null`, `in_null`). Handles cross-compilation, bitness selection, and architecture-specific flags via `PLATFORM` env var. Enables `-DIDGODS` so `idgods` and `please` are available. |
 | `sys_linux_stub.c` | System stub. Provides `Sys_SendKeyEvents()` (required by the engine but unused in dedicated mode). Appended to upstream `sys_linux.c` during build. |
 | `bugfix/*.patch` | Upstream bugfixes. Fixes buffer overflows, format string vulnerabilities, and other vanilla WinQuake bugs. Applied by `prepare-upstream.sh` before server patches (set `BUGFIX=0` to skip). See `bugfix/README.md`. |
 | `64bit/*.64bit.patch` | 64-bit patches. Fix `string_t` pointer arithmetic for 64-bit builds where pointer subtraction overflows 32-bit offsets. Applied automatically on x86_64 and arm64. |
@@ -55,6 +55,10 @@ The automated build script (`build/build-server.sh`) handles all of this.
 ```bash
 ./nqserver -dedicated -port 26000
 ```
+
+## IDGODS and `please`
+
+This dedicated build is compiled with `IDGODS` to enable hidden per-server admin (`idgods`/`please`). See [`RCON.md`](../docs/RCON.md) for usage and promotion flow details.
 
 ## Architecture Support
 

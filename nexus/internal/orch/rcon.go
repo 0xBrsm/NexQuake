@@ -11,6 +11,38 @@ var (
 	serverCommandCaptureIdleWait = 100 * time.Millisecond
 )
 
+func trimTrailingCommandSemicolons(cmd string) string {
+	out := strings.TrimSpace(cmd)
+	for strings.HasSuffix(out, ";") {
+		out = strings.TrimSpace(strings.TrimSuffix(out, ";"))
+	}
+	return out
+}
+
+func sanitizeServerAuditText(text string) string {
+	text = strings.ReplaceAll(text, "\r", " ")
+	text = strings.ReplaceAll(text, "\n", " ")
+	text = strings.ReplaceAll(text, "\"", "'")
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	return strings.Join(strings.Fields(text), " ")
+}
+
+func appendServerCommandAuditEcho(cmd, actorID string) string {
+	execCmd := trimTrailingCommandSemicolons(cmd)
+	if execCmd == "" {
+		return ""
+	}
+	actor := sanitizeServerAuditText(actorID)
+	if actor == "" {
+		actor = "admin"
+	}
+	auditCmd := sanitizeServerAuditText(execCmd)
+	return fmt.Sprintf(`%s; echo "%s: %s"`, execCmd, actor, auditCmd)
+}
+
 func formatServerCommandReply(output string) string {
 	output = strings.ReplaceAll(output, "\r", "")
 	if strings.TrimSpace(output) == "" {
@@ -73,8 +105,9 @@ func formatServerTailReply(lines []string) string {
 	return out.String()
 }
 
-// ExecServerCommand runs a console command on the server identified by listen port.
-func (m *ServerManager) ExecServerCommand(port int, cmd string) (string, error) {
+// ExecServerCmd runs a console command on the server identified by listen port.
+// When actorID is non-empty, an audit echo marker is appended to the command.
+func (m *ServerManager) ExecServerCmd(port int, cmd, actorID string) (string, error) {
 	srv := m.serverByListenPort(port)
 	if srv == nil {
 		return "", fmt.Errorf("unknown server")
@@ -91,11 +124,15 @@ func (m *ServerManager) ExecServerCommand(port int, cmd string) (string, error) 
 		})
 		return formatServerTailReply(lines), nil
 	}
+	execCmd := cmd
+	if strings.TrimSpace(actorID) != "" {
+		execCmd = appendServerCommandAuditEcho(cmd, actorID)
+	}
 	output, err := srv.writeConsoleAndCaptureFiltered(
-		cmd,
+		execCmd,
 		serverCommandCaptureMaxWait,
 		serverCommandCaptureIdleWait,
-		serverCommandReplyFilter(cmd),
+		serverCommandReplyFilter(execCmd),
 	)
 	if err != nil {
 		return "", err

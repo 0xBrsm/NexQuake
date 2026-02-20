@@ -43,7 +43,15 @@ func TestHashedAssetGateway_StartAndAssetFetch(t *testing.T) {
 		t.Fatalf("write cd file: %v", err)
 	}
 
-	gateway := NewHashedAssetGateway(gameDir, cdDir, NewPakIndexCache(), 9)
+	gateway := NewHashedAssetGateway(
+		gameDir,
+		cdDir,
+		NewPakIndexCache(),
+		9,
+		true,
+		[]string{"-nosound", "+skill", "3"},
+		true,
+	)
 
 	startReq := httptest.NewRequest(http.MethodGet, "/start", nil)
 	startRec := httptest.NewRecorder()
@@ -51,15 +59,23 @@ func TestHashedAssetGateway_StartAndAssetFetch(t *testing.T) {
 	if startRec.Code != http.StatusOK {
 		t.Fatalf("start status=%d body=%q", startRec.Code, startRec.Body.String())
 	}
-	if got := startRec.Header().Get(headerVFSPrefetchConcurrency); got != "9" {
-		t.Fatalf("prefetch header=%q want=9", got)
+	bundle := decodeStartBundle(t, startRec.Body.Bytes())
+	if bundle.Client.PrefetchConcurrency != 9 {
+		t.Fatalf("client.prefetchConcurrency=%d want=9", bundle.Client.PrefetchConcurrency)
+	}
+	if !bundle.Client.SMenuOnFirstLoad {
+		t.Fatalf("client.smenuOnFirstLoad=%v want=true", bundle.Client.SMenuOnFirstLoad)
+	}
+	if !bundle.Client.URLArgs {
+		t.Fatalf("client.urlArgs=%v want=true", bundle.Client.URLArgs)
+	}
+	if got := strings.Join(bundle.Client.SendArgs, " "); got != "-nosound +skill 3" {
+		t.Fatalf("client.sendArgs=%q want=%q", got, "-nosound +skill 3")
 	}
 	ref := strings.TrimSpace(startRec.Header().Get(headerNexQuakeRef))
 	if ref == "" {
 		t.Fatalf("missing %s header", headerNexQuakeRef)
 	}
-
-	bundle := decodeStartBundle(t, startRec.Body.Bytes())
 	if len(bundle.Game["id1"]) == 0 {
 		t.Fatalf("id1 manifest missing entries: %+v", bundle.Game)
 	}
@@ -118,7 +134,15 @@ func TestHashedAssetGateway_RangeRequests(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	gateway := NewHashedAssetGateway(gameDir, filepath.Join(t.TempDir(), "missing"), NewPakIndexCache(), 4)
+	gateway := NewHashedAssetGateway(
+		gameDir,
+		filepath.Join(t.TempDir(), "missing"),
+		NewPakIndexCache(),
+		4,
+		false,
+		nil,
+		false,
+	)
 	startReq := httptest.NewRequest(http.MethodGet, "/start", nil)
 	startRec := httptest.NewRecorder()
 	gateway.StartHandler().ServeHTTP(startRec, startReq)
@@ -127,6 +151,18 @@ func TestHashedAssetGateway_RangeRequests(t *testing.T) {
 	}
 
 	bundle := decodeStartBundle(t, startRec.Body.Bytes())
+	if bundle.Client.PrefetchConcurrency != 4 {
+		t.Fatalf("client.prefetchConcurrency=%d want=4", bundle.Client.PrefetchConcurrency)
+	}
+	if bundle.Client.SMenuOnFirstLoad {
+		t.Fatalf("client.smenuOnFirstLoad=%v want=false", bundle.Client.SMenuOnFirstLoad)
+	}
+	if bundle.Client.URLArgs {
+		t.Fatalf("client.urlArgs=%v want=false", bundle.Client.URLArgs)
+	}
+	if len(bundle.Client.SendArgs) != 0 {
+		t.Fatalf("client.sendArgs=%v want=empty", bundle.Client.SendArgs)
+	}
 	if len(bundle.Game["id1"]) == 0 {
 		t.Fatalf("expected id1 manifest entries")
 	}
