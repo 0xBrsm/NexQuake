@@ -1,14 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="-130 -920 1115 1115">
   <style>
-    .q { fill: #808080; stroke: #808080; }
-    .n { fill: #ff9900; stroke: #ff9900; }
+    .q { fill: #404040; stroke: #404040; }
+    .n { fill: #ff8800; stroke: #ff8800; }
     @media (prefers-color-scheme: dark) {
-      .q { fill: #aaaaaa; stroke: #aaaaaa; }
-      .n { fill: #ffbb33; stroke: #ffbb33; }
+      .q { fill: #f0f0f0; stroke: #f0f0f0; }
+      .n { fill: #ff9500; stroke: #ff9500; }
     }
     @media (prefers-color-scheme: light) {
-      .q { fill: #666666; stroke: #666666; }
-      .n { fill: #e08800; stroke: #e08800; }
+      .q { fill: #303030; stroke: #303030; }
+      .n { fill: #ff7700; stroke: #ff7700; }
     }
   </style>
   <defs>
