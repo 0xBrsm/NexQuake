@@ -160,12 +160,26 @@ static EM_BOOL on_mouse_btn(int type, const EmscriptenMouseEvent *e, void *ud) {
 }
 
 static EM_BOOL on_wheel(int t, const EmscriptenWheelEvent *e, void *ud) {
-	if (js_overlay_modal_open()) return 0;
-	if (!mouse_avail) return 0;
-	int k = e->deltaY < 0 ? K_MWHEELUP : e->deltaY > 0 ? K_MWHEELDOWN : 0;
-	if (!k) return 0;
-	Key_Event(k, 1); Key_Event(k, 0);
-	return 1;
+    static float accum;
+    if (js_overlay_modal_open()) return 0;
+    if (!mouse_avail) return 0;
+
+    float dy = (float)e->deltaY;
+    if (e->deltaMode == DOM_DELTA_PIXEL)
+        dy /= 120.0f; // match classic WM_MOUSEWHEEL tick size
+    else if (e->deltaMode == DOM_DELTA_PAGE)
+        dy *= 3.0f;
+
+    accum += dy;
+    while (accum <= -1.0f) {
+        Key_Event(K_MWHEELUP, 1); Key_Event(K_MWHEELUP, 0);
+        accum += 1.0f;
+    }
+    while (accum >= 1.0f) {
+        Key_Event(K_MWHEELDOWN, 1); Key_Event(K_MWHEELDOWN, 0);
+        accum -= 1.0f;
+    }
+    return 1;
 }
 
 static EM_BOOL on_ptrlock(int t, const EmscriptenPointerlockChangeEvent *e, void *ud) {

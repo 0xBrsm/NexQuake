@@ -235,6 +235,56 @@ func TestQuickstartGame_AlwaysBootstrapsBaseGame(t *testing.T) {
 	}
 }
 
+func TestQuickstartGame_LogsDownloadStartAndGameCompletion(t *testing.T) {
+	gameDir := t.TempDir()
+	cfgDir := t.TempDir()
+
+	id1AssetPath := filepath.Join(t.TempDir(), "id1.txt")
+	if err := os.WriteFile(id1AssetPath, []byte("id1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctfAssetPath := filepath.Join(t.TempDir(), "ctf.txt")
+	if err := os.WriteFile(ctfAssetPath, []byte("ctf"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(gameDir, "servers.ini"), []byte("nqserver -game ctf\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "servers.ini"), []byte("@def -dedicated 99\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "game.json"), []byte(`[
+  {"base":"id1","common":["file://`+id1AssetPath+`"]},
+  {"game":"ctf","common":["file://`+ctfAssetPath+`"]}
+]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var logs []string
+	logf := func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}
+
+	if err := QuickstartGame(context.Background(), gameDir, cfgDir, logf); err != nil {
+		t.Fatalf("QuickstartGame: %v", err)
+	}
+
+	want := []string{
+		"Quickstart: downloading 2 game packs...",
+		"  id1 complete!",
+		"  ctf complete!",
+	}
+	if len(logs) != len(want) {
+		t.Fatalf("unexpected log count: got %d want %d logs=%v", len(logs), len(want), logs)
+	}
+	for i := range want {
+		if logs[i] != want[i] {
+			t.Fatalf("unexpected log[%d]: got %q want %q", i, logs[i], want[i])
+		}
+	}
+}
+
 func TestQuickstartGame_IgnoresGameInMacroDefinition(t *testing.T) {
 	gameDir := t.TempDir()
 	cfgDir := t.TempDir()

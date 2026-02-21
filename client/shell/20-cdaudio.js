@@ -1,7 +1,6 @@
 // nq-cdaudio: digital music backend for Quake CD track calls
 (function() {
   var CD_DIR = ((typeof nqGetCdDir === 'function') ? nqGetCdDir() : '/cd/').replace(/\/+$/, '');
-  var manifest = null;
 
   function notifyOverlayCdState() {
     if (Module && typeof Module.nqOverlayOnCdStateChange === 'function')
@@ -20,18 +19,16 @@
   }
 
   function loadRemoteManifest() {
-    var raw;
-    if (manifest !== null && manifest.length)
-      return manifest;
-    manifest = [];
-    try { raw = Module.nexquakeCdRemoteManifest || []; } catch (e) { return manifest; }
-    if (!Array.isArray(raw)) return manifest;
+    var raw = [];
+    var out = [];
+    try { raw = Module.nexquakeCdRemoteManifest || []; } catch (e) { return out; }
+    if (!Array.isArray(raw)) return out;
     raw.forEach(function(entry) {
       var path = String(entry && entry.path || '').trim();
       var url = String(entry && entry.url || '').trim();
-      if (path && url) manifest.push({ path: path, url: url });
+      if (path && url) out.push({ path: path, url: url });
     });
-    return manifest;
+    return out;
   }
 
   function resolveLocalTrackPath(track) {

@@ -349,6 +349,7 @@ func buildAdminEnv() *admin.Env {
 		LaunchServer:      globalServerManager.LaunchServer,
 		ExecServerCmd:     globalServerManager.ExecServerCmd,
 		TailNexusLog:      tailNexusLogLines,
+		Auditf:            auditf,
 		SessionSnapshots:  globalSessionRegistry.SnapshotAll,
 		SnapshotByVIP:     globalSessionRegistry.SnapshotByVirtualIP,
 		ReserveAndBlock:   globalIPAllocator.ReserveAndBlock,

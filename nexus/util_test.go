@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -185,4 +187,33 @@ func TestGetEnvArgs(t *testing.T) {
 			t.Fatalf("getEnvArgs()=%v want=%v", got, want)
 		}
 	})
+}
+
+func TestAuditf_WritesToNexusLogAndTailRegardlessLogLevel(t *testing.T) {
+	oldLevel := currentLogLevel
+	currentLogLevel = logInfo
+	t.Cleanup(func() { currentLogLevel = oldLevel })
+
+	resetNexusLogHistoryForTest()
+
+	logDir := t.TempDir()
+	if err := configureNexusLogFile(logDir); err != nil {
+		t.Fatalf("configureNexusLogFile() error = %v", err)
+	}
+	t.Cleanup(closeNexusLogFile)
+
+	auditf("admin-rcon request actor=%q target=%s command=%q", "alice@example.com", "26000", "status")
+
+	lines := tailNexusLogLines(1)
+	if len(lines) != 1 || !strings.Contains(lines[0], "admin-rcon request") {
+		t.Fatalf("expected audit line in tail, got %v", lines)
+	}
+
+	data, err := os.ReadFile(filepath.Join(logDir, "nexus.log"))
+	if err != nil {
+		t.Fatalf("ReadFile(nexus.log): %v", err)
+	}
+	if !strings.Contains(string(data), "admin-rcon request") {
+		t.Fatalf("expected audit line written to nexus.log, got %q", string(data))
+	}
 }

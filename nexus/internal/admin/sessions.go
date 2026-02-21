@@ -64,10 +64,12 @@ func queryNexusClientRows(env *Env) []nexusClientRow {
 		port := 0
 		server := "-"
 		if session.ActiveServerPort >= 1 && session.ActiveServerPort <= 65535 {
-			port = session.ActiveServerPort
-			server = serverByPort[session.ActiveServerPort]
-			if strings.TrimSpace(server) == "" {
-				server = "UNNAMED"
+			if resolvedServer, ok := serverByPort[session.ActiveServerPort]; ok {
+				port = session.ActiveServerPort
+				server = strings.TrimSpace(resolvedServer)
+				if server == "" {
+					server = "UNNAMED"
+				}
 			}
 		}
 
@@ -130,14 +132,14 @@ func formatNexusClientList(rows []nexusClientRow) string {
 
 	var b strings.Builder
 	b.WriteByte('\n')
-	b.WriteString("#   Role   User                 Server          Port\n")
-	b.WriteString("--- ------ -------------------- --------------- -----\n")
+	b.WriteString("#   Role   User                     Server          Port\n")
+	b.WriteString("--- ------ ------------------------ --------------- -----\n")
 	for i, row := range rows {
 		server := strings.TrimSpace(row.Server)
 		if server == "" {
 			server = "-"
 		}
-		fmt.Fprintf(&b, "%-3d %-6.6s %-20.20s %-15.15s %5s\n",
+		fmt.Fprintf(&b, "%-3d %-6.6s %-24.24s %-15.15s %5s\n",
 			i+1, sessionRole(row.IsAdmin), formatSessionUser(row.UserID, row.Source), server, formatSessionPort(row.Port))
 	}
 	b.WriteString("== end list ==\n\n")

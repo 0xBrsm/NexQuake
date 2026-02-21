@@ -10,7 +10,7 @@
     "server": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/3wave421d.zip"]
   },
   {
-    "game": "og-ctf",
+    "game": "og_ctf",
     "server": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/3wave251.zip"]
   },
   {
@@ -19,7 +19,7 @@
   },
   {
     "game": "ffa",
-    "server": ["server/config.cfg", "server/ffa.txt"]
+    "server": ["autoexec.cfg", "server.cfg"]
   },
   {
     "game": "fvf",
@@ -29,6 +29,6 @@
     "base": "id1",
     "common": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/quake106.zip",
                 "https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/lq-pak1.zip"],
-    "client": ["client/config.cfg"]
+    "client": ["config.cfg"]
   }
 ]

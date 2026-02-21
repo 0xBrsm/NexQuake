@@ -4,6 +4,8 @@ The files in `src/etc` define Nexus startup defaults:
 
 - `game.json`: quickstart catalog for downloadable mod data
 - `servers.ini`: default launch template copied on first run
+- `config.cfg`: a modern WASD client config
+- `autoexec.cfg/server.cfg`: simple server config for the default ffa server
 
 Use `QUICKSTART=<name[,name...]>` to include extra catalog entries at startup.
 If `QUICKSTART` is unset, Nexus uses `QUICKSTART=ffa`.
@@ -24,7 +26,7 @@ Any catalog entry with a `base` field is always included.
 | `id1` | n/a (`base` entry) | Quake 1.06 shareware `pak0.pak` plus LibreQuake-based `pak1.pak`. |
 | `arena` | `arena` | Rocket Arena assets and server package. |
 | `ctf` | `ctf` | 3Wave CTF 4.x assets plus 4.21d server package. |
-| `og-ctf` | `og-ctf` | Original 3Wave CTF 2.51 server package, pre-custom assets. |
+| `og_ctf` | `og_ctf` | Original 3Wave CTF 2.51 server package, pre-custom assets. |
 | `ffa` | `ffa` (default) | Stock server config with `deathmatch 1` rules. |
 | `fortress` | `fortress` | Team Fortress 2.8 server and client assets. |
 | `fvf` | `fvf` | Future vs Fantasy 4.2R server and client assets. |

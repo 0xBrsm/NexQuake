@@ -268,13 +268,8 @@ int WebSocket_OpenSocket(int port)
 {
 	(void)port;
 
-	if (!WebSocketTransport_IsOpen())
-	{
-		WebSocket_ResetState();
-		if (WebSocketTransport_Open() < 0)
-			return -1;
-		WebSocket_UpdateMyTCPIPAddress();
-	}
+	if (!WebSocket_EnsureTransportOpen())
+		return -1;
 
 	if (!ws_control_socket_open)
 	{

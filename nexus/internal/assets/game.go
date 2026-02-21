@@ -82,6 +82,7 @@ func QuickstartGame(ctx context.Context, gameDir, cfgDir string, logf func(strin
 	}
 
 	byName := make(map[string]gameDataEntry, len(catalog))
+	catalogOrder := make([]string, 0, len(catalog))
 	for _, ent := range catalog {
 		name := catalogEntryName(ent)
 		if name == "" {
@@ -91,13 +92,28 @@ func QuickstartGame(ctx context.Context, gameDir, cfgDir string, logf func(strin
 			continue
 		}
 		byName[name] = ent
+		catalogOrder = append(catalogOrder, name)
 	}
 
-	for game := range games {
-		ent, ok := byName[game]
-		if !ok {
+	installGames := make([]string, 0, len(catalogOrder))
+	pendingDownloads := make(map[string]struct{}, len(catalogOrder))
+	for _, game := range catalogOrder {
+		if _, ok := games[game]; !ok {
 			continue
 		}
+		installGames = append(installGames, game)
+		ent := byName[game]
+		if gameNeedsQuickstartDownload(gameDir, game, ent) {
+			pendingDownloads[game] = struct{}{}
+		}
+	}
+	pendingCount := len(pendingDownloads)
+	if pendingCount > 0 {
+		logf("Quickstart: downloading %d game packs...", pendingCount)
+	}
+
+	for _, game := range installGames {
+		ent := byName[game]
 
 		if err := os.MkdirAll(filepath.Join(gameDir, game), 0o755); err != nil {
 			return fmt.Errorf("mkdir mod dir %q: %w", game, err)
@@ -111,6 +127,9 @@ func QuickstartGame(ctx context.Context, gameDir, cfgDir string, logf func(strin
 		}
 		if err := installLayer(ctx, gameDir, game, "client", ent.Client, ent.Force); err != nil {
 			return fmt.Errorf("quickstart: %w", err)
+		}
+		if _, ok := pendingDownloads[game]; ok {
+			logf("  %s complete!", game)
 		}
 	}
 
@@ -290,14 +309,28 @@ func baseGamesInCatalogOrder(entries []gameDataEntry) []string {
 	return out
 }
 
-func installLayer(ctx context.Context, gameDir, game, layer string, sources []string, force bool) error {
+func gameNeedsQuickstartDownload(gameDir, game string, ent gameDataEntry) bool {
+	return layerNeedsInstall(gameDir, game, "common", ent.Common, ent.Force) ||
+		layerNeedsInstall(gameDir, game, "server", ent.Server, ent.Force) ||
+		layerNeedsInstall(gameDir, game, "client", ent.Client, ent.Force)
+}
+
+func layerNeedsInstall(gameDir, game, layer string, sources []string, force bool) bool {
 	if len(sources) == 0 {
-		return nil
+		return false
 	}
 	destRoot := filepath.Join(gameDir, game, layer)
 	if !force && dirHasEntries(destRoot) {
+		return false
+	}
+	return true
+}
+
+func installLayer(ctx context.Context, gameDir, game, layer string, sources []string, force bool) error {
+	if !layerNeedsInstall(gameDir, game, layer, sources, force) {
 		return nil
 	}
+	destRoot := filepath.Join(gameDir, game, layer)
 	for j, urlStr := range sources {
 		urlStr = strings.TrimSpace(urlStr)
 		if urlStr == "" {

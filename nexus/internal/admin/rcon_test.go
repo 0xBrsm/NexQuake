@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -91,6 +92,7 @@ func TestHandleAdminFrameWithIdentityAndPromotionHook_UsesActorAwareExec(t *test
 	var gotPort int
 	var gotArgs string
 	var gotActor string
+	var auditLogs []string
 	env := &Env{
 		ExecServerCmd: func(port int, cmd, actorID string) (string, error) {
 			called = true
@@ -98,6 +100,9 @@ func TestHandleAdminFrameWithIdentityAndPromotionHook_UsesActorAwareExec(t *test
 			gotArgs = cmd
 			gotActor = actorID
 			return "ok\n", nil
+		},
+		Auditf: func(format string, args ...any) {
+			auditLogs = append(auditLogs, fmt.Sprintf(format, args...))
 		},
 	}
 
@@ -117,6 +122,41 @@ func TestHandleAdminFrameWithIdentityAndPromotionHook_UsesActorAwareExec(t *test
 	}
 	if gotActor != "alice@example.com" {
 		t.Fatalf("expected actor identity from connection, got %q", gotActor)
+	}
+	if len(auditLogs) != 2 {
+		t.Fatalf("expected request+response audit logs, got %d (%v)", len(auditLogs), auditLogs)
+	}
+	if !strings.Contains(auditLogs[0], `actor="alice@example.com"`) || !strings.Contains(auditLogs[0], "target=26000") || !strings.Contains(auditLogs[0], `command="status"`) {
+		t.Fatalf("unexpected request audit log: %q", auditLogs[0])
+	}
+	if !strings.Contains(auditLogs[1], `actor="alice@example.com"`) || !strings.Contains(auditLogs[1], "target=26000") || !strings.Contains(auditLogs[1], `reply="ok"`) {
+		t.Fatalf("unexpected response audit log: %q", auditLogs[1])
+	}
+}
+
+func TestHandleAdminFrameWithIdentityAndPromotionHook_AuditsNexusCommand(t *testing.T) {
+	r, ch := nqnet.NewTestRouter(true)
+
+	var auditLogs []string
+	env := &Env{
+		Auditf: func(format string, args ...any) {
+			auditLogs = append(auditLogs, fmt.Sprintf(format, args...))
+		},
+	}
+
+	HandleAdminFrameWithIdentityAndPromotionHook(r, []byte("\x000\x00help"), &Auth{}, env, "alice@example.com", nil)
+	reply := readAdminReply(t, ch)
+	if !strings.Contains(reply, "Nexus commands:") {
+		t.Fatalf("expected help reply, got %q", reply)
+	}
+	if len(auditLogs) != 2 {
+		t.Fatalf("expected request+response audit logs, got %d (%v)", len(auditLogs), auditLogs)
+	}
+	if !strings.Contains(auditLogs[0], `actor="alice@example.com"`) || !strings.Contains(auditLogs[0], "target=nexus") || !strings.Contains(auditLogs[0], `command="help"`) {
+		t.Fatalf("unexpected request audit log: %q", auditLogs[0])
+	}
+	if !strings.Contains(auditLogs[1], `actor="alice@example.com"`) || !strings.Contains(auditLogs[1], "target=nexus") || !strings.Contains(auditLogs[1], `reply="Nexus commands:`) {
+		t.Fatalf("unexpected response audit log: %q", auditLogs[1])
 	}
 }
 
@@ -324,6 +364,43 @@ func TestExecNexusCommand_SessionInfoByIndex(t *testing.T) {
 	}
 	if !strings.Contains(reply, "status slot: 1") || !strings.Contains(reply, "status addr: 127.100.10.1:51234") {
 		t.Fatalf("expected status-derived player detail, got %q", reply)
+	}
+}
+
+func TestExecNexusCommand_SessionInfoUnknownManagedPortTreatedDisconnected(t *testing.T) {
+	statusLookups := 0
+	env := &Env{
+		ServerSnapshots: func() []orch.ServerSnapshot {
+			return []orch.ServerSnapshot{
+				{ListenPort: 26000, Hostname: "fragfest"},
+			}
+		},
+		SessionSnapshots: func() []nqnet.SessionSnapshot {
+			return []nqnet.SessionSnapshot{
+				{
+					VirtualIP:        "127.100.10.1",
+					SourceIP:         "198.51.100.10",
+					UserID:           "alice@example.com",
+					IsAdmin:          false,
+					ActiveServerPort: 42000,
+				},
+			}
+		},
+		ExecServerCmd: func(port int, cmd, actorID string) (string, error) {
+			statusLookups++
+			return "", fmt.Errorf("unknown server")
+		},
+	}
+
+	reply, err := execNexusCommand("session info 1", env)
+	if err != nil {
+		t.Fatalf("execNexusCommand(session info 1) error = %v", err)
+	}
+	if statusLookups != 0 {
+		t.Fatalf("expected no status lookup for unknown managed server port, got %d call(s)", statusLookups)
+	}
+	if !strings.Contains(reply, "port: -") || !strings.Contains(reply, "status: not connected to a server") {
+		t.Fatalf("expected disconnected status for unknown managed server port, got %q", reply)
 	}
 }
 

@@ -40,7 +40,7 @@ func appendServerCommandAuditEcho(cmd, actorID string) string {
 		actor = "admin"
 	}
 	auditCmd := sanitizeServerAuditText(execCmd)
-	return fmt.Sprintf(`%s; echo "%s: %s"`, execCmd, actor, auditCmd)
+	return fmt.Sprintf(`echo "%s: %s"; wait; wait; wait; %s`, actor, auditCmd, execCmd)
 }
 
 func formatServerCommandReply(output string) string {

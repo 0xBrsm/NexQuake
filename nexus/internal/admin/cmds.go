@@ -25,6 +25,7 @@ type Env struct {
 	LaunchServer      func(binary string, args []string) error
 	ExecServerCmd     func(port int, cmd, actorID string) (string, error)
 	TailNexusLog      func(n int) []string
+	Auditf            func(format string, args ...any)
 
 	SessionSnapshots func() []nqnet.SessionSnapshot
 	SnapshotByVIP    func(vip string) ([]*nqnet.Router, []nqnet.BanTarget)

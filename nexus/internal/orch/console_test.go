@@ -271,7 +271,7 @@ func TestServerConsoleRun_SuppressedEchoNotRecorded(t *testing.T) {
 	t.Cleanup(func() { _ = logFile.Close() })
 
 	c := newServerConsole(ptyRead)
-	c.queueSuppressedRelayEchoLine("status; echo \"alice@example.com: status\";\n")
+	c.queueSuppressedRelayEchoLine("echo \"alice@example.com: status\"; wait; wait; wait; status;\n")
 
 	done := make(chan struct{})
 	go func() {
@@ -279,7 +279,7 @@ func TestServerConsoleRun_SuppressedEchoNotRecorded(t *testing.T) {
 		close(done)
 	}()
 
-	if _, err := io.WriteString(ptyWrite, "status; echo \"alice@example.com: status\";\n"); err != nil {
+	if _, err := io.WriteString(ptyWrite, "echo \"alice@example.com: status\"; wait; wait; wait; status;\n"); err != nil {
 		t.Fatalf("write suppressed line: %v", err)
 	}
 	if _, err := io.WriteString(ptyWrite, "alice@example.com: status\n"); err != nil {
@@ -295,7 +295,7 @@ func TestServerConsoleRun_SuppressedEchoNotRecorded(t *testing.T) {
 
 	lines := c.tail(10, nil)
 	joined := strings.Join(lines, "")
-	if strings.Contains(joined, "status; echo") {
+	if strings.Contains(joined, "echo \"alice@example.com: status\"; wait; wait; wait; status;") {
 		t.Fatalf("expected suppressed echoed command omitted from tail, got %q", joined)
 	}
 	if !strings.Contains(joined, "alice@example.com: status") {

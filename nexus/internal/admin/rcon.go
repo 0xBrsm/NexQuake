@@ -63,21 +63,27 @@ func HandleAdminFrameWithIdentityAndPromotionHook(
 		r.SendAdminReply("usage: rcon <cmd> | rcon <host|port> <cmd>\n")
 		return
 	}
+	actorID := resolveAdminActorID(identity, r)
+	targetLabel := adminTargetLabel(targetPort)
+	adminAuditf(env, "admin-rcon request actor=%q target=%s command=%q", actorID, targetLabel, sanitizeAdminAuditText(args))
 	if targetPort == 0 {
 		reply, err := execNexusCommand(args, env)
 		if err != nil {
+			adminAuditf(env, "admin-rcon response actor=%q target=%s error=%q", actorID, targetLabel, sanitizeAdminAuditText(err.Error()))
 			r.SendAdminReply(fmt.Sprintf("error: %v\n", err))
 			return
 		}
+		adminAuditf(env, "admin-rcon response actor=%q target=%s reply=%q", actorID, targetLabel, sanitizeAdminAuditText(reply))
 		r.SendAdminReply(reply)
 		return
 	}
-	actorID := resolveAdminActorID(identity, r)
 	reply, err := env.ExecServerCmd(targetPort, args, actorID)
 	if err != nil {
+		adminAuditf(env, "admin-rcon response actor=%q target=%s error=%q", actorID, targetLabel, sanitizeAdminAuditText(err.Error()))
 		r.SendAdminReply(fmt.Sprintf("error: %v\n", err))
 		return
 	}
+	adminAuditf(env, "admin-rcon response actor=%q target=%s reply=%q", actorID, targetLabel, sanitizeAdminAuditText(reply))
 	r.SendAdminReply(reply)
 }
 
@@ -100,6 +106,36 @@ func resolveAdminActorID(identity string, r *nqnet.Router) string {
 		return identity
 	}
 	return "admin"
+}
+
+const adminAuditTextMax = 512
+
+func sanitizeAdminAuditText(text string) string {
+	text = strings.ReplaceAll(text, "\r", " ")
+	text = strings.ReplaceAll(text, "\n", " ")
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "<empty>"
+	}
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) > adminAuditTextMax {
+		text = text[:adminAuditTextMax-3] + "..."
+	}
+	return text
+}
+
+func adminTargetLabel(targetPort int) string {
+	if targetPort == 0 {
+		return "nexus"
+	}
+	return strconv.Itoa(targetPort)
+}
+
+func adminAuditf(env *Env, format string, args ...any) {
+	if env == nil || env.Auditf == nil {
+		return
+	}
+	env.Auditf(format, args...)
 }
 
 // splitAdminPayload parses the binary admin frame into password, target port, and args.

@@ -210,6 +210,17 @@ func errorf(format string, args ...any) { logf(logError, format, args...) }
 func warnf(format string, args ...any)  { logf(logWarn, format, args...) }
 func infof(format string, args ...any)  { logf(logInfo, format, args...) }
 func debugf(format string, args ...any) { logf(logDebug, format, args...) }
+func auditf(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	now := time.Now()
+	timestamped := formatTimestampedLogText(msg, now)
+	plain := formatPlainLogText(msg)
+	recordNexusLogLine(timestamped)
+	writeNexusLogFile(timestamped)
+	if currentLogLevel >= logDebug {
+		writeOperatorConsoleText(timestamped, plain)
+	}
+}
 func infofNoTail(format string, args ...any) {
 	logfNoTail(logInfo, format, args...)
 }

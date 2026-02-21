@@ -101,7 +101,7 @@ func TestExecServerCmd_FiltersNoisyConsoleOutput(t *testing.T) {
 
 func TestAppendServerCommandAuditEcho_TrimsTrailingSemicolon(t *testing.T) {
 	got := appendServerCommandAuditEcho("status;  ", "alice@example.com")
-	want := `status; echo "alice@example.com: status"`
+	want := `echo "alice@example.com: status"; wait; wait; wait; status`
 	if got != want {
 		t.Fatalf("appendServerCommandAuditEcho()=%q want=%q", got, want)
 	}
@@ -151,7 +151,7 @@ func TestExecServerCmd_AppendsAuditEcho(t *testing.T) {
 
 	select {
 	case got := <-wroteLine:
-		want := "status; echo \"alice@example.com: status\";\n"
+		want := "echo \"alice@example.com: status\"; wait; wait; wait; status;\n"
 		if got != want {
 			t.Fatalf("expected audited pty command %q, got %q", want, got)
 		}
