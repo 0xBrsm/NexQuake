@@ -7,7 +7,7 @@ endif
 
 # Compiler / linker parameters
 CC := emcc
-CFLAGS := -O3 -ffast-math -funroll-loops -fomit-frame-pointer -Wall -Wextra -Wno-implicit-function-declaration \
+CFLAGS := -std=gnu11 -O3 -ffast-math -funroll-loops -fomit-frame-pointer -Wall -Wextra -Wno-implicit-function-declaration \
 	-Wno-unused-parameter -Wno-missing-field-initializers -Wno-sign-compare -Wno-pointer-sign \
 	-DNEXQUAKE_VERSION='"$(NEXQUAKE_VERSION)"'
 WEBSOCKET_URL_FLAG :=
