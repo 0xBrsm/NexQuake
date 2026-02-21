@@ -16,7 +16,6 @@ The client patches and overlays are a mix of required and additive features. The
 | `vid_wasm.c` | Video and input: WebGL2 context, GPU-side palette rendering (R8 framebuffer + RGBA palette + fragment shader lookup), HTML5 input callbacks, pointer lock. |
 | `snd_wasm.c` | Audio: WASM heap ring buffer read by a `ScriptProcessorNode` callback. Single-threaded, no locks. |
 | `cd_wasm.c` | Emulated CD audio: `EM_JS` bridges to the shell JS CD pipeline (`20-cdaudio.js`). |
-| `chase.c.patch` | Explicit extern prototype for `SV_RecursiveHullCheck`. WASM rejects the implicit declaration. |
 | `net.h.patch` | Strict `PollProcedure` function pointer signature. WASM enforces exact signature matching. |
 | `net_main.c.patch` | `void*` poll signatures and `emscripten_sleep` yields in blocking loops. |
 | `net_dgrm.c.patch` | `void*` poll signatures and `emscripten_sleep` yields during connect. |

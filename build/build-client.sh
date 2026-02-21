@@ -16,10 +16,24 @@ CLIENT_BUILD_DIR="${CLIENT_BUILD_DIR:-${ROOT}/build/tmp/client}"
 
 mkdir -p "${OUT_DIR}"
 
+make_jobs="${NQ_MAKE_JOBS:-}"
+if [[ -z "${make_jobs}" ]]; then
+  if command -v nproc >/dev/null 2>&1; then
+    make_jobs="$(nproc)"
+  else
+    make_jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
+  fi
+fi
+
+if ! [[ "${make_jobs}" =~ ^[0-9]+$ ]] || [[ "${make_jobs}" -lt 1 ]]; then
+  echo "error: NQ_MAKE_JOBS must be a positive integer (got '${make_jobs}')" >&2
+  exit 2
+fi
+
 OUT_DIR="${CLIENT_BUILD_DIR}" "${ROOT}/build/prepare-upstream.sh" client
 
 pushd "${CLIENT_BUILD_DIR}" >/dev/null
-make -f Makefile.emscripten
+make -j "${make_jobs}" -f Makefile.emscripten
 popd >/dev/null
 
 cp -f "${CLIENT_BUILD_DIR}/"{index.html,shell.css,favicon.svg,index.js,index.wasm} "${OUT_DIR}/"

@@ -13,6 +13,7 @@ Optional patches for bugs in the original id Software WinQuake source. These tar
 | `net.h.patch` | build failure | `htonl`/`ntohl` type conflict with `<arpa/inet.h>` |
 | `pr_edict.c.patch` | buffer overflow (progs) | `sprintf` overflows in `PR_ValueString`/`PR_GlobalString` |
 | `sv_main.c.patch` | format string (remote) | Progs string used as `sprintf` format argument |
+| `world.h.patch` | build failure | Missing prototype for `SV_RecursiveHullCheck` causes implicit-declaration errors |
 
 ## Details
 
@@ -45,6 +46,10 @@ Two fixes:
 #### `net.h.patch` — `htonl`/`ntohl` declarations
 
 Original `net.h` declares `htonl`/`ntohl` as `unsigned long` on non-Win/Linux/SunOS platforms. Modern headers (including Emscripten) declare them as `uint32_t`, causing a type conflict when `<arpa/inet.h>` is included. Fix: replace hand-rolled declarations with `#include <arpa/inet.h>`.
+
+#### `world.h.patch` — `SV_RecursiveHullCheck` declaration
+
+`chase.c` and related tracing paths call `SV_RecursiveHullCheck()` without a visible prototype in the stock headers. Older toolchains often warn and continue; newer toolchains can fail builds (especially with stricter defaults). Fix: add the canonical function declaration to `world.h`.
 
 #### `pr_edict.c.patch` — value/global string functions
 

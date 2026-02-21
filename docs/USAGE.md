@@ -41,7 +41,7 @@ See the [Quake Wiki](https://quake.fandom.com/wiki/Console_Commands_(Q1)#Server_
 
 ### Server Launch Plan (`servers.ini`)
 
-`servers.ini` in `GAME_DIR` defines which servers Nexus manages on startup. Each line is a server binary followed by its launch arguments. NexQuake is drop-in compatible with any protocol 15 (NetQuake) server binary; the bundled `nqserver` is the default, but you can substitute any conformant binary. If `servers.ini` is missing or empty, Nexus still launches a single default instance with `nqserver -dedicated`.
+`servers.ini` in `GAME_DIR` defines which servers Nexus manages on startup. Each line is a server binary followed by its launch arguments. NexQuake is drop-in compatible with any protocol 15 (NetQuake) server binary; the bundled `nqserver` is the default, but you can substitute any conformant binary by putting it in `SERVER_BIN` (searched before `BIN_DIR`). If `servers.ini` is missing, the default [quickstart](QUICKSTART.md) process will still launch a basic FFA server.
 
 #### Example `servers.ini`
 ```ini

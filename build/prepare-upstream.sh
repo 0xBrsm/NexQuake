@@ -32,6 +32,7 @@ UPSTREAM_QUAKE_DIR="${UPSTREAM_QUAKE_DIR:-${ROOT}/build/tmp}"
 UPSTREAM_WINQUAKE_DIR="${UPSTREAM_WINQUAKE_DIR:-${UPSTREAM_QUAKE_DIR}/WinQuake}"
 UPSTREAM_REPO="${UPSTREAM_REPO:-https://github.com/id-Software/Quake.git}"
 UPSTREAM_REF="${UPSTREAM_REF:-HEAD}"
+FETCH_ONLY="${FETCH_ONLY:-0}"
 
 server_bits="${SERVER_BITS:-auto}"
 if [[ "${server_bits}" == "auto" ]]; then
@@ -50,6 +51,11 @@ if [[ ! -d "${UPSTREAM_WINQUAKE_DIR}" ]]; then
   fi
   git -C "${UPSTREAM_QUAKE_DIR}" fetch --depth 1 origin "${UPSTREAM_REF}"
   git -C "${UPSTREAM_QUAKE_DIR}" checkout --force FETCH_HEAD
+fi
+
+if [[ "${FETCH_ONLY}" == "1" ]]; then
+  echo "Upstream source ready at ${UPSTREAM_WINQUAKE_DIR}"
+  exit 0
 fi
 
 echo "Preparing upstream source for ${kind} build at ${OUT_DIR} ..."
@@ -118,7 +124,6 @@ if [[ "${kind}" == "client" ]]; then
   apply_patch "${ROOT}/client/net_main.c.patch"
   apply_patch "${ROOT}/client/menu.c.patch"
   apply_patch "${ROOT}/client/net_dgrm.c.patch"
-  apply_patch "${ROOT}/client/chase.c.patch"
   apply_patch "${ROOT}/client/cl_parse.c.patch"
   apply_patch "${ROOT}/client/cl_main.c.patch"
 

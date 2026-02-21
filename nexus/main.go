@@ -55,6 +55,9 @@ func main() {
 	if err := prependPath(cfg.binDir); err != nil {
 		fatalf("Failed to configure PATH: %v", err)
 	}
+	if err := prependPath(cfg.serverBinDir); err != nil {
+		fatalf("Failed to configure PATH: %v", err)
+	}
 
 	// Validate runtime artifacts early; avoids confusing partial startup.
 	if !fileExists(filepath.Join(cfg.clientDir, "index.html")) {
@@ -139,6 +142,7 @@ type runtimeConfig struct {
 	cdDir                  string
 	logsDir                string
 	binDir                 string
+	serverBinDir           string
 	clientDir              string
 	vfsPrefetchConcurrency int
 	clientAutoSMenu        bool
@@ -148,6 +152,7 @@ type runtimeConfig struct {
 
 func loadRuntimeConfig() runtimeConfig {
 	binDir := getEnv("BIN_DIR", "/app/bin")
+	serverBinDir := getEnv("SERVER_BIN", "/app/server")
 	gameDir := getEnv("GAME_DIR", "/app/game")
 	return runtimeConfig{
 		httpPort:               getEnv("HTTP_PORT", "1337"),
@@ -156,7 +161,8 @@ func loadRuntimeConfig() runtimeConfig {
 		cdDir:                  getEnv("CD_DIR", "/app/cd"),
 		logsDir:                getEnv("LOGS_DIR", "/app/logs"),
 		binDir:                 binDir,
-		clientDir:              getEnv("CLIENT_DIR", "/app/client"),
+		serverBinDir:           serverBinDir,
+		clientDir:              getEnv("CLIENT_DIR", "/app/bin/nqwasm"),
 		vfsPrefetchConcurrency: getEnvIntMin("CL_CONCURRENCY", 16, 0),
 		clientAutoSMenu:        getEnvBool01("CL_SMENU", false),
 		clientSendArgs:         getEnvArgs("CL_ARGS", nil),

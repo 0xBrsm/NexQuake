@@ -16,10 +16,24 @@ SERVER_BUILD_DIR="${SERVER_BUILD_DIR:-${ROOT}/build/tmp/server}"
 
 mkdir -p "$(dirname "${OUT}")"
 
+make_jobs="${NQ_MAKE_JOBS:-}"
+if [[ -z "${make_jobs}" ]]; then
+  if command -v nproc >/dev/null 2>&1; then
+    make_jobs="$(nproc)"
+  else
+    make_jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
+  fi
+fi
+
+if ! [[ "${make_jobs}" =~ ^[0-9]+$ ]] || [[ "${make_jobs}" -lt 1 ]]; then
+  echo "error: NQ_MAKE_JOBS must be a positive integer (got '${make_jobs}')" >&2
+  exit 2
+fi
+
 OUT_DIR="${SERVER_BUILD_DIR}" "${ROOT}/build/prepare-upstream.sh" server
 
 pushd "${SERVER_BUILD_DIR}" >/dev/null
-make -f Makefile.dedicated \
+make -j "${make_jobs}" -f Makefile.dedicated \
   ${PLATFORM:+PLATFORM=${PLATFORM}} \
   ${SERVER_BITS:+BITS=${SERVER_BITS}} \
   ${SERVER_TARGET:+TARGET=${SERVER_TARGET}} \
