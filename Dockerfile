@@ -27,6 +27,7 @@ WORKDIR /src
 RUN apk add --no-cache build-base git patch ca-certificates bash
 
 COPY build/ build/
+COPY bugfix/ bugfix/
 COPY server/ server/
 
 ARG TARGETPLATFORM
@@ -40,6 +41,7 @@ WORKDIR /src
 RUN apt-get update && apt-get install -y --no-install-recommends git make patch ca-certificates bash && rm -rf /var/lib/apt/lists/*
 
 COPY build/ build/
+COPY bugfix/ bugfix/
 COPY client/ client/
 
 RUN set -eu; \
