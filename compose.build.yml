@@ -1,14 +1,13 @@
 services:
   nexquake:
-    image: ghcr.io/0xBrsm/nexquake
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "1337:1337"
-    environment:
-      # auto-connect if only one server
-      - CL_SEND_ARGS=+connect
-      # quickstarts with a single FFA server
-      # set to =all to load all mods
-      - QUICKSTART=ffa
+    volumes:
+      - ./game:/app/game:ro
+      - ./logs:/app/logs:rw
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "/app/bin/nexus", "healthcheck"]

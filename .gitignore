@@ -1,0 +1,27 @@
+# Test files
+*_test.go
+testing.go
+
+# Build artifacts
+*.o
+*.tmp
+*.wasm
+*.wasm.map
+*.pak
+*.PAK
+*.tar.gz
+
+# Build scratch + upstream cache
+/build/tmp/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+*:Zone.Identifier
