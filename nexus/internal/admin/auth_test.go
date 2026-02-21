@@ -70,3 +70,30 @@ func TestMatchesAdminMatchers(t *testing.T) {
 		t.Fatalf("expected non-matching group to fail")
 	}
 }
+
+func TestOIDCValidatorIsAdminClaims(t *testing.T) {
+	claims := map[string]any{
+		"email":  "steve@openai.com",
+		"groups": []any{"players", "admin"},
+	}
+
+	allowAny := &oidcValidator{allowAnyJWT: true}
+	if !allowAny.isAdminClaims(claims) {
+		t.Fatalf("expected allowAnyJWT=true to grant admin")
+	}
+
+	matcherBased := &oidcValidator{
+		adminMatchers: map[string][]string{"groups": {"admin"}},
+	}
+	if !matcherBased.isAdminClaims(claims) {
+		t.Fatalf("expected matcher-based admin match to pass")
+	}
+
+	invalidConfiguredMatchers := &oidcValidator{
+		allowAnyJWT:   false,
+		adminMatchers: map[string][]string{},
+	}
+	if invalidConfiguredMatchers.isAdminClaims(claims) {
+		t.Fatalf("expected empty configured matcher set to deny admin")
+	}
+}

@@ -21,7 +21,7 @@ NexQuake is designed to be drop-in compatible with any protocol 15 (NetQuake) de
 | `AUTH_ISSUER` | empty | OIDC Issuer URL (e.g. `https://accounts.google.com`). |
 | `AUTH_AUDIENCE` | empty | OIDC Audience (Client ID). |
 | `AUTH_JWT_HEADER` | `Authorization` | HTTP header for OIDC JWT token. |
-| `AUTH_ADMIN_ID` | empty | Comma-separated list of OIDC claims (e.g. `email:user@example.com`, `group:admins`) required for admin access. Logs will identify users by their request token's `email`, `preferred_username`, or `sub`. |
+| `AUTH_ADMIN_ID` | empty | Optional comma-separated list of OIDC claim matchers (e.g. `email:user@example.com`, `group:admins`) required for admin access. If left empty, any successfully verified JWT from `AUTH_ISSUER` + `AUTH_AUDIENCE` is treated as admin. Logs identify users by `email`, `preferred_username`, `name`, or `sub`. |
 | `AUTH_CLIENT_IP_HEADER` | empty | HTTP header to trust for client IP resolution (e.g. `CF-Connecting-IP`, `X-Forwarded-For`, `X-Real-IP`). If unset or the header value is invalid, falls back to the direct connection IP. |
 | `AUTH_RCON_PASSWORD` | empty | Legacy-style shared secret for in-game `rcon_password`. |
 

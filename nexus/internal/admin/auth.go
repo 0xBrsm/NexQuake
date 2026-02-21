@@ -22,6 +22,7 @@ type oidcValidator struct {
 	verifier      *oidc.IDTokenVerifier
 	headerName    string
 	adminMatchers map[string][]string
+	allowAnyJWT   bool
 }
 
 // InitAuth initializes admin authentication from environment variables and
@@ -42,7 +43,9 @@ func InitAuth(ctx context.Context, infof, debugf func(string, ...any)) (*Auth, e
 	issuer := strings.TrimSpace(os.Getenv("AUTH_ISSUER"))
 	audience := strings.TrimSpace(os.Getenv("AUTH_AUDIENCE"))
 	headerName := strings.TrimSpace(os.Getenv("AUTH_JWT_HEADER"))
-	adminMatchers := parseAdminMatchers(os.Getenv("AUTH_ADMIN_ID"))
+	rawAdminMatcherConfig := os.Getenv("AUTH_ADMIN_ID")
+	adminMatchers := parseAdminMatchers(rawAdminMatcherConfig)
+	allowAnyJWT := strings.TrimSpace(rawAdminMatcherConfig) == ""
 
 	auth := &Auth{
 		rconPassword: rconPassword,
@@ -61,6 +64,12 @@ func InitAuth(ctx context.Context, infof, debugf func(string, ...any)) (*Auth, e
 			verifier:      provider.Verifier(&oidc.Config{ClientID: audience}),
 			headerName:    headerName,
 			adminMatchers: adminMatchers,
+			allowAnyJWT:   allowAnyJWT,
+		}
+		if allowAnyJWT {
+			infof("IdP admin mode: AUTH_ADMIN_ID not set; any valid JWT grants admin")
+		} else if len(adminMatchers) == 0 {
+			infof("IdP admin mode: AUTH_ADMIN_ID has no valid claim matchers; JWTs will not grant admin")
 		}
 	}
 
@@ -137,7 +146,17 @@ func (v *oidcValidator) validate(r *http.Request, debugf func(string, ...any)) (
 		return false, nil
 	}
 
-	return matchesAdminMatchers(claims, v.adminMatchers), claims
+	return v.isAdminClaims(claims), claims
+}
+
+func (v *oidcValidator) isAdminClaims(claims map[string]any) bool {
+	if v == nil {
+		return false
+	}
+	if v.allowAnyJWT {
+		return true
+	}
+	return matchesAdminMatchers(claims, v.adminMatchers)
 }
 
 func parseAdminMatchers(raw string) map[string][]string {

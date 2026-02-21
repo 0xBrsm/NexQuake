@@ -5,7 +5,7 @@ The quickest way to get a NexQuake server running.
 ### 1. Run
 
 ```bash
-docker run -p 1337:1337 -e CL_ARGS=+connect ghcr.io/0xBrsm/nexquake
+docker run -p 1337:1337 -e CL_ARGS=+connect ghcr.io/0xbrsm/nexquake
 ```
 
 ### 2. Play
@@ -19,7 +19,7 @@ That's it. Nexus loads game data automatically on first run from `CFG_DIR/game.j
 Set `QUICKSTART` to choose different game entries at startup (base entries are still included automatically in the quickstart install set):
 
 ```bash
-docker run -p 1337:1337 -e QUICKSTART=ctf,arena ghcr.io/0xBrsm/nexquake
+docker run -p 1337:1337 -e QUICKSTART=ctf,arena ghcr.io/0xbrsm/nexquake
 ```
 
 See the [catalog documentation](../etc/README.md) for available entries and schema details.
@@ -29,7 +29,7 @@ See the [catalog documentation](../etc/README.md) for available entries and sche
 To use retail PAK files, custom mods, or your own server configuration, bind-mount a data directory:
 
 ```bash
-docker run -p 1337:1337 -v ./game:/app/game ghcr.io/0xBrsm/nexquake
+docker run -p 1337:1337 -v ./game:/app/game ghcr.io/0xbrsm/nexquake
 ```
 
 See the [Usage Guide](USAGE.md) for data directory layout, mod installation, and server configuration.

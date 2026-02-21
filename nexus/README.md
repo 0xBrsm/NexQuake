@@ -56,7 +56,7 @@ Authenticates admin sessions and handles rcon commands dispatched from the WebSo
 
 | File | Purpose |
 |------|---------|
-| `auth.go` | Authentication. OIDC JWT verification (`AUTH_ISSUER`, `AUTH_AUDIENCE`, `AUTH_JWT_HEADER`, matcher list `AUTH_ADMIN_ID`) for connection-level admin identity, plus optional `AUTH_RCON_PASSWORD` for in-game shared-secret auth. |
+| `auth.go` | Authentication. OIDC JWT verification (`AUTH_ISSUER`, `AUTH_AUDIENCE`, `AUTH_JWT_HEADER`) for connection-level admin identity with optional matcher list `AUTH_ADMIN_ID` (empty means any valid JWT is admin), plus optional `AUTH_RCON_PASSWORD` for in-game shared-secret auth. |
 | `rcon.go` | Admin frame handler. Parses the rcon payload (password, optional target port, command), authorizes the frame, and dispatches to either a Nexus-level command or a server-level command. |
 | `cmds.go` | Nexus-level command dispatch and non-session admin helpers (`help`, `tail`, `slist`, `start`, `stop`, `restart`, `remove`, `launch`). |
 | `sessions.go` | Session-oriented admin commands and formatting/parsing helpers (`session list`, `session info`, `session ban`, status slot/address matching for targeted kick). |

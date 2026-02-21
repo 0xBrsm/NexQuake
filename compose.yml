@@ -1,6 +1,6 @@
 services:
   nexquake:
-    image: ghcr.io/0xBrsm/nexquake
+    image: ghcr.io/0xbrsm/nexquake
     ports:
       - "1337:1337"
     environment:
