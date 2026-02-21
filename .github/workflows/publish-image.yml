@@ -11,7 +11,6 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/nexquake
 
 jobs:
   prepare:
@@ -20,6 +19,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       build_time: ${{ steps.build_time.outputs.build_time }}
+      image_name: ${{ steps.image.outputs.image_name }}
 
     steps:
       - name: Resolve release version
@@ -34,6 +34,13 @@ jobs:
       - name: Resolve build timestamp
         id: build_time
         run: echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve image name
+        id: image
+        shell: bash
+        run: |
+          owner_lc="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "image_name=${owner_lc}/nexquake" >> "$GITHUB_OUTPUT"
 
   build-amd64:
     name: Build amd64 Image
@@ -60,7 +67,7 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:tmp-${{ github.sha }}-amd64
+          tags: ${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}:tmp-${{ github.sha }}-amd64
           build-args: |
             GIT_SHA=${{ github.sha }}
             BUILD_TIME=${{ needs.prepare.outputs.build_time }}
@@ -93,7 +100,7 @@ jobs:
           context: .
           push: true
           platforms: linux/arm64
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:tmp-${{ github.sha }}-arm64
+          tags: ${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}:tmp-${{ github.sha }}-arm64
           build-args: |
             GIT_SHA=${{ github.sha }}
             BUILD_TIME=${{ needs.prepare.outputs.build_time }}
@@ -121,7 +128,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}
           tags: |
             type=semver,pattern={{raw}}
             type=raw,value=latest
@@ -132,6 +139,6 @@ jobs:
             [[ -z "${tag}" ]] && continue
             docker buildx imagetools create \
               --tag "${tag}" \
-              "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:tmp-${{ github.sha }}-amd64" \
-              "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:tmp-${{ github.sha }}-arm64"
+              "${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}:tmp-${{ github.sha }}-amd64" \
+              "${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}:tmp-${{ github.sha }}-arm64"
           done <<< "${{ steps.meta.outputs.tags }}"

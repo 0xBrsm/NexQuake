@@ -67,9 +67,9 @@ func InitAuth(ctx context.Context, infof, debugf func(string, ...any)) (*Auth, e
 			allowAnyJWT:   allowAnyJWT,
 		}
 		if allowAnyJWT {
-			infof("IdP admin mode: AUTH_ADMIN_ID not set; any valid JWT grants admin")
+			debugf("IdP admin mode: AUTH_ADMIN_ID not set; any valid JWT grants admin")
 		} else if len(adminMatchers) == 0 {
-			infof("IdP admin mode: AUTH_ADMIN_ID has no valid claim matchers; JWTs will not grant admin")
+			debugf("IdP admin mode: AUTH_ADMIN_ID has no valid claim matchers; JWTs will not grant admin")
 		}
 	}
 
