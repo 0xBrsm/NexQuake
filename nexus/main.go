@@ -159,7 +159,7 @@ func loadRuntimeConfig() runtimeConfig {
 		clientDir:              getEnv("CLIENT_DIR", "/app/client"),
 		vfsPrefetchConcurrency: getEnvIntMin("CL_CONCURRENCY", 16, 0),
 		clientAutoSMenu:        getEnvBool01("CL_SMENU", false),
-		clientSendArgs:         getEnvArgs("CL_SEND_ARGS", nil),
+		clientSendArgs:         getEnvArgs("CL_ARGS", nil),
 		clientURLArgs:          getEnvBool01("CL_URL_ARGS", false),
 	}
 }

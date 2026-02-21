@@ -5,7 +5,7 @@ services:
       - "1337:1337"
     environment:
       # auto-connect if only one server
-      - CL_SEND_ARGS=+connect
+      - CL_ARGS=+connect
       # quickstarts with a single FFA server
       # set to =all to load all mods
       - QUICKSTART=ffa

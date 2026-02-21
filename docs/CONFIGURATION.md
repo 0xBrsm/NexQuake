@@ -31,15 +31,15 @@ NexQuake is designed to be drop-in compatible with any protocol 15 (NetQuake) de
 |------|---------|-------------|
 | `CL_CONCURRENCY` | `16` | Sets the number of game files to download simultaneously. Set `0` for unbounded (capped by queue size). |
 | `CL_SMENU` | `0` | If `1`, auto-opens the server search menu on client start up to make joining a server easier. |
-| `CL_SEND_ARGS` | empty | Set launch arguments for client start up in shell-style strings (i.e. use single quotes for multiple args). |
+| `CL_ARGS` | empty | Set launch arguments for client start up in shell-style strings (i.e. use single quotes for multiple args). |
 | `CL_URL_ARGS` | `0` | If `1`, lets players add extra client startup arguments in the URL after `?`, separated by `&`. |
 
-### CL...ARGS Examples
+### CL*ARGS Examples
 
 #### Example: Always Disable Sound
 
 ```bash
-CL_SEND_ARGS=-nosound
+CL_ARGS=-nosound
 CL_URL_ARGS=0
 ```
 
@@ -48,14 +48,14 @@ CL_URL_ARGS=0
 This works in `bash` because the whole value is single-quoted:
 
 ```bash
-CL_SEND_ARGS='-nosound +name "Player1"'
+CL_ARGS='-nosound +name "Player1"'
 CL_URL_ARGS=0
 ```
 
 If you prefer double quotes around the whole value, escape the inner quotes:
 
 ```bash
-CL_SEND_ARGS="-nosound +name \"Player1\""
+CL_ARGS="-nosound +name \"Player1\""
 CL_URL_ARGS=0
 ```
 
@@ -64,7 +64,7 @@ CL_URL_ARGS=0
 Enable URL arguments:
 
 ```bash
-CL_SEND_ARGS='-nosound +skill 3 +name "BrowserPlayer"'
+CL_ARGS='-nosound +skill 3 +name "BrowserPlayer"'
 CL_URL_ARGS=1
 ```
 

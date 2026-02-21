@@ -5,7 +5,7 @@ The quickest way to get a NexQuake server running.
 ### 1. Run
 
 ```bash
-docker run -p 1337:1337 ghcr.io/0xBrsm/nexquake
+docker run -p 1337:1337 -e CL_ARGS=+connect ghcr.io/0xBrsm/nexquake
 ```
 
 ### 2. Play
