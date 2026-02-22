@@ -9,6 +9,7 @@
     var USER_GAME_ROOT = USERFS_ROOT + '/game';
     var USER_CD_ROOT = USERFS_ROOT + '/cd';
     var USER_LINK_BASENAME = '.usr';
+    var USER_CFG_SEED_MARKER = USERFS_ROOT + '/.nq.cfgseed-v1';
 
     function ensureGameDir(mod) {
       mod = normalizeGameName(mod);
@@ -389,6 +390,70 @@
       });
     }
 
+    function syncUserFS() {
+      return new Promise(function(resolve) {
+        try {
+          FS.syncfs(false, function(err) {
+            if (err) console.warn('Failed to sync saved data:', err);
+            resolve();
+          });
+        } catch (e) {
+          console.warn('Failed to sync saved data:', e);
+          resolve();
+        }
+      });
+    }
+
+    function seedUserCfgFilesOnce() {
+      var seedGame;
+      var preloadRoot;
+      var targetRoot;
+      var autoexecData;
+      var nexquakeData;
+      var markerValue = '';
+
+      seedGame = normalizeGameName(baseGame || getBaseGameName());
+      targetRoot = USER_GAME_ROOT + '/' + seedGame;
+
+      try {
+        FS.stat(USER_CFG_SEED_MARKER);
+        try {
+          markerValue = String(FS.readFile(USER_CFG_SEED_MARKER, { encoding: 'utf8' }) || '').trim();
+        } catch (markerReadErr) {
+          markerValue = '';
+        }
+        if (markerValue !== 'missing')
+          return Promise.resolve();
+      } catch (e) {
+        var markerMissing = e && e.name === 'ErrnoError' && e.errno === 44;
+        if (!markerMissing) {
+          console.error('Failed to stat user cfg seed marker:', e);
+          return Promise.resolve();
+        }
+      }
+
+      try {
+        preloadRoot = '/nqseed/' + seedGame;
+        autoexecData = FS.readFile(preloadRoot + '/autoexec.cfg');
+        nexquakeData = FS.readFile(preloadRoot + '/nexquake.cfg');
+      } catch (missingErr) {
+        console.error('Failed to load cfg seed payload from index.data:', missingErr);
+        return Promise.resolve();
+      }
+
+      try {
+        safeMkdirTree(targetRoot);
+        FS.writeFile(targetRoot + '/autoexec.cfg', autoexecData);
+        FS.writeFile(targetRoot + '/nexquake.cfg', nexquakeData);
+        FS.writeFile(USER_CFG_SEED_MARKER, '1\n');
+      } catch (err) {
+        console.error('Failed to seed user cfg files:', err);
+        return Promise.resolve();
+      }
+
+      return syncUserFS();
+    }
+
     function installManifest(mod, entries) {
       mod = normalizeGameName(mod);
       if (!Array.isArray(entries)) {
@@ -519,10 +584,14 @@
         nqSetBootstrapPhase(3);
         Module.addRunDependency(syncDependencyId);
         Module.removeRunDependency(manifestDependencyId);
-        return syncSavedData().finally(function() {
-          nqSetBootstrapRunning();
-          Module.removeRunDependency(syncDependencyId);
-        });
+        return syncSavedData()
+          .then(function() {
+            return seedUserCfgFilesOnce();
+          })
+          .finally(function() {
+            nqSetBootstrapRunning();
+            Module.removeRunDependency(syncDependencyId);
+          });
       })
       .catch(function(err) {
         console.error('Failed to preload manifest bundle (base game required):', err);

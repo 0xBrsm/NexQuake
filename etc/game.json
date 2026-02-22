@@ -19,7 +19,7 @@
   },
   {
     "game": "ffa",
-    "server": ["autoexec.cfg", "server.cfg"]
+    "server": ["server.cfg"]
   },
   {
     "game": "fvf",
@@ -28,7 +28,6 @@
   {
     "base": "id1",
     "common": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/quake106.zip",
-                "https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/lq-pak1.zip"],
-    "client": ["config.cfg"]
+                "https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/lq-pak1.zip"]
   }
 ]

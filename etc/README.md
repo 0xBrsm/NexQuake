@@ -4,8 +4,8 @@ The files in `src/etc` define Nexus startup defaults:
 
 - `game.json`: quickstart catalog for downloadable mod data
 - `servers.ini`: default launch template copied on first run
-- `config.cfg`: a modern WASD client config
-- `autoexec.cfg/server.cfg`: simple server config for the default ffa server
+- `autoexec.cfg` + `nexquake.cfg`: default client cfg seed files (first browser load)
+- `server.cfg`: simple server config for the default ffa server
 
 Use `QUICKSTART=<name[,name...]>` to include extra catalog entries at startup.
 If `QUICKSTART` is unset, Nexus uses `QUICKSTART=ffa`.
@@ -18,6 +18,10 @@ Any catalog entry with a `base` field is always included.
 3. Nexus parses `GAME_DIR/servers.ini` for `-game` values and then always adds all `base` entries to the quickstart install set.
 4. For each selected game, Nexus installs `common`, `server`, and `client` layer assets into `GAME_DIR/<mod>/<layer>/`.
 5. A non-empty layer directory is skipped unless that catalog entry sets `"force": true`.
+
+Client cfg seed flow:
+- During client build, `autoexec.cfg` and `nexquake.cfg` are bundled into `index.data`.
+- On the first browser launch only, the client copies them into `/NexQuake/game/<base-game>/` and writes a marker so this never repeats.
 
 ## Built-In Catalog Entries
 
@@ -46,7 +50,6 @@ Any catalog entry with a `base` field is always included.
   {
     "base": "id1",
     "common": ["https://example.com/pak0.zip", "https://example.com/pak1.zip"],
-    "client": ["config.cfg"],
     "server": [],
     "force": false
   },
@@ -69,7 +72,7 @@ Any catalog entry with a `base` field is always included.
 
 At least one of `common`, `client`, or `server` must be non-empty.
 URLs/paths can point to `.zip` files (extracted into the layer) or direct files (copied by source filename).
-Local paths without a URI scheme are resolved relative to `CFG_DIR` (for example `config.cfg`).
+Local paths without a URI scheme are resolved relative to `CFG_DIR` (for example `server.cfg`).
 
 ## Asset Repository
 

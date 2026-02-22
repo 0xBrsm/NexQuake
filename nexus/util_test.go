@@ -189,6 +189,48 @@ func TestGetEnvArgs(t *testing.T) {
 	})
 }
 
+func clearRuntimeConfigEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"HTTP_PORT",
+		"GAME_DIR",
+		"CFG_DIR",
+		"CD_DIR",
+		"LOGS_DIR",
+		"BIN_DIR",
+		"SERVER_DIR",
+		"CLIENT_DIR",
+		"CL_CONCURRENCY",
+		"CL_SMENU",
+		"CL_ARGS",
+		"CL_URL_ARGS",
+	} {
+		t.Setenv(key, "")
+	}
+}
+
+func TestLoadRuntimeConfig_DefaultClientAndServerDirs(t *testing.T) {
+	clearRuntimeConfigEnv(t)
+
+	cfg := loadRuntimeConfig()
+	if cfg.serverBinDir != "/app/server" {
+		t.Fatalf("serverBinDir=%q want %q", cfg.serverBinDir, "/app/server")
+	}
+	if cfg.clientDir != "/app/bin/nqwasm" {
+		t.Fatalf("clientDir=%q want %q", cfg.clientDir, "/app/bin/nqwasm")
+	}
+}
+
+func TestLoadRuntimeConfig_ServerDirOverridesDefault(t *testing.T) {
+	clearRuntimeConfigEnv(t)
+	t.Setenv("SERVER_DIR", "/srv/new")
+
+	cfg := loadRuntimeConfig()
+	if cfg.serverBinDir != "/srv/new" {
+		t.Fatalf("serverBinDir=%q want %q", cfg.serverBinDir, "/srv/new")
+	}
+}
+
 func TestAuditf_WritesToNexusLogAndTailRegardlessLogLevel(t *testing.T) {
 	oldLevel := currentLogLevel
 	currentLogLevel = logInfo

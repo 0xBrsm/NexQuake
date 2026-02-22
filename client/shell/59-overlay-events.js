@@ -66,14 +66,15 @@
       ev.stopPropagation();
     }
 
+    var overlayMouseTargets = [ctx.panel, ctx.toggle, ctx.editor];
     ['mousedown', 'mouseup', 'mousemove', 'click', 'dblclick', 'contextmenu'].forEach(function(eventName) {
-      ctx.panel.addEventListener(eventName, stopPropagation);
-      ctx.toggle.addEventListener(eventName, stopPropagation);
-      ctx.editor.addEventListener(eventName, stopPropagation);
+      overlayMouseTargets.forEach(function(el) {
+        el.addEventListener(eventName, stopPropagation);
+      });
     });
-    ctx.panel.addEventListener('wheel', stopPropagation, { passive: true });
-    ctx.toggle.addEventListener('wheel', stopPropagation, { passive: true });
-    ctx.editor.addEventListener('wheel', stopPropagation, { passive: true });
+    overlayMouseTargets.forEach(function(el) {
+      el.addEventListener('wheel', stopPropagation, { passive: true });
+    });
 
     ['keydown', 'keyup', 'keypress'].forEach(function(eventName) {
       document.addEventListener(eventName, function(ev) {

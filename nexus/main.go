@@ -152,7 +152,7 @@ type runtimeConfig struct {
 
 func loadRuntimeConfig() runtimeConfig {
 	binDir := getEnv("BIN_DIR", "/app/bin")
-	serverBinDir := getEnv("SERVER_BIN", "/app/server")
+	serverBinDir := getEnv("SERVER_DIR", "/app/server")
 	gameDir := getEnv("GAME_DIR", "/app/game")
 	return runtimeConfig{
 		httpPort:               getEnv("HTTP_PORT", "1337"),

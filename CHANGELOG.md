@@ -2,6 +2,16 @@
 
 Code evolution in `src/` — client, Nexus (relay), and server.
 
+## 1.0.1
+
+### Fixed
+- Mouse wheel input in the WASM client is now deterministic across browser delta modes (`pixel`/`line`/`page`) and smoother on mixed ratchet/trackpad hardware.
+
+### Changed
+- Client bootstrap now seeds `autoexec.cfg` and `nexquake.cfg` into IDBFS once on first load.
+- Quickstart defaults in `src/etc` were updated for the config split (`config.cfg` -> `nexquake.cfg`) and `autoexec.cfg` now executes `nexquake.cfg`.
+- Built-in quickstart `id1` no longer installs a client cfg from `game.json`; client defaults now come from the first-load seed flow.
+
 ## 1.0.0
 
 ### Added

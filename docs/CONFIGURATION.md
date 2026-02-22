@@ -2,7 +2,7 @@
 
 Configure Nexus with the following environment variables. Defaults are provided for a standard Docker setup.
 
-NexQuake is designed to be drop-in compatible with any protocol 15 (NetQuake) dedicated server binary. The bundled `nqserver` is the stock WinQuake engine with minimal patches. Put custom server binaries in `SERVER_BIN`; Nexus prepends that directory to `PATH` ahead of `BIN_DIR`.
+NexQuake is designed to be drop-in compatible with any protocol 15 (NetQuake) dedicated server binary. The bundled `nqserver` is the stock WinQuake engine with minimal patches. Put custom server binaries in `SERVER_DIR`; Nexus prepends that directory to `PATH` ahead of `BIN_DIR`.
 
 ## Startup Options
 
@@ -87,5 +87,5 @@ Notes:
 | `CD_DIR` | `/app/cd` | Root directory for CD audio tracks (`.ogg`/`.mp3`). |
 | `LOGS_DIR` | `/app/logs` | Where Nexus and server logs are written. |
 | `BIN_DIR` | `/app/bin` | Core runtime binaries and bundled assets (`nexus`, `nqserver`, `nqwasm/`). |
-| `SERVER_BIN` | `/app/server` | Bind-mountable override directory for custom server binaries. Searched before `BIN_DIR`. |
+| `SERVER_DIR` | `/app/server` | Bind-mountable override directory for custom server binaries. Searched before `BIN_DIR`. |
 | `CLIENT_DIR` | `/app/bin/nqwasm` | Location of WASM client assets (`index.wasm`, `index.html`). |

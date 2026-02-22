@@ -159,27 +159,66 @@ static EM_BOOL on_mouse_btn(int type, const EmscriptenMouseEvent *e, void *ud) {
 	return 1;
 }
 
+static void emit_wheel_key(int dir) {
+	int key = (dir < 0) ? K_MWHEELUP : K_MWHEELDOWN;
+	Key_Event(key, 1);
+	Key_Event(key, 0);
+}
+
 static EM_BOOL on_wheel(int t, const EmscriptenWheelEvent *e, void *ud) {
-    static float accum;
-    if (js_overlay_modal_open()) return 0;
-    if (!mouse_avail) return 0;
+	static float accum;
+	static int accum_dir;
+	static double last_emit_ms;
+	static int last_emit_dir;
+	const float pixel_notch_cutoff = 35.0f;
+	const double notch_cooldown_ms = 30.0;
+	const float pixel_tick = 60.0f;
+	float dy;
+	int dir;
+	double now_ms;
+	qboolean large_pixel_step;
+	qboolean non_pixel_mode;
 
-    float dy = (float)e->deltaY;
-    if (e->deltaMode == DOM_DELTA_PIXEL)
-        dy /= 120.0f; // match classic WM_MOUSEWHEEL tick size
-    else if (e->deltaMode == DOM_DELTA_PAGE)
-        dy *= 3.0f;
+	if (js_overlay_modal_open()) return 0;
+	if (!mouse_avail) return 0;
 
-    accum += dy;
-    while (accum <= -1.0f) {
-        Key_Event(K_MWHEELUP, 1); Key_Event(K_MWHEELUP, 0);
-        accum += 1.0f;
-    }
-    while (accum >= 1.0f) {
-        Key_Event(K_MWHEELDOWN, 1); Key_Event(K_MWHEELDOWN, 0);
-        accum -= 1.0f;
-    }
-    return 1;
+	dy = (float)e->deltaY;
+	if (dy == 0.0f) return 1;
+	dir = (dy < 0.0f) ? -1 : 1;
+	now_ms = emscripten_get_now();
+	large_pixel_step = (dy <= -pixel_notch_cutoff || dy >= pixel_notch_cutoff);
+	non_pixel_mode = (e->deltaMode != DOM_DELTA_PIXEL);
+
+	// Line/page units and large pixel deltas are treated as single notches.
+	// Large pixel steps get a short same-direction cooldown to coalesce
+	// bursty multi-event ratchet notches.
+	if (non_pixel_mode || large_pixel_step) {
+		if (large_pixel_step && dir == last_emit_dir && (now_ms - last_emit_ms) < notch_cooldown_ms)
+			return 1;
+		emit_wheel_key(dir);
+		last_emit_ms = now_ms;
+		last_emit_dir = dir;
+		accum = 0.0f;
+		accum_dir = 0;
+		return 1;
+	}
+
+	// Smooth wheels/trackpads emit many small pixel deltas per gesture.
+	// Accumulate fractional movement until we cross one notch.
+	if (accum_dir && dir != accum_dir)
+		accum = 0.0f;
+	accum_dir = dir;
+	accum += dy / pixel_tick;
+
+	while (accum <= -1.0f) {
+		emit_wheel_key(-1);
+		accum += 1.0f;
+	}
+	while (accum >= 1.0f) {
+		emit_wheel_key(1);
+		accum -= 1.0f;
+	}
+	return 1;
 }
 
 static EM_BOOL on_ptrlock(int t, const EmscriptenPointerlockChangeEvent *e, void *ud) {

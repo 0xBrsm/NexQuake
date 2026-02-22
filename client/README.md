@@ -2,7 +2,7 @@
 
 The browser client: Quake compiled to WebAssembly with a from-scratch native WASM platform layer for software rendering. See [`ARCHITECTURE.md`](../docs/ARCHITECTURE.md) for the full technical breakdown (GPU-side palette conversion, audio pipeline, input handling).
 
-The client patches and overlays are a mix of required and additive features. These files overlay the upstream id Software Quake source during build. The build system clones `id-Software/Quake`, applies patches, copies these overlays in, and compiles with Emscripten. The output is `index.html`, `shell.css`, `favicon.svg`, `index.js`, and `index.wasm`.
+The client patches and overlays are a mix of required and additive features. These files overlay the upstream id Software Quake source during build. The build system clones `id-Software/Quake`, applies patches, copies these overlays in, and compiles with Emscripten. The output is `index.html`, `shell.css`, `favicon.svg`, `index.js`, `index.wasm`, and `index.data`.
 
 ## Features
 
@@ -75,7 +75,7 @@ The `shell/` directory contains the JavaScript runtime that quickstarts the WASM
 
 **Startup and VFS** — `00-core.js`, `10-module.js`, `11-remote-vfs.js`, `12-args.js`, `13-persist.js`
 
-On page load, the shell fetches a manifest bundle from `/start`, builds a virtual filesystem in Emscripten's VFS, and syncs persistent user data from IndexedDB (IDBFS). Remote game assets are mounted as lazy nodes under `/nexusfs/<mod>/` and downloaded on first read via synchronous XHR with retry and exponential backoff. User mod files live in `/NexQuake/game/<mod>/` and are linked at `/nexusfs/.usr/<mod>/`; user CD uploads live in `/NexQuake/cd` and are exposed at `/cd`. This keeps Quake search paths layered so user files override remote assets. Asset URLs are computed from an FNV-1a hash of the manifest reference and file key, producing immutable CDN-friendly paths. Startup args come from Nexus runtime config (`CL_ARGS`), with optional URL arg append when `CL_URL_ARGS=1` (for example `?-nosound&+exec&ctf.cfg`). URL parsing splits on `&`, so each `&`-separated value maps to one argv token. Tokens are passed to Quake as command-line args (including normal `stuffcmds` handling for `+` tokens).
+On page load, the shell fetches a manifest bundle from `/start`, builds a virtual filesystem in Emscripten's VFS, and syncs persistent user data from IndexedDB (IDBFS). Remote game assets are mounted as lazy nodes under `/nexusfs/<mod>/` and downloaded on first read via synchronous XHR with retry and exponential backoff. User mod files live in `/NexQuake/game/<mod>/` and are linked at `/nexusfs/.usr/<mod>/`; user CD uploads live in `/NexQuake/cd` and are exposed at `/cd`. This keeps Quake search paths layered so user files override remote assets. Asset URLs are computed from an FNV-1a hash of the manifest reference and file key, producing immutable CDN-friendly paths. At first browser startup, bundled seed cfg files (`/nqseed/<base>/autoexec.cfg` and `/nqseed/<base>/nexquake.cfg`) are copied once into the user IDBFS tree and guarded by `/NexQuake/.nq.cfgseed-v1`. Startup args come from Nexus runtime config (`CL_ARGS`), with optional URL arg append when `CL_URL_ARGS=1` (for example `?-nosound&+exec&ctf.cfg`). URL parsing splits on `&`, so each `&`-separated value maps to one argv token. Tokens are passed to Quake as command-line args (including normal `stuffcmds` handling for `+` tokens).
 
 **CD Audio** — `20-cdaudio.js`, `cd_wasm.c`
 
@@ -108,4 +108,4 @@ cp /path/to/client/*.c /path/to/client/*.h .
 make -f Makefile.emscripten
 ```
 
-Output: `index.html`, `shell.css`, `favicon.svg`, `index.js`, `index.wasm`
+Output: `index.html`, `shell.css`, `favicon.svg`, `index.js`, `index.wasm`, `index.data`

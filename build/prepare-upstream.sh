@@ -132,6 +132,8 @@ if [[ "${kind}" == "client" ]]; then
     echo "failed to resolve GAMENAME from ${OUT_DIR}/quakedef.h" >&2
     exit 1
   fi
+  mkdir -p "${OUT_DIR}/seed/${client_gamename}"
+  cp "${ROOT}/etc/autoexec.cfg" "${ROOT}/etc/nexquake.cfg" "${OUT_DIR}/seed/${client_gamename}/"
   client_remote_root_basename="nexusfs"
 
   client_gamename_escaped="$(printf '%s' "${client_gamename}" | sed -e 's/[\/&]/\\&/g')"

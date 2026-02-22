@@ -203,15 +203,18 @@ function nqStartGameFromEnter() {
   }
 }
 
-var Module = {
+Module = Object.assign(Module || {}, {
   nexquakeBaseGameName: NEXQUAKE_GAMENAME,
   nexquakeAutoSMenuOnFirstLoad: false,
   nexquakeSendArgs: [],
   nexquakeURLArgs: false,
+  dataFileDownloads: (Module && Module.dataFileDownloads && typeof Module.dataFileDownloads === 'object')
+    ? Module.dataFileDownloads
+    : {},
   noInitialRun: true,
   nqPerModConfig: nqStoredPerModConfig === null ? false : !!nqStoredPerModConfig,
-  preRun: [],
-  postRun: [],
+  preRun: Array.isArray(Module && Module.preRun) ? Module.preRun : [],
+  postRun: Array.isArray(Module && Module.postRun) ? Module.postRun : [],
   print: (function() {
     outputElement.value = ''; // clear browser cache
     return function(text) {
@@ -316,7 +319,7 @@ var Module = {
     outputElement.style.display = 'none';
     nqShowEnterButton();
   }
-};
+});
 
 if (loaderReloadButton) {
   loaderReloadButton.onclick = function() {
