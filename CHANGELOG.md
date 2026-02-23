@@ -4,6 +4,13 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.4.1
+
+### Fixed
+- Client remote VFS lazy-load recovery now throws filesystem `ENOENT` on failed remote fetches and triggers throttled `/start` manifest refresh retries with backoff, preventing repeated manifest-refresh request loops after idle/resume transport failures.
+- RCON server-command replies now continue capture long enough for outputs delayed by the audited `echo ...; wait; wait; wait; <cmd>` wrapper, so cvar queries like `timelimit` no longer return only the admin audit line.
+- Docker `wasm-builder` now copies `etc/` into the build context so client seed cfgs (`autoexec.cfg`, `nexquake.cfg`) are present when bundling `/nqseed`, fixing CI image builds that failed with missing seed cfg errors.
+
 ## 1.4.0
 
 ### Fixed

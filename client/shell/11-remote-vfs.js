@@ -54,14 +54,15 @@
       function ensureLoaded() {
         if (node.contents) return;
         if (node.nqRetryAfterMs && Date.now() < node.nqRetryAfterMs) {
-          throw new Error(node.nqLastLoadError || ('remote file fetch throttled for ' + node.url));
+          throw new FS.ErrnoError(44); // ENOENT
         }
 
         function markErrorAndThrow(error) {
           node.nqErrorCount++;
           node.nqRetryAfterMs = Date.now() + Math.min(15000, 500 * Math.pow(2, Math.min(node.nqErrorCount, 5)));
           node.nqLastLoadError = String(error && error.message ? error.message : error);
-          throw error;
+          requestOnDemandManifestRefresh();
+          throw new FS.ErrnoError(44); // ENOENT
         }
 
         // Synchronous XHR is still permitted on the main thread, but Chrome disallows
@@ -476,6 +477,8 @@
     var manifestRefreshIntervalMs = 13 * 60 * 1000;
     var manifestRefreshInFlight = null;
     var manifestRefreshLoopStarted = false;
+    var onDemandManifestRefreshAfterMs = 0;
+    var onDemandManifestRefreshFailureCount = 0;
 
     function normalizeStartBundle(rawBundle) {
       var out = Object.create(null);
@@ -540,6 +543,21 @@
           manifestRefreshInFlight = null;
         });
       return manifestRefreshInFlight;
+    }
+
+    function requestOnDemandManifestRefresh() {
+      var now = Date.now();
+      if (now < onDemandManifestRefreshAfterMs)
+        return;
+      onDemandManifestRefreshAfterMs = now + 5000;
+      refreshStartBundle().then(function() {
+        onDemandManifestRefreshFailureCount = 0;
+      }, function(err) {
+        onDemandManifestRefreshFailureCount++;
+        onDemandManifestRefreshAfterMs =
+          Date.now() + Math.min(60000, 1000 * Math.pow(2, Math.min(onDemandManifestRefreshFailureCount, 6)));
+        console.warn('Failed to refresh manifest bundle:', err);
+      });
     }
 
     function startManifestRefreshLoop() {

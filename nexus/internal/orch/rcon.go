@@ -9,6 +9,10 @@ import (
 var (
 	serverCommandCaptureMaxWait  = 750 * time.Millisecond
 	serverCommandCaptureIdleWait = 100 * time.Millisecond
+	// Audited commands prepend an `echo` marker and `wait` frames before the
+	// actual command to keep per-server admin provenance in logs.
+	// Allow a longer idle window so replies like cvar reads are not cut off.
+	serverCommandCaptureAuditIdleWait = 300 * time.Millisecond
 )
 
 func trimTrailingCommandSemicolons(cmd string) string {
@@ -125,13 +129,17 @@ func (m *ServerManager) ExecServerCmd(port int, cmd, actorID string) (string, er
 		return formatServerTailReply(lines), nil
 	}
 	execCmd := cmd
+	captureIdleWait := serverCommandCaptureIdleWait
 	if strings.TrimSpace(actorID) != "" {
 		execCmd = appendServerCommandAuditEcho(cmd, actorID)
+		if captureIdleWait < serverCommandCaptureAuditIdleWait {
+			captureIdleWait = serverCommandCaptureAuditIdleWait
+		}
 	}
 	output, err := srv.writeConsoleAndCaptureFiltered(
 		execCmd,
 		serverCommandCaptureMaxWait,
-		serverCommandCaptureIdleWait,
+		captureIdleWait,
 		serverCommandReplyFilter(execCmd),
 	)
 	if err != nil {

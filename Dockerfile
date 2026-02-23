@@ -83,6 +83,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git make patch 
 COPY build/ build/
 COPY bugfix/ bugfix/
 COPY client/ client/
+COPY etc/ etc/
 ARG NQ_VERSION=dev
 
 RUN set -eu; \

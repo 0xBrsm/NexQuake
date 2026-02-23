@@ -206,6 +206,49 @@ func TestExecServerCmd_SuppressesEchoAndCapturesDelayedOutput(t *testing.T) {
 	}
 }
 
+func TestExecServerCmd_AuditEchoCapturesOutputAfterWaitGap(t *testing.T) {
+	oldMaxWait := serverCommandCaptureMaxWait
+	oldIdleWait := serverCommandCaptureIdleWait
+	t.Cleanup(func() {
+		serverCommandCaptureMaxWait = oldMaxWait
+		serverCommandCaptureIdleWait = oldIdleWait
+	})
+	serverCommandCaptureMaxWait = 600 * time.Millisecond
+	serverCommandCaptureIdleWait = 80 * time.Millisecond
+
+	process, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		t.Fatalf("FindProcess(self): %v", err)
+	}
+	ptyRead, ptyWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	t.Cleanup(func() { _ = ptyRead.Close(); _ = ptyWrite.Close() })
+
+	srv := &managedServer{Cmd: &exec.Cmd{Process: process}, Console: newServerConsole(ptyWrite)}
+	go func() {
+		buf := make([]byte, 256)
+		_, _ = ptyRead.Read(buf)
+		srv.Console.publishLine("alice@example.com: timelimit\n")
+		time.Sleep(220 * time.Millisecond)
+		srv.Console.publishLine(`"timelimit" is "20"` + "\n")
+	}()
+
+	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	rec := mgr.RegisterServerLaunch(serverLaunch{Slot: 0})
+	mgr.UpdatePort(rec, 26000)
+	rec.Running = srv
+
+	reply, err := mgr.ExecServerCmd(26000, "timelimit", "alice@example.com")
+	if err != nil {
+		t.Fatalf("ExecServerCmd error = %v", err)
+	}
+	if !strings.Contains(reply, `"timelimit" is "20"`) {
+		t.Fatalf("expected delayed cvar reply to be captured, got %q", reply)
+	}
+}
+
 func TestExecServerCmd_TailDefaultsToLastTenLines(t *testing.T) {
 	process, err := os.FindProcess(os.Getpid())
 	if err != nil {
