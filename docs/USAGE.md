@@ -77,6 +77,8 @@ Additional server arguments can be found in Quake's [TECHINFO.TXT](https://githu
 The engine tries to load the cvar value as a file first; if not found, it tokenizes the value itself.
 Parsing uses Quake token rules (`COM_Parse`): commas/newlines/tabs are treated as separators and `//` comments are ignored.
 
+If `timelimit` is enabled and no players are connected, the engine also forces `changelevel` at `(timelimit + 1)` minutes to avoid the known no-player mapchange hang in stock QuakeC. It picks the next `mapcycle` map when set, otherwise uses `e1m1` from `start`, otherwise uses the map's `trigger_changelevel` target, and falls back to reloading the current map.
+
 ### Entity Overrides
 
 Some mods, like CTF, ship with `.ent` files. These traditionally require extracting and recompiling the retail maps with qbsp. Instead, NexQuake includes a server-side patch for `.ent` files that overrides entity placement in maps when loaded. Just place the files (e.g. `dm4.ent`) in `game/<mod>/server/maps/`.

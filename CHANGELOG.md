@@ -1,8 +1,25 @@
 # Changelog
 
-Code evolution in `src/` — client, Nexus (relay), and server.
+Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
-## 1.0.1
+Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
+
+## 1.4.0
+
+### Fixed
+- Dedicated server map rotation now forces `changelevel` at `(timelimit + 1)` minutes when no players are connected, preventing the known no-player QuakeC mapchange hang (`mapcycle` first, then `start` -> `e1m1`, then map `trigger_changelevel` target, otherwise current map).
+- Dedicated server map spawn now falls back to `maps/start.bsp` when the requested startup map is missing, preventing failed server activation on bad map names.
+- Dedicated server `mapcycle` selection now skips missing map BSPs and advances to the next valid entry, avoiding repeated fallback loops when cycle lists include maps not present on disk.
+- Dedicated server `mapcycle` parsing now dedupes consecutive valid map tokens so QW-style `localinfo <from> <to>` cfg chains can be used as mapcycle files without self-looping on repeated adjacent maps.
+- Client cfg seed marker handling now only skips reseeding when the marker contains the success value (`1`), avoiding false-positive "already seeded" states from partial/empty marker writes.
+- Client seed packaging now resolves cfg defaults from `src/etc/client/` (with legacy fallback), fixing build failures after the `src/etc` config split.
+
+### Changed
+- Server `host.c` idle rotation now reuses the shared `mapcycle` selector from `pr_cmds.c` to keep map parsing behavior consistent and DRY.
+- Server/docs now document idle `mapcycle` fallback behavior under `timelimit`.
+- Quickstart defaults now ship mod-specific server config assets for `arena` and `ffa` (including `ffa` mapcycle list), and `fortress` now includes `tf28maps.zip` in common assets.
+
+## 1.3.1
 
 ### Fixed
 - Mouse wheel input in the WASM client is now deterministic across browser delta modes (`pixel`/`line`/`page`) and smoother on mixed ratchet/trackpad hardware.
@@ -12,19 +29,16 @@ Code evolution in `src/` — client, Nexus (relay), and server.
 - Quickstart defaults in `src/etc` were updated for the config split (`config.cfg` -> `nexquake.cfg`) and `autoexec.cfg` now executes `nexquake.cfg`.
 - Built-in quickstart `id1` no longer installs a client cfg from `game.json`; client defaults now come from the first-load seed flow.
 
-## 1.0.0
+## 1.3.0
 
 ### Added
-- Initial public NexQuake release.
 - Browser Quake client (WASM), Nexus relay/admin service, and dedicated server runtime.
 - Docker-first deployment with quickstart game-pack bootstrap.
-- Admin authentication via OIDC JWT and in-game `rcon_password`.
 
-### Notes
-- First stable public release baseline.
-- Prior `0.x` entries represent pre-release development history.
+### Changed
+- Omitting AUTH_ADMIN_ID now promotes any authenticated user with JWT. Intended for admin-only OIDC endpoints, use with caution.
 
-## 0.10.8.5
+## 1.2.1
 
 ### Fixed
 - Added the missing `SV_RecursiveHullCheck` declaration in shared `bugfix/world.h.patch` (applied to both client and server) to prevent strict-toolchain build failures and remove duplicate per-target patching
@@ -32,13 +46,13 @@ Code evolution in `src/` — client, Nexus (relay), and server.
 ### Changed
 - Build and release packaging now inject `NQ_VERSION` into Docker/WASM build inputs so shipped binaries and published images report a consistent release version
 
-## 0.10.8.4
+## 1.2.0
 
 ### Changed
 - Simplified `compose.yml` for out-of-the-box usage with inline env defaults
 - Added `compose.build.yml` for power-user and production image builds
 
-## 0.10.8.3
+## 1.1.0
 
 ### Added
 - Quickstart download progress logging per mod with base vs game mod breakdown
@@ -52,7 +66,7 @@ Code evolution in `src/` — client, Nexus (relay), and server.
 - Renamed `og_ctf` quickstart entry to `og-ctf` and simplified download log format
 - Updated etc configs, quickstart scan, and admin wait pacing
 
-## 0.10.8.2
+## 1.0.2
 
 ### Fixed
 - Remote CD track URL resolution now uses the latest `/start` bundle data, preventing stale `/nq/<hash>` fetches after idle/reconnect cycles
@@ -61,14 +75,15 @@ Code evolution in `src/` — client, Nexus (relay), and server.
 ### Changed
 - Lowered client default `net_messagetimeout` from `300` to `10`
 
-## 0.10.8.1
+## 1.0.1
 
 ### Changed
 - Refined client favicon rendering (updated SVG styling/color treatment and shell cache-buster) to improve visibility across themes and ensure browsers pick up favicon updates reliably
 
-## 0.10.8
+## 1.0.0
 
 ### Added
+- Initial stable release
 - Quickstart catalog support for local config assets via relative paths resolved from `CFG_DIR` (for example `client: ["config.cfg"]` for `id1`)
 - New built-in quickstart catalog entries for `og-ctf` (3Wave CTF 2.51 server package) and `fvf` (Future vs Fantasy 4.2R)
 
@@ -78,7 +93,7 @@ Code evolution in `src/` — client, Nexus (relay), and server.
 - Updated built-in asset URLs to the `0xBrsm/QuakeAssets` repository (`q1/` layout), matching the renamed asset catalog structure
 - Refreshed `src/` docs to match current quickstart behavior, catalog location, and asset source references
 
-## 0.10.7
+## 0.19.0
 
 ### Added
 - Client startup argument pipeline with `CL_ARGS` and optional URL argument passthrough via `CL_URL_ARGS`
@@ -89,33 +104,33 @@ Code evolution in `src/` — client, Nexus (relay), and server.
 - Refactored Nexus admin/orchestration internals by splitting manager state/session logic into focused files and reducing duplicated dispatch/status parsing paths
 - Updated server/docs defaults and operational documentation to align with the revised startup/admin flows
 
-## 0.10.6.4
+## 0.18.4
 
 ### Changed
 - Preserved original filename casing for user CD uploads in the browser overlay while keeping lowercase normalization for non-CD user files
 - Lowercased runtime server VFS overlay symlink paths so classic uppercase mod assets resolve under Linux Quake's lowercase lookups
 - Added runtime VFS case-collision guardrails so same-layer path collisions (e.g. `PROGS.DAT` vs `progs.dat`) fail fast instead of silently overwriting
 
-## 0.10.6.3
+## 0.18.3
 
 ### Changed
 - Unified WebSocket transport browser-console logging paths in the client (`net_ws_transport.c`) so connect/error/close and queue-overflow diagnostics use a shared logger
 - Clarified unload lifecycle naming in browser persistence glue: `NexQuake_OnPageUnload` and `requestUnloadShutdown`, with an explicit note that `pagehide`/`beforeunload` are unload signals (not tab-visibility changes)
 - Added an explicit Nexus log event when a WebSocket session is promoted to admin via valid `rcon_password` frame auth
 
-## 0.10.6.2
+## 0.18.2
 
 ### Changed
 - Renamed Nexus internal game-data package paths and symbols from `gamedata` to `assets`, with `assets.go`/`assets_test.go` renamed to `game.go`/`game_test.go`
 - Standardized runtime game-data naming from `data` to `game` across env/config/routes (`GAME_DIR`, `/app/game`, `/game/...`, `/game-manifest`)
 
-## 0.10.6.1
+## 0.18.1
 
 ### Changed
 - Nexus now promotes a connected client session to admin after a successful `rcon_password` admin frame, so `sessions` role output reflects that elevation during the same WebSocket lifetime
 - Loader bootstrap phase labels/status text are centralized and phase-1 bootstrap logging now flows through the shared phase path
 
-## 0.10.6
+## 0.18.0
 
 ### Changed
 - Split browser persistence roots into `/NexQuake/game` (mods/config) and `/NexQuake/cd` (uploaded CD tracks), with `/cd` wired directly to the CD root
@@ -123,7 +138,7 @@ Code evolution in `src/` — client, Nexus (relay), and server.
 - Simplified overlay file operations to use canonical runtime paths directly (`/mod/...`, `/cd/...`) and removed intermediate path-mapping helpers
 - Streamlined CD track display/state matching in the overlay after game/CD path separation
 
-## 0.10.5
+## 0.17.1
 
 ### Changed
 - Refactored shell pre-js architecture into smaller concern-focused modules, splitting runtime bootstrap from remote VFS install/prefetch logic
@@ -131,7 +146,7 @@ Code evolution in `src/` — client, Nexus (relay), and server.
 - Standardized shell module numbering by concern (`tens` for layers, `ones` for sublayers) and updated build prep file lists to match
 - Simplified shell helper logic by deduplicating shared localStorage boolean reads/writes and minor review-driven duplication cleanup
 
-## 0.10.4
+## 0.17.0
 
 ### Added
 - Session-scoped hashed asset gateway flow in Nexus (`/start` + `/nq/<hash>`) with manifest parsing/validation coverage
@@ -141,7 +156,7 @@ Code evolution in `src/` — client, Nexus (relay), and server.
 - Runtime asset bootstrap moved from direct `/data-manifest` consumption to `/start` bundle metadata plus hash-addressed asset fetches
 - Client/headless asset resolution standardized on FNV-1a hashing using `X-NexQuake-Ref`, including CD remote track URL resolution
 
-## 0.10.3
+## 0.16.1
 
 ### Changed
 - Nexus HTTP routing and wiring cleanup: removed redundant `/data-manifest/` route registration and simplified `newMux`/admin env function binding in `main.go`
@@ -151,33 +166,33 @@ Code evolution in `src/` — client, Nexus (relay), and server.
 ### Added
 - Expanded `src/client/README.md` with a feature-to-patch index and missing patch documentation (`cl_main.c.patch`, `menu.c.patch`)
 
-## 0.10.2.1
+## 0.16.0
 
 ### Added
 - Empty server mod directories now propagate to the client manifest set, so config-only mods (no shipped data files) still appear as usable client mod folders
 
-## 0.10.2
+## 0.15.3
 
 ### Changed
 - No product-facing behavior changes in `src/` (internal maintenance release)
 
-## 0.10.1.1
+## 0.15.2
 
 ### Fixed
 - Overlay/input UX regressions: arrow-key passthrough with UI open, modal interaction behavior, and sidebar/file interaction polish
 
-## 0.10.1
+## 0.15.1
 
 ### Changed
 - VFS bootstrap and mod switching flow simplified around `.nqremote` searchpath layering and updated manifest/install behavior
 
-## 0.10.0
+## 0.15.0
 
 ### Added
 - Modular shell UI architecture for overlay/file-manager behavior, including expanded CD management workflows
 - Browser CD audio backend plus Nexus CD manifest streaming (`/cd-manifest`) with integrated client/server track handling
 
-## 0.9.4
+## 0.14.0
 
 ### Added
 - Overlay file move by dragging files onto a game directory tab
@@ -191,12 +206,12 @@ Code evolution in `src/` — client, Nexus (relay), and server.
 - Upload and drag-move now prompt before overwriting existing files
 - Upload queue is locked while busy to prevent overlapping writes
 
-## 0.9.3.1
+## 0.13.1
 
 ### Changed
 - SVG favicon redesigned with overlapping DpQuake N/Q glyphs and entwined layering effect
 
-## 0.9.3
+## 0.13.0
 
 ### Added
 - Per-mod config support: `config.cfg` is saved/loaded on mod switch via `COM_SwitchGame()`, with a JS-togglable per-mod vs unified mode
@@ -209,7 +224,7 @@ Code evolution in `src/` — client, Nexus (relay), and server.
 - Missing null termination on `com_gamedir` copy in unified-config path
 - Upload validation error bubble now wraps and uses full row width before wrapping
 
-## 0.9.2
+## 0.12.0
 
 ### Added
 - Nexus websocket keepalive pings for better idle resilience
@@ -222,7 +237,7 @@ Code evolution in `src/` — client, Nexus (relay), and server.
 - Client websocket reconnect-on-send (including `rcon`) and improved send-failed reasons
 - `smenu` no longer flashes the full console backdrop when invoked from the console
 
-## 0.9.1
+## 0.11.0
 
 ### Added
 - Dedicated server `mapcycle` support for deathmatch map rotation from either a file or inline list
@@ -230,7 +245,7 @@ Code evolution in `src/` — client, Nexus (relay), and server.
 ### Changed
 - Server `changelevel` flow now falls back to stock behavior when `mapcycle` is unset or invalid
 
-## 0.9.0
+## 0.10.0
 
 ### Added
 - NexQuake in-browser VFS/settings panel ("Slipgate Complex") with per-mod tabs, drag-drop upload, inline `.cfg` editing, and file export/delete actions
@@ -243,7 +258,7 @@ Code evolution in `src/` — client, Nexus (relay), and server.
 ### Fixed
 - VFS overlay/input interactions and remote-file write fallback behavior for mixed base/mod data paths
 
-## 0.8.1
+## 0.9.0
 
 ### Added
 - Comma-separated `QUICKSTART` manifests: `QUICKSTART=ctf,arena,tf` loads all three `.json` manifests in order, concatenating their game data entries

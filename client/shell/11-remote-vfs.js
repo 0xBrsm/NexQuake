@@ -422,7 +422,7 @@
         } catch (markerReadErr) {
           markerValue = '';
         }
-        if (markerValue !== 'missing')
+        if (markerValue === '1')
           return Promise.resolve();
       } catch (e) {
         var markerMissing = e && e.name === 'ErrnoError' && e.errno === 44;

@@ -2,7 +2,8 @@
   {
     "game": "arena",
     "common": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/farena12.zip"],
-    "server": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/fasrv12.zip"]
+    "server": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/fasrv12.zip",
+                "arena/server.cfg"]
   },
   {
     "game": "ctf",
@@ -10,16 +11,13 @@
     "server": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/3wave421d.zip"]
   },
   {
-    "game": "og_ctf",
-    "server": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/3wave251.zip"]
-  },
-  {
     "game": "fortress",
-    "common": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/tf28.zip"]
+    "common": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/tf28.zip",
+                "https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/tf28maps.zip"]
   },
   {
     "game": "ffa",
-    "server": ["server.cfg"]
+    "server": ["ffa/server.cfg", "ffa/ffa.txt"]
   },
   {
     "game": "fvf",

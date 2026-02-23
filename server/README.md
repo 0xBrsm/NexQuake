@@ -12,7 +12,7 @@ Three quality-of-life improvements are also included; native .ent support for ma
 | `sys_linux_stub.c` | System stub. Provides `Sys_SendKeyEvents()` (required by the engine but unused in dedicated mode). Appended to upstream `sys_linux.c` during build. |
 | `bugfix/*.patch` | Upstream bugfixes. Fixes buffer overflows, format string vulnerabilities, and other vanilla WinQuake bugs. Applied by `prepare-upstream.sh` before server patches (set `BUGFIX=0` to skip). See `bugfix/README.md`. |
 | `64bit/*.64bit.patch` | 64-bit patches. Fix `string_t` pointer arithmetic for 64-bit builds where pointer subtraction overflows 32-bit offsets. Applied automatically on x86_64 and arm64. |
-| `host.c.patch` | Optional automated map rotation cvar registration. Adds the `mapcycle` cvar declaration and registers it during host init. |
+| `host.c.patch` | Optional map rotation host hooks. Adds/registers the `mapcycle` cvar and enforces idle timelimit `changelevel` when no clients are connected and QuakeC doesn't issue `changelevel` (mapcycle first, then `start` -> `e1m1`, then `trigger_changelevel` map target, otherwise current map). |
 | `pr_cmds.c.patch` | Optional map rotation changelevel hook. Intercepts QuakeC-driven `changelevel` and applies map selection from `mapcycle` (CSV or file). See [`USAGE.md`](../docs/USAGE.md) for details. |
 | `net_udp.c.patch` | Optional ephemeral port fix. Updates `net_hostport` after bind when the server starts with `-port 0`, so Nexus and operators see a reachable non-zero port. Makes configuring multiple servers much cleaner. |
 | `sv_main.c.patch` | Optional entity overrides. Loads `maps/<map>.ent` files used in some mods (e.g. CTF) to override entity placement in BSP maps without requiring modification of the BSP file. |

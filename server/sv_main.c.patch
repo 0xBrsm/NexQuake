@@ -1,14 +1,34 @@
 --- sv_main.c
 +++ sv_main.c
-@@ -1176,3 +1176,18 @@
+@@ -1128,11 +1128,18 @@
+ 	strcpy (sv.name, server);
+ 	sprintf (sv.modelname,"maps/%s.bsp", server);
+ 	sv.worldmodel = Mod_ForName (sv.modelname, false);
+-	if (!sv.worldmodel)
++	if (!sv.worldmodel && Q_strcasecmp (server, "start"))
+ 	{
+-		Con_Printf ("Couldn't spawn server %s\n", sv.modelname);
+-		sv.active = false;
+-		return;
++		Con_Printf ("Couldn't spawn server %s, loading maps/start.bsp\n", sv.modelname);
++		strcpy (sv.name, "start");
++		strcpy (sv.modelname, "maps/start.bsp");
++		sv.worldmodel = Mod_ForName (sv.modelname, false);
++	}
++	if (!sv.worldmodel)
++	{
++		Con_Printf ("Couldn't spawn server %s\n", sv.modelname);
++		sv.active = false;
++		return;
+ 	}
+ 	sv.models[1] = sv.worldmodel;
+ 	
+@@ -1176,3 +1176,15 @@
 -	ED_LoadFromFile (sv.worldmodel->entities);
-+	// NexQuake QoL: support classic .ent entity-lump overrides.
-+	// Some mods ship maps/<map>.ent instead of modified BSPs; historically users
-+	// rebuilt BSPs offline. If a .ent exists, prefer it for server entity spawn.
 +	{
 +		char entpath[MAX_QPATH];
 +		byte *entdata;
-+		sprintf(entpath, "maps/%s.ent", server);
++		sprintf(entpath, "maps/%s.ent", sv.name);
 +		entdata = COM_LoadHunkFile(entpath);
 +		if (entdata)
 +		{

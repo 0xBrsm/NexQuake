@@ -133,7 +133,20 @@ if [[ "${kind}" == "client" ]]; then
     exit 1
   fi
   mkdir -p "${OUT_DIR}/seed/${client_gamename}"
-  cp "${ROOT}/etc/autoexec.cfg" "${ROOT}/etc/nexquake.cfg" "${OUT_DIR}/seed/${client_gamename}/"
+  client_autoexec_src="${ROOT}/etc/client/autoexec.cfg"
+  client_nexquake_src="${ROOT}/etc/client/nexquake.cfg"
+  # Backward-compatible fallback for legacy pre-split cfg layout.
+  if [[ ! -f "${client_autoexec_src}" ]]; then
+    client_autoexec_src="${ROOT}/etc/autoexec.cfg"
+  fi
+  if [[ ! -f "${client_nexquake_src}" ]]; then
+    client_nexquake_src="${ROOT}/etc/nexquake.cfg"
+  fi
+  if [[ ! -f "${client_autoexec_src}" || ! -f "${client_nexquake_src}" ]]; then
+    echo "missing client seed cfgs: ${client_autoexec_src}, ${client_nexquake_src}" >&2
+    exit 1
+  fi
+  cp "${client_autoexec_src}" "${client_nexquake_src}" "${OUT_DIR}/seed/${client_gamename}/"
   client_remote_root_basename="nexusfs"
 
   client_gamename_escaped="$(printf '%s' "${client_gamename}" | sed -e 's/[\/&]/\\&/g')"

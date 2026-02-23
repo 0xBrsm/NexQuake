@@ -8,7 +8,82 @@
  
  #ifdef QUAKE2
  cvar_t	developer = {"developer","1"};	// should be 0 for release!
-@@ -221,6 +222,7 @@
+@@ -81,6 +82,74 @@
+ 
+ cvar_t	temp1 = {"temp1","0"};
+ 
++qboolean SV_MapCycleNext (char *rotation, char *out);
++
++static qboolean SV_TriggerChangelevelMap (char *out)
++{
++	eval_t *classname;
++	eval_t *map;
++	edict_t *ent;
++	int i;
++
++	for (i=1, ent = NEXT_EDICT(sv.edicts) ; i<sv.num_edicts ; i++, ent = NEXT_EDICT(ent))
++	{
++		if (ent->free)
++			continue;
++
++		classname = GetEdictFieldValue (ent, "classname");
++		if (!classname || !classname->string)
++			continue;
++		if (Q_strcasecmp (pr_strings + classname->string, "trigger_changelevel"))
++			continue;
++
++		map = GetEdictFieldValue (ent, "map");
++		if (!map || !map->string)
++			continue;
++		if (Q_strlen(pr_strings + map->string) >= MAX_QPATH)
++			continue;
++
++		Q_strcpy (out, pr_strings + map->string);
++		return true;
++	}
++
++	return false;
++}
++
++static void SV_MapCycleIdleRotate (void)
++{
++	char trigger_map[MAX_QPATH];
++	char rotated[MAX_QPATH];
++	char *target;
++	char *rotation;
++	double timeout;
++
++	if (!sv.active || svs.changelevel_issued)
++		return;
++
++	if (timelimit.value <= 0)
++		return;
++
++	if (net_activeconnections > 0)
++		return;
++
++	timeout = (timelimit.value + 1.0) * 60.0;
++	if (sv.time < timeout)
++		return;
++
++	target = sv.name;
++	rotation = Cvar_VariableString ("mapcycle");
++	if (rotation && rotation[0] && SV_MapCycleNext (rotation, rotated))
++		target = rotated;
++	else if (!Q_strcasecmp (sv.name, "start"))
++		target = "e1m1";
++	else if (SV_TriggerChangelevelMap (trigger_map))
++		target = trigger_map;
++
++	Con_DPrintf ("timelimit: forcing idle rotation to %s\n", target);
++	svs.changelevel_issued = true;
++	Cbuf_AddText (va("changelevel %s\n", target));
++}
++
+ 
+ /*
+ ================
+@@ -221,6 +263,7 @@
  	Cvar_RegisterVariable (&teamplay);
  	Cvar_RegisterVariable (&samelevel);
  	Cvar_RegisterVariable (&noexit);
@@ -16,3 +91,21 @@
  	Cvar_RegisterVariable (&skill);
  	Cvar_RegisterVariable (&developer);
  	Cvar_RegisterVariable (&deathmatch);
+@@ -591,6 +634,8 @@
+ 	}
+ 	host_frametime = save_host_frametime;
+ 
++	SV_MapCycleIdleRotate ();
++
+ // send all messages to the clients
+ 	SV_SendClientMessages ();
+ }
+@@ -616,6 +661,8 @@
+ 	if (!sv.paused && (svs.maxclients > 1 || key_dest == key_game) )
+ 		SV_Physics ();
+ 
++	SV_MapCycleIdleRotate ();
++
+ // send all messages to the clients
+ 	SV_SendClientMessages ();
+ }
