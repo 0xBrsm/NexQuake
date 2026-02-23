@@ -214,7 +214,7 @@ All of this allows a fresh NexQuake instance to be a multiplayer, multi-server Q
 
 NexQuake is GPL-2.0-or-later. Contributions are welcome. The best way to get started:
 
-1. Read this document and the [README](./README.md)
+1. Read this document and the [Documentation Index](./README.md)
 2. Run the Docker quick start
 3. Look at the patch files in `client/` and `server/` to understand the scope of changes
 4. Check `nexus/` for Go contributions (well-tested, minimal dependencies)

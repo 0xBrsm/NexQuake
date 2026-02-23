@@ -4,6 +4,13 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.5.2
+
+### Changed
+- Standardized Nexus naming/capitalization across docs and inline comments for consistency.
+- Standardized internal docs link text style (human-readable Title Case in prose, filename-style where file identity is the point) and documented the rule in `agents/DOC_STYLE.md`.
+- Expanded `docs/QUICKSTART.md` with clearer Docker Compose guidance for moving beyond basic `docker run` usage.
+
 ## 1.5.1
 
 ### Changed
@@ -296,7 +303,7 @@ Versioning note: entries through `0.19.x` represent pre-1.0 development history.
 
 ### Changed
 - **Architectural Refactor**: Decoupled the monolithic Nexus relay into domain-specific internal packages (`nqnet`, `orch`, `admin`, `gamedata`), eliminating global state and circular dependencies.
-- **Runtime Observability**: Transitioned from static polling to real-time console monitoring, allowing the Nexus to detect effective server ports and game states automatically.
+- **Runtime Observability**: Transitioned from static polling to real-time console monitoring, allowing Nexus to detect effective server ports and game states automatically.
 
 ## 0.7.0
 

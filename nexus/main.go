@@ -88,7 +88,7 @@ func main() {
 	globalServerManager = serverMgr
 	globalAdminEnv = buildAdminEnv()
 
-	// Start the nexus-managed server info poller (used for Quake's `slist`).
+	// Start Nexus-managed server info poller (used for Quake's `slist`).
 	serverInfoPoller := orch.NewServerInfoPoller(serverMgr, nqServerIP)
 	if err := serverInfoPoller.Start(runCtx); err != nil {
 		warnf("Server info poller disabled: %v", err)

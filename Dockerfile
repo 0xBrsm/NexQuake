@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # NexQuake production image.
-# Builds nexus + dedicated server + WASM client from source (no bind-mounted artifacts).
+# Builds Nexus + dedicated server + WASM client from source (no bind-mounted artifacts).
 
 ARG WOLFI_BASE_IMAGE=cgr.dev/chainguard/wolfi-base:latest
 ARG GOLANG_IMAGE=golang:1.25-alpine

@@ -2,13 +2,13 @@
 
 ## Managing Game Data
 
-NexQuake uses a three-layer virtual filesystem to separate client and server data. `GAME_DIR` (default `/app/game`) is the root for all game data, configuration, and server definitions. The [quickstart](QUICKSTART.md) process automatically downloads and installs the data needed to get NexQuake up and running:
+NexQuake uses a three-layer virtual filesystem to separate client and server data. `GAME_DIR` (default `/app/game`) is the root for all game data, configuration, and server definitions. The [Quick Start](QUICKSTART.md) process automatically downloads and installs the data needed to get NexQuake up and running:
 
 - **pak0.pak**: Shareware data (Episode 1).
 - **pak1.pak**: Freeware version of registered data (without maps) that is sufficient to run mods.
 
 If you own the full version of Quake or you want to configure mods yourself:
-1. Bind mount your `game` directory to `game:/app/game`
+1. Bind mount your `game` directory to `./game:/app/game`
 2. Create the `id1` directory: `mkdir -p game/id1/common`
 3. Copy your PAK files into `game/id1/common/`
 
@@ -41,7 +41,7 @@ See the [Quake Wiki](https://quake.fandom.com/wiki/Console_Commands_(Q1)#Server_
 
 ### Server Launch Plan (`servers.ini`)
 
-`servers.ini` in `GAME_DIR` defines which servers Nexus manages on startup. Each line is a server binary followed by its launch arguments. NexQuake is drop-in compatible with any protocol 15 (NetQuake) server binary; the bundled `nqserver` is the default, but you can substitute any conformant binary by putting it in `SERVER_DIR` (searched before `BIN_DIR`). If `servers.ini` is missing, the default [quickstart](QUICKSTART.md) process will still launch a basic FFA server.
+`servers.ini` in `GAME_DIR` defines which servers Nexus manages on startup. Each line is a server binary followed by its launch arguments. NexQuake is drop-in compatible with any protocol 15 (NetQuake) server binary; the bundled `nqserver` is the default, but you can substitute any conformant binary by putting it in `SERVER_DIR` (searched before `BIN_DIR`). If `servers.ini` is missing, the default [Quick Start](QUICKSTART.md) process will still launch a basic FFA server.
 
 #### Example `servers.ini`
 ```ini
@@ -77,7 +77,7 @@ Additional server arguments can be found in Quake's [TECHINFO.TXT](https://githu
 The engine tries to load the cvar value as a file first; if not found, it tokenizes the value itself.
 Parsing uses Quake token rules (`COM_Parse`): commas/newlines/tabs are treated as separators and `//` comments are ignored.
 
-If `timelimit` is enabled and no players are connected, the engine also forces `changelevel` at `(timelimit + 1)` minutes to avoid the known no-player mapchange hang in stock QuakeC. It picks the next `mapcycle` map when set, otherwise uses `e1m1` from `start`, otherwise uses the map's `trigger_changelevel` target, and falls back to reloading the current map.
+If `timelimit` is enabled and no players are connected, the engine also forces `changelevel` at `(timelimit + 1)` minutes to avoid the known no-player mapchange hang in stock QuakeC. It picks the next `mapcycle` map when set, otherwise uses the map's `trigger_changelevel` target, falling back to reloading the current map if one doesn't exist.
 
 ### Entity Overrides
 

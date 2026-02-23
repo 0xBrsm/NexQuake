@@ -38,7 +38,7 @@ func (s *managedServer) writeConsoleAndCaptureFiltered(cmd string, maxWait, idle
 	return s.Console.captureCommandOutputFiltered(cmd, maxWait, idleWait, filter)
 }
 
-// serverRecord tracks one server slot in the nexus registry.
+// serverRecord tracks one server slot in Nexus registry.
 type serverRecord struct {
 	id     int
 	Launch serverLaunch
@@ -127,7 +127,7 @@ func normalizeSearchPath(searchPath []string) []string {
 	return normalized
 }
 
-// RegisterServerLaunch adds a new server to nexus runtime state.
+// RegisterServerLaunch adds a new server to Nexus runtime state.
 func (m *ServerManager) RegisterServerLaunch(launch serverLaunch) *serverRecord {
 	m.mu.Lock()
 	defer m.mu.Unlock()

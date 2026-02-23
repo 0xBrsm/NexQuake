@@ -30,7 +30,6 @@ Client cfg seed flow:
 | `id1` | n/a (`base` entry) | Quake 1.06 shareware `pak0.pak` plus LibreQuake-based `pak1.pak`. |
 | `arena` | `arena` | Rocket Arena assets and server package. |
 | `ctf` | `ctf` | 3Wave CTF 4.x assets plus 4.21d server package. |
-| `og_ctf` | `og_ctf` | Original 3Wave CTF 2.51 server package, pre-custom assets. |
 | `ffa` | `ffa` (default) | Stock server config with `deathmatch 1` rules. |
 | `fortress` | `fortress` | Team Fortress 2.8 server and client assets. |
 | `fvf` | `fvf` | Future vs Fantasy 4.2R server and client assets. |

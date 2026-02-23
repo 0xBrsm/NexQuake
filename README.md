@@ -7,15 +7,21 @@ Quake was released thirty years ago and changed video-gaming forever. For many o
 - **Real multiplayer**: Pick your mods, run as many game servers as you want.
 - **Self-hostable**: Pull one Docker image, open one port, go frag.
 
-Ready to play?
+Ready for deathmatch?
 
 ```bash
+# launch with a single shareware FFA server
 docker run -p 1337:1337 -e CL_ARGS=+connect ghcr.io/0xbrsm/nexquake
 ```
 
-That's it. By default, Nexus launches a shareware FFA server. For more options, check [QUICKSTART](docs/QUICKSTART.md).
+Prefer to try a few mods?
 
-Or read on for the nitty gritty.
+```bash
+# launch with several popular late-90s mod servers
+docker run -p 1337:1337 -e CL_SMENU=1 -e QUICKSTART=all ghcr.io/0xbrsm/nexquake
+```
+
+For more options, check the [Quick Start Guide](docs/QUICKSTART.md). Or read on for the nitty gritty.
 
 ## The Details
 

@@ -54,4 +54,4 @@ rm -rf src/build/tmp/WinQuake                                          # force r
 ## Parallelism Knobs
 
 - `NQ_MAKE_JOBS`: Number of parallel `make` jobs for client/server builds. Defaults to detected CPU count.
-- `NQ_GO_BUILD_P`: Number of parallel Go package builds (`go build -p`) for nexus builds. Defaults to detected CPU count.
+- `NQ_GO_BUILD_P`: Number of parallel Go package builds (`go build -p`) for Nexus builds. Defaults to detected CPU count.

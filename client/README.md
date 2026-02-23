@@ -22,7 +22,7 @@ The client patches and overlays are a mix of required and additive features. The
 
 ### 2. WebSocket Networking
 
-**Required.** Browsers cannot open UDP sockets. This feature replaces Quake's UDP networking with WebSocket transport, routing all traffic through the Nexus relay. Players connect by port number (e.g. `connect 26000`); the relay maps ports to game servers. All overlay files, no patches to upstream.
+**Required.** Browsers cannot open UDP sockets. This feature replaces Quake's UDP networking with WebSocket transport, routing all traffic through Nexus relay. Players connect by port number (e.g. `connect 26000`); the relay maps ports to game servers. All overlay files, no patches to upstream.
 
 | File | Purpose |
 |------|---------|
@@ -44,11 +44,11 @@ The client patches and overlays are a mix of required and additive features. The
 
 ### 4. RCON
 
-**Quality-of-life addition.** Stock WinQuake has a hidden `cmd` admin feature, but this only forwards commands to the currently connected server. NexQuake adds a browser-safe `rcon` command over the Nexus control channel so operators can target any server by hostcache name/port or Nexus itself for system-wide actions. See [RCON](../docs/RCON.md) for details.
+**Quality-of-life addition.** Stock WinQuake has a hidden `cmd` admin feature, but this only forwards commands to the currently connected server. NexQuake adds a browser-safe `rcon` command over Nexus control channel so operators can target any server by hostcache name/port or Nexus itself for system-wide actions. See [RCON](../docs/RCON.md) for details.
 
 | File | Purpose |
 |------|---------|
-| `cmd_rcon.c` | `rcon` console command: sends commands over the Nexus control channel with host/port targeting. |
+| `cmd_rcon.c` | `rcon` console command: sends commands over Nexus control channel with host/port targeting. |
 
 ### 5. Nexus Server List
 

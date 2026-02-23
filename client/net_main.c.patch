@@ -105,7 +105,7 @@
  	if (! slistSilent)
  		PrintSlist();
  
-+	// If nexus responded with a single aggregated server list packet,
++	// If Nexus responded with a single aggregated server list packet,
 +	// there's no need to wait out Quake's default 1.5s LAN polling window.
 +	if (slist_agg_done)
 +	{

@@ -201,7 +201,7 @@ func execServerLifecycleCommand(cmd string, cmdArgs []string, env *Env) (string,
 	return "complete\n", nil
 }
 
-// execNexusCommand dispatches a nexus admin command and returns its reply.
+// execNexusCommand dispatches a Nexus admin command and returns its reply.
 func execNexusCommand(args string, env *Env) (string, error) {
 	if env == nil {
 		return "", fmt.Errorf("server manager not available")

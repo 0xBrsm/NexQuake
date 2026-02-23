@@ -5,6 +5,7 @@ The quickest way to get a NexQuake server running.
 ### 1. Run
 
 ```bash
+# load a single shareware FFA server
 docker run -p 1337:1337 -e CL_ARGS=+connect ghcr.io/0xbrsm/nexquake
 ```
 
@@ -22,7 +23,7 @@ Set `QUICKSTART` to choose different game entries at startup (base entries are s
 docker run -p 1337:1337 -e QUICKSTART=ctf,arena ghcr.io/0xbrsm/nexquake
 ```
 
-See the [catalog documentation](../etc/README.md) for available entries and schema details.
+See the [Quickstart Catalog](../etc/README.md) for available entries and schema details.
 
 ## Using Your Own Data
 
@@ -33,3 +34,25 @@ docker run -p 1337:1337 -v ./game:/app/game ghcr.io/0xbrsm/nexquake
 ```
 
 See the [Usage Guide](USAGE.md) for data directory layout, mod installation, and server configuration.
+
+## Docker Compose
+
+Use Docker Compose once you want to move beyond one-line `docker run` examples.
+
+```yaml
+# simplified example
+services:
+  nexquake:
+    image: ghcr.io/0xbrsm/nexquake
+    environment:
+      - QUICKSTART=all
+      - AUTH_RCON_PASSWORD=NexQuakeFTW
+    volumes:
+      - ./game:/app/game
+    ports:
+      - "1337:1337"
+```
+
+See [`compose.yml`](../compose.yml) for an expanded version.
+
+For full environment variable reference, see [Configuration](CONFIGURATION.md). For data/mod layout and `servers.ini`, see [Usage Guide](USAGE.md).

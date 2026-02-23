@@ -99,7 +99,7 @@ static void Rcon_f(void)
 	}
 	if (!targetbuf[0] && (cls.state != ca_connected || !cls.netcon))
 	{
-		// When disconnected, default bare "rcon <cmd>" to nexus control.
+		// When disconnected, default bare "rcon <cmd>" to Nexus control.
 		Q_strncpy(targetbuf, "0", sizeof(targetbuf) - 1);
 		targetbuf[sizeof(targetbuf) - 1] = 0;
 	}
@@ -119,7 +119,7 @@ static void Rcon_f(void)
 	payload[pwlen + 1 + targetlen] = 0;
 	Q_memcpy(payload + pwlen + 1 + targetlen + 1, cmd, cmdlen);
 
-	// Port 0 is nexus control traffic.
+	// Port 0 is Nexus control traffic.
 	if (WebSocketTransport_SendFrame(0, payload, payload_len) < 0)
 		Con_Printf("rcon: send failed (%s)\n", WebSocketTransport_LastSendError());
 

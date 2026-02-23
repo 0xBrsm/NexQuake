@@ -9,7 +9,7 @@ NexQuake is designed to be drop-in compatible with any protocol 15 (NetQuake) de
 | Variable | Default | Description |
 |------|---------|-------------|
 | `HTTP_PORT` | `1337` | Main HTTP and WebSocket listener port. |
-| `QUICKSTART` | `ffa` | Quickstart catalog entries from `CFG_DIR/game.json` (for example `ctf,arena` or `all`). Invalid names are ignored. See [QUICKSTART](QUICKSTART.md). |
+| `QUICKSTART` | `ffa` | Quickstart catalog entries from `CFG_DIR/game.json` (for example `ctf,arena` or `all`). Invalid names are ignored. See [Quick Start](QUICKSTART.md). |
 | `LOG_LEVEL` | `info` | Logging verbosity. Accepts: `error`, `warn`, `info`, `debug`. |
 | `CONSOLE_TIMESTAMPS` | `1` | Timestamps on operator console log lines. Accepts: `0`, `1`. |
 | `DEBUG_RELAY` | `0` | Logs UDP relay traffic with source/destination, length, and byte preview. Accepts: `0`, `1`. |

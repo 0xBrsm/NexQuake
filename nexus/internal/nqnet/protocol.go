@@ -1,4 +1,4 @@
-// Package nqnet implements the network/routing layer for the NexQuake nexus.
+// Package nqnet implements the network/routing layer for NexQuake Nexus.
 //
 // It provides the WebSocket-to-UDP relay (Router), the Quake wire-protocol
 // codec (CCREQ/CCREP), virtual-IP allocation, and the client session registry.
@@ -29,7 +29,7 @@ const (
 // Quake constants: MAX_DATAGRAM=1024 and NET_HEADERSIZE=8 => NET_DATAGRAMSIZE=1032.
 const maxNetDatagramSize = 1024 + 8
 
-// WSPortHeaderSize is the two-byte port prefix on every nexus WS frame.
+// WSPortHeaderSize is the two-byte port prefix on every Nexus WS frame.
 const WSPortHeaderSize = 2
 
 // wsClientIdentityMagic is the 4-byte magic in a client-identity announcement frame.
@@ -192,7 +192,7 @@ func BuildCCREPServerList(entries []ServerListEntry) ([]byte, int) {
 	return buf, count
 }
 
-// buildWSFrame builds a nexus WS frame: 2-byte port header + payload.
+// buildWSFrame builds a Nexus WS frame: 2-byte port header + payload.
 func buildWSFrame(port int, payload []byte) []byte {
 	if port < 0 || port > 65535 {
 		return nil

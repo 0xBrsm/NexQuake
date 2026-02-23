@@ -16,5 +16,5 @@ services:
       retries: 3
       start_period: 40s
 
-# For production: Configure your own reverse proxy to forward to nexus:1337
+# For production: Configure your own reverse proxy to forward to Nexus at `nexus:1337`
 # Examples: Nginx, Traefik, Caddy, HAProxy, or cloud load balancer
