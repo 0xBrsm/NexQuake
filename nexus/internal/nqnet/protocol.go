@@ -17,6 +17,11 @@ const (
 
 	netProtocolVersion byte = 3
 
+	// Quake client hostcache entry limits:
+	// host name is char[24] (23 chars + NUL), map/game stay at 15 chars + NUL.
+	hostcacheNameMax = 23
+	hostcacheFieldMax = 15
+
 	ccreqServerInfo byte = 0x02
 	ccrepServerInfo byte = 0x83
 )
@@ -164,9 +169,9 @@ func BuildCCREPServerList(entries []ServerListEntry) ([]byte, int) {
 		}
 
 		serverPortText := strconv.Itoa(serverPort)
-		hostname = truncateQuakeString(hostname, 15)
-		mapName = truncateQuakeString(mapName, 15)
-		gameDir = truncateQuakeString(gameDir, 15)
+		hostname = truncateQuakeString(hostname, hostcacheNameMax)
+		mapName = truncateQuakeString(mapName, hostcacheFieldMax)
+		gameDir = truncateQuakeString(gameDir, hostcacheFieldMax)
 
 		entrySize := len(serverPortText) + 1 + len(hostname) + 1 + len(mapName) + 1 + len(gameDir) + 1 + 3
 		if len(buf)+entrySize > maxNetDatagramSize {

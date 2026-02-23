@@ -138,7 +138,7 @@
 -					hostcache[n].name[i-1]++;
 -				i = -1;
 +				Q_strcpy(hostcache[slot].cname, hostcache[slot].name);
-+				hostcache[slot].cname[14] = 0;
++				hostcache[slot].cname[sizeof(hostcache[slot].cname) - 1] = 0;
 +				Q_strcpy(hostcache[slot].name, "*");
 +				Q_strcat(hostcache[slot].name, hostcache[slot].cname);
  			}

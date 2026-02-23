@@ -1,6 +1,7 @@
 --- menu.c
 +++ menu.c
-@@ -2842,5 +2842,9 @@
+@@ -2841,6 +2841,10 @@
+ 
  void M_Menu_Search_f (void)
  {
 +	if (key_dest == key_console)
@@ -10,7 +11,7 @@
  	key_dest = key_menu;
  	m_state = m_search;
  	m_entersound = false;
-@@ -2896,6 +2896,7 @@
+@@ -2896,6 +2900,7 @@
  //=============================================================================
  /* SLIST MENU */
  
@@ -18,24 +19,26 @@
  int		slist_cursor;
  qboolean slist_sorted;
  
-@@ -2914,6 +2915,12 @@
+@@ -2914,7 +2919,13 @@
  void M_ServerList_Draw (void)
  {
  	int		n;
+-	char	string [64];
 +	int		i;
 +	int		list_chars;
 +	int		list_x;
 +	int		list_top;
-+	char	*list_header;
-+	char	*list_rule;
- 	char	string [64];
++	const char	*list_header;
++	const char	*list_rule;
++	char	string [96];
  	qpic_t	*p;
  
-@@ -2937,18 +2944,40 @@
+ 	if (!slist_sorted)
+@@ -2937,18 +2948,40 @@
  
  	p = Draw_CachePic ("gfx/p_multi.lmp");
  	M_DrawPic ( (320-p->width)/2, 4, p);
-+	list_header = "Server          Map             Game            Users";
++	list_header = "Server                   Map             Game            Users";
 +	list_rule = "";
 +	list_chars = Q_strlen(list_header);
 +	i = Q_strlen(list_rule);
@@ -47,15 +50,15 @@
 -			sprintf(string, "%-15.15s %-15.15s %2u/%2u\n", hostcache[n].name, hostcache[n].map, hostcache[n].users, hostcache[n].maxusers);
 +			Q_strcpy(string, NET_SlistFormatEntry(&hostcache[n]));
  		else
- 			sprintf(string, "%-15.15s %-15.15s\n", hostcache[n].name, hostcache[n].map);
+-			sprintf(string, "%-15.15s %-15.15s\n", hostcache[n].name, hostcache[n].map);
 -		M_Print (16, 32 + 8*n, string);
++			sprintf(string, "%-24.24s %-15.15s\n", hostcache[n].name, hostcache[n].map);
 +		i = Q_strlen(string);
 +		if (i > 0 && string[i - 1] == '\n')
 +			i--;
 +		if (i > list_chars)
 +			list_chars = i;
- 	}
--	M_DrawCharacter (0, 32 + slist_cursor*8, 12+((int)(realtime*4)&1));
++	}
 +	list_x = (320 - list_chars * 8) / 2;
 +	list_top = 48;
 +	M_Print (list_x, 32, list_header);
@@ -65,9 +68,10 @@
 +		if (hostcache[n].maxusers)
 +			Q_strcpy(string, NET_SlistFormatEntry(&hostcache[n]));
 +		else
-+			sprintf(string, "%-15.15s %-15.15s\n", hostcache[n].name, hostcache[n].map);
++			sprintf(string, "%-24.24s %-15.15s\n", hostcache[n].name, hostcache[n].map);
 +		M_Print (list_x, list_top + 8*n, string);
-+	}
+ 	}
+-	M_DrawCharacter (0, 32 + slist_cursor*8, 12+((int)(realtime*4)&1));
 +	M_DrawCharacter (list_x - 16, list_top + slist_cursor*8, 12+((int)(realtime*4)&1));
  
  	if (*m_return_reason)
@@ -76,7 +80,7 @@
  }
  
  
-@@ -3015,6 +3044,7 @@
+@@ -3015,6 +3048,7 @@
  	Cmd_AddCommand ("menu_video", M_Menu_Video_f);
  	Cmd_AddCommand ("help", M_Menu_Help_f);
  	Cmd_AddCommand ("menu_quit", M_Menu_Quit_f);

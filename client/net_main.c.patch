@@ -24,8 +24,8 @@
 +static void Slist_Poll(void *unused);
  PollProcedure	slistSendProcedure = {NULL, 0.0, Slist_Send};
  PollProcedure	slistPollProcedure = {NULL, 0.0, Slist_Poll};
-
-@@ -63,8 +67,8 @@
+ 
+@@ -63,7 +67,7 @@
  int unreliableMessagesSent = 0;
  int unreliableMessagesReceived = 0;
  
@@ -34,22 +34,21 @@
  cvar_t	hostname = {"hostname", "UNNAMED"};
  
  qboolean	configRestored = false;
-
 @@ -261,11 +265,19 @@
  
  static void PrintSlistHeader(void)
  {
 -	Con_Printf("Server          Map             Users\n");
 -	Con_Printf("--------------- --------------- -----\n");
-+	Con_Printf("Server          Map             Game            Users\n");
-+	Con_Printf("--------------- --------------- --------------- -----\n");
++	Con_Printf("%-24.24s %-15.15s %-15.15s %5.5s\n", "Server", "Map", "Game", "Users");
++	Con_Printf("%-24.24s %-15.15s %-15.15s %5.5s\n", "------------------------", "---------------", "---------------", "-----");
  	slistLastShown = 0;
  }
  
 +char *NET_SlistFormatEntry(const hostcache_t *host)
 +{
-+	static char string[64];
-+	sprintf(string, "%-15.15s %-15.15s %-15.15s %2u/%2u\n",
++	static char string[96];
++	sprintf(string, "%-24.24s %-15.15s %-15.15s %2u/%2u\n",
 +			host->name, host->map, host->gamedir, host->users, host->maxusers);
 +	return string;
 +}
@@ -64,7 +63,7 @@
 -			Con_Printf("%-15.15s %-15.15s %2u/%2u\n", hostcache[n].name, hostcache[n].map, hostcache[n].users, hostcache[n].maxusers);
 +			Con_Printf("%s", NET_SlistFormatEntry(&hostcache[n]));
  		else
- 			Con_Printf("%-15.15s %-15.15s\n", hostcache[n].name, hostcache[n].map);
+ 			Con_Printf("%-24.24s %-15.15s\n", hostcache[n].name, hostcache[n].map);
  	}
 @@ -295,6 +307,7 @@
  {
@@ -121,7 +120,77 @@
  	if ((Sys_FloatTime() - slistStartTime) < 1.5)
  	{
  		SchedulePollProcedure(&slistPollProcedure, 0.1);
-@@ -401,7 +429,12 @@
+@@ -365,11 +393,49 @@
+ int hostCacheCount = 0;
+ hostcache_t hostcache[HOSTCACHESIZE];
+ 
++int NET_ResolveHostcacheName(char *token, char *out, int out_size)
++{
++	int i, match = -1;
++	int token_len;
++
++	if (!token || !token[0] || !out || out_size < 2)
++		return 0;
++
++	token_len = Q_strlen(token);
++
++	for (i = 0; i < hostCacheCount; i++)
++		if (!Q_strcasecmp(token, hostcache[i].name))
++		{
++			match = i;
++			break;
++		}
++
++	if (match < 0)
++	{
++		for (i = 0; i < hostCacheCount; i++)
++		{
++			if (Q_strncasecmp(token, hostcache[i].name, token_len))
++				continue;
++			if (match >= 0)
++				return -1;
++			match = i;
++		}
++	}
++
++	if (match < 0)
++		return 0;
++
++	Q_strncpy(out, hostcache[match].cname, out_size - 1);
++	out[out_size - 1] = 0;
++	return match + 1;
++}
++
+ qsocket_t *NET_Connect (char *host)
+ {
+ 	qsocket_t		*ret;
+ 	int				n;
+ 	int				numdrivers = net_numdrivers;
++	char			resolved[32];
+ 
+ 	SetNetTime();
+ 
+@@ -386,14 +452,12 @@
+ 
+ 		if (hostCacheCount)
+ 		{
+-			for (n = 0; n < hostCacheCount; n++)
+-				if (Q_strcasecmp (host, hostcache[n].name) == 0)
+-				{
+-					host = hostcache[n].cname;
+-					break;
+-				}
+-			if (n < hostCacheCount)
++			n = NET_ResolveHostcacheName(host, resolved, sizeof(resolved));
++			if (n < 0) { Con_Printf("Ambiguous host \"%s\"\n", host); return NULL; }
++			if (n > 0) {
++				host = resolved;
+ 				goto JustDoIt;
++			}
+ 		}
+ 	}
+ 
+@@ -401,7 +465,12 @@
  	NET_Slist_f ();
  
  	while(slistInProgress)
@@ -134,7 +203,26 @@
  
  	if (host == NULL)
  	{
-@@ -959,6 +992,19 @@
+@@ -412,12 +481,12 @@
+ 	}
+ 
+ 	if (hostCacheCount)
+-		for (n = 0; n < hostCacheCount; n++)
+-			if (Q_strcasecmp (host, hostcache[n].name) == 0)
+-			{
+-				host = hostcache[n].cname;
+-				break;
+-			}
++	{
++		n = NET_ResolveHostcacheName(host, resolved, sizeof(resolved));
++		if (n < 0) { Con_Printf("Ambiguous host \"%s\"\n", host); return NULL; }
++		if (n > 0)
++			host = resolved;
++	}
+ 
+ JustDoIt:
+ 	for (net_driverlevel=0 ; net_driverlevel<numdrivers; net_driverlevel++)
+@@ -959,6 +1028,19 @@
  {
  	PollProcedure *pp, *prev;
  

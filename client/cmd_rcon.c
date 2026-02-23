@@ -43,7 +43,7 @@ static void Rcon_f(void)
 	if (argc > 2)
 	{
 		char *arg1 = Cmd_Argv(1);
-		int i;
+		int resolved = 0;
 
 		if (Q_strcasecmp(arg1, "nexus") == 0)
 		{
@@ -51,14 +51,14 @@ static void Rcon_f(void)
 			targetbuf[sizeof(targetbuf) - 1] = 0;
 		}
 
-		// First, treat arg1 as a hostcache name and resolve to its port.
-		for (i = 0; !targetbuf[0] && i < hostCacheCount; i++)
+		// First, treat arg1 as a hostcache token and resolve to its port target.
+		if (!targetbuf[0])
 		{
-			if (Q_strcasecmp(arg1, hostcache[i].name) == 0)
+			resolved = NET_ResolveHostcacheName(arg1, targetbuf, sizeof(targetbuf));
+			if (resolved < 0)
 			{
-				Q_strncpy(targetbuf, hostcache[i].cname, sizeof(targetbuf) - 1);
-				targetbuf[sizeof(targetbuf) - 1] = 0;
-				break;
+				Con_Printf("rcon: ambiguous host \"%s\"\n", arg1);
+				return;
 			}
 		}
 

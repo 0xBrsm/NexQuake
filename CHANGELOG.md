@@ -4,6 +4,13 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.5.0
+
+### Changed
+- Client `connect` and `rcon` now share a single hostcache resolver that supports case-insensitive unique prefix matching (with explicit ambiguity rejection), so short server-name targets work consistently across both commands.
+- Client hostcache server-name capacity was raised from `16` to `24` characters.
+- `slist` console output and multiplayer server-list menu formatting were widened for the longer server-name column, and the server-list menu rows/cursor were recentered to keep the layout aligned.
+
 ## 1.4.1
 
 ### Fixed
