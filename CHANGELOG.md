@@ -4,6 +4,12 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.5.1
+
+### Changed
+- Quickstart `server.cfg` added for `fvf` with default Purge mode.
+- Tweaked Arena and FFA quickstart server configs.
+
 ## 1.5.0
 
 ### Changed

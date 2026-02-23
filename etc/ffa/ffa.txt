@@ -6,4 +6,3 @@ e2m2
 dm2
 e3m6
 dm4
-e1m7

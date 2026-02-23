@@ -21,7 +21,8 @@
   },
   {
     "game": "fvf",
-    "common": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/fvf42R.zip"]
+    "common": ["https://github.com/0xBrsm/QuakeAssets/raw/refs/heads/main/q1/fvf42R.zip"],
+    "server": ["fvf/server.cfg"]
   },
   {
     "base": "id1",
