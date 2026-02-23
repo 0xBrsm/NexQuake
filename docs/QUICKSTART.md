@@ -5,7 +5,7 @@ The quickest way to get a NexQuake server running.
 ### 1. Run
 
 ```bash
-# load a single shareware FFA server
+# launch with a single shareware FFA server
 docker run -p 1337:1337 -e CL_ARGS=+connect ghcr.io/0xbrsm/nexquake
 ```
 
@@ -40,7 +40,7 @@ See the [Usage Guide](USAGE.md) for data directory layout, mod installation, and
 Use Docker Compose once you want to move beyond one-line `docker run` examples.
 
 ```yaml
-# simplified example
+# simplified compose.yml
 services:
   nexquake:
     image: ghcr.io/0xbrsm/nexquake

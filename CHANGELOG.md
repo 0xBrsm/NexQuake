@@ -4,6 +4,14 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.5.3
+
+### Fixed
+- Team Fortress quickstart map pack `q1/tf28maps.zip` now patches `storm1` (`FORTRESS/maps/STORM1.BSP`) by adding the missing `team_no` on an `info_player_teamspawn`, preventing map-load `Host_Error: Program error` failures.
+
+### Changed
+- Clarified quickstart examples wording in `docs/QUICKSTART.md` (`docker run` launch comment and compose snippet label).
+
 ## 1.5.2
 
 ### Changed
