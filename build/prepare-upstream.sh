@@ -41,7 +41,15 @@ fi
 
 mkdir -p "${UPSTREAM_QUAKE_DIR}" "$(dirname "${OUT_DIR}")"
 
+refresh_upstream=0
 if [[ ! -d "${UPSTREAM_WINQUAKE_DIR}" ]]; then
+  refresh_upstream=1
+fi
+if [[ "${UPSTREAM_REF}" != "HEAD" ]]; then
+  refresh_upstream=1
+fi
+
+if [[ "${refresh_upstream}" == "1" ]]; then
   mkdir -p "${UPSTREAM_QUAKE_DIR}"
   if [[ ! -d "${UPSTREAM_QUAKE_DIR}/.git" ]]; then
     git -C "${UPSTREAM_QUAKE_DIR}" init
@@ -72,9 +80,6 @@ apply_patch() {
 normalize_nq_version() {
   local value="${1:-}"
   value="$(printf '%s' "${value}" | tr -d '[:space:]')"
-  if [[ "${value}" == v[0-9]* ]]; then
-    value="${value#v}"
-  fi
   printf '%s' "${value}"
 }
 
@@ -91,24 +96,6 @@ resolve_nq_version() {
     resolved_nq_version="${candidate}"
     resolved_nq_version_source="env"
     return 0
-  fi
-
-  if [[ -f "${ROOT}/../VERSION" ]]; then
-    candidate="$(normalize_nq_version "$(cat "${ROOT}/../VERSION" 2>/dev/null || true)")"
-    if [[ -n "${candidate}" ]]; then
-      resolved_nq_version="${candidate}"
-      resolved_nq_version_source="version-root"
-      return 0
-    fi
-  fi
-
-  if [[ -f "${ROOT}/VERSION" ]]; then
-    candidate="$(normalize_nq_version "$(cat "${ROOT}/VERSION" 2>/dev/null || true)")"
-    if [[ -n "${candidate}" ]]; then
-      resolved_nq_version="${candidate}"
-      resolved_nq_version_source="version-src"
-      return 0
-    fi
   fi
 
   if command -v git >/dev/null 2>&1; then
@@ -180,10 +167,10 @@ if [[ "${kind}" == "client" ]]; then
   client_version="${resolved_nq_version}"
   if [[ "${NQ_REQUIRE_VERSION:-0}" == "1" ]]; then
     case "${resolved_nq_version_source}" in
-      env|version-root|version-src)
+      env)
         ;;
       *)
-        echo "failed to resolve client version from explicit metadata (set NQ_VERSION or provide VERSION file)" >&2
+        echo "failed to resolve client version from explicit metadata (set NQ_VERSION)" >&2
         exit 1
         ;;
     esac

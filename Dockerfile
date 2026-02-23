@@ -87,8 +87,7 @@ COPY etc/ etc/
 ARG NQ_VERSION=dev
 
 RUN set -eu; \
-	printf '%s\n' "${NQ_VERSION}" > /VERSION; \
-	NQ_REQUIRE_VERSION=1 OUT_DIR=/out/nqwasm ./build/build-client.sh
+	NQ_VERSION="${NQ_VERSION}" NQ_REQUIRE_VERSION=1 OUT_DIR=/out/nqwasm ./build/build-client.sh
 
 FROM scratch AS wasm-artifact
 COPY --from=wasm-builder /out/nqwasm/ /

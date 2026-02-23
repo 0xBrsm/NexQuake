@@ -1,15 +1,9 @@
 name: Publish Image
-run-name: "Publish Image ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.version }}"
+run-name: "Publish Image ${{ github.event.release.tag_name }}"
 
 on:
   release:
     types: [published]
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Image version tag (for example: v1.5.3)"
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -28,14 +22,20 @@ jobs:
       image_name: ${{ steps.image.outputs.image_name }}
 
     steps:
-      - name: Resolve release version
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate and resolve release version
         id: version
+        shell: bash
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "release" ]]; then
-            echo "version=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          version="${{ github.event.release.tag_name }}"
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release tag '${version}'. Expected MAJOR.MINOR.PATCH (e.g., 1.2.3)." >&2
+            exit 1
           fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve build timestamp
         id: build_time
@@ -136,7 +136,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}
           tags: |
-            type=semver,pattern={{raw}}
+            type=raw,value=${{ needs.prepare.outputs.version }}
             type=raw,value=latest
 
       - name: Publish manifest list tags

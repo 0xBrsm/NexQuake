@@ -9,7 +9,7 @@ Scripts that compile the WASM client and dedicated server from the upstream id S
 | `Makefile` | Primary orchestrator. Top-level build targets for client, server, and upstream preparation. |
 | `build-client.sh` | WASM client build. Prepares the upstream source, applies client patches and overlays, runs `make -j <jobs> -f Makefile.emscripten`. Produces `index.html`, `shell.css`, `favicon.svg`, `index.js`, `index.wasm`, `index.data`. |
 | `build-server.sh` | Dedicated server build. Prepares the upstream source, applies server patches, compiles with GCC, and runs `make -j <jobs>` for parallel object builds. Produces `nqserver`. Handles platform detection and 32/64-bit selection. |
-| `prepare-upstream.sh` | Upstream checkout and build-tree staging. Sparse-clones `id-Software/Quake` into `tmp/WinQuake/`, applies overlays/patches, and resolves client version metadata (`NQ_VERSION` -> `VERSION` file -> `git describe` -> `unknown`). Set `FETCH_ONLY=1` to only ensure checkout exists (used by CI prefetch). |
+| `prepare-upstream.sh` | Upstream checkout and build-tree staging. Sparse-clones `id-Software/Quake` into `tmp/WinQuake/`, applies overlays/patches, and resolves client version metadata (`NQ_VERSION` -> `git describe` -> `unknown`). Set `FETCH_ONLY=1` to only ensure checkout exists (used by CI prefetch). |
 | `platform.sh` | Platform detection. Sets `PLATFORM` environment variable from Docker-style platform strings (linux/amd64, linux/arm64, linux/arm/v7, linux/386). Used by Dockerfiles and build scripts. |
 
 ## How It Works
@@ -59,4 +59,4 @@ rm -rf src/build/tmp/WinQuake                                          # force r
 ## Version Knobs
 
 - `NQ_VERSION`: Explicit client version string injected into WASM build metadata.
-- `NQ_REQUIRE_VERSION`: Set to `1` to require explicit version metadata (`NQ_VERSION` or `VERSION` file). Git-derived fallback is rejected.
+- `NQ_REQUIRE_VERSION`: Set to `1` to require explicit version metadata (`NQ_VERSION`). Git-derived fallback is rejected.

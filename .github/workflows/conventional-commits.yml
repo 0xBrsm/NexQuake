@@ -1,0 +1,55 @@
+name: Conventional Commits
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  TYPES_REGEX: 'build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
+
+jobs:
+  pr-title:
+    name: Check PR title
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title format
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          types_regex='${{ env.TYPES_REGEX }}'
+          regex="^(${types_regex})(\\([a-z0-9._/-]+\\))?!?: .+"
+          if [[ ! "${PR_TITLE}" =~ ${regex} ]]; then
+            echo "Invalid PR title: ${PR_TITLE}" >&2
+            echo "Expected Conventional Commits format." >&2
+            exit 1
+          fi
+
+  main-commit:
+    name: Check main commit subject
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate pushed commit subject
+        shell: bash
+        env:
+          RAW_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+          subject="${RAW_MESSAGE%%$'\n'*}"
+          types_regex='${{ env.TYPES_REGEX }}'
+          regex="^(${types_regex})(\\([a-z0-9._/-]+\\))?!?: .+"
+          if [[ ! "${subject}" =~ ${regex} ]]; then
+            echo "Invalid main commit subject: ${subject}" >&2
+            echo "Expected Conventional Commits format." >&2
+            exit 1
+          fi

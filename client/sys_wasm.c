@@ -177,7 +177,7 @@ int main(int c, char **v) {
 	parms.cachedir = NULL;
 
 	Host_Init(&parms);
-	Con_Printf("NexQuake WebAssembly v%s\n", NEXQUAKE_VERSION);
+	Con_Printf("NextQuake WebAssembly - %s\n", NEXQUAKE_VERSION);
 	oldtime = Sys_FloatTime() - 0.1;
 	bootstrap_ready = false;
 	main_loop_started = false;
