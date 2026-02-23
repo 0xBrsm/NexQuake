@@ -319,6 +319,7 @@ func newMux(cfg runtimeConfig, pakCache *assets.PakIndexCache) *http.ServeMux {
 		cfg.clientSendArgs,
 		cfg.clientURLArgs,
 	)
+	assetGateway.SetErrorf(errorf)
 
 	// Health check endpoint (Go 1.22+ method-based routing)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {

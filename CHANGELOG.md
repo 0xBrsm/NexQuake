@@ -4,6 +4,13 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.5.4
+
+### Fixed
+- Nexus `/start` manifest generation now skips malformed `.pak` archives instead of failing the full bootstrap with HTTP `500`, so one bad pak no longer blocks client startup.
+- Nexus now logs unreadable pak warnings with the offending pak path and parser error during manifest generation, making corrupt archive diagnosis actionable in production logs.
+- Client build version resolution is now robust across dev/prod repo layouts: build prep resolves version from explicit metadata (`NQ_VERSION`/`VERSION`) with git fallback, and release sync now writes prod-root `VERSION` from the same release value so WASM version output stays aligned with dev release metadata.
+
 ## 1.5.3
 
 ### Fixed

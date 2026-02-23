@@ -69,6 +69,68 @@ apply_patch() {
   patch -p0 -d "${OUT_DIR}" < "${patch_path}"
 }
 
+normalize_nq_version() {
+  local value="${1:-}"
+  value="$(printf '%s' "${value}" | tr -d '[:space:]')"
+  if [[ "${value}" == v[0-9]* ]]; then
+    value="${value#v}"
+  fi
+  printf '%s' "${value}"
+}
+
+resolved_nq_version=""
+resolved_nq_version_source=""
+
+resolve_nq_version() {
+  local candidate=""
+  resolved_nq_version=""
+  resolved_nq_version_source=""
+
+  candidate="$(normalize_nq_version "${NQ_VERSION:-}")"
+  if [[ -n "${candidate}" ]]; then
+    resolved_nq_version="${candidate}"
+    resolved_nq_version_source="env"
+    return 0
+  fi
+
+  if [[ -f "${ROOT}/../VERSION" ]]; then
+    candidate="$(normalize_nq_version "$(cat "${ROOT}/../VERSION" 2>/dev/null || true)")"
+    if [[ -n "${candidate}" ]]; then
+      resolved_nq_version="${candidate}"
+      resolved_nq_version_source="version-root"
+      return 0
+    fi
+  fi
+
+  if [[ -f "${ROOT}/VERSION" ]]; then
+    candidate="$(normalize_nq_version "$(cat "${ROOT}/VERSION" 2>/dev/null || true)")"
+    if [[ -n "${candidate}" ]]; then
+      resolved_nq_version="${candidate}"
+      resolved_nq_version_source="version-src"
+      return 0
+    fi
+  fi
+
+  if command -v git >/dev/null 2>&1; then
+    candidate="$(normalize_nq_version "$(git -C "${ROOT}/.." describe --tags --always --dirty 2>/dev/null || true)")"
+    if [[ -n "${candidate}" ]]; then
+      resolved_nq_version="${candidate}"
+      resolved_nq_version_source="git-root"
+      return 0
+    fi
+    candidate="$(normalize_nq_version "$(git -C "${ROOT}" describe --tags --always --dirty 2>/dev/null || true)")"
+    if [[ -n "${candidate}" ]]; then
+      resolved_nq_version="${candidate}"
+      resolved_nq_version_source="git-src"
+      return 0
+    fi
+  fi
+
+  resolved_nq_version="unknown"
+  resolved_nq_version_source="fallback"
+  return 0
+}
+
 # --- Upstream bugfix patches (opt-in via BUGFIX=1) ---------------------------
 # These fix well-documented vanilla WinQuake bugs (buffer overflows, crashes,
 # etc.) and are applied to the canonical source *before* any build-specific
@@ -113,7 +175,20 @@ if [[ "${kind}" == "client" ]]; then
   echo "Applying client (WASM) overlays + patches ..."
   cp "${ROOT}/client/net_bsd.c" "${ROOT}/client/net_ws_transport.c" "${ROOT}/client/net_ws_vnet.c" "${ROOT}/client/cmd_rcon.c" "${ROOT}/client/net_ws_transport.h" "${ROOT}/client/net_ws_vnet.h" "${OUT_DIR}/"
   cp "${ROOT}/client/sys_wasm.c" "${ROOT}/client/vid_wasm.c" "${ROOT}/client/snd_wasm.c" "${ROOT}/client/cd_wasm.c" "${OUT_DIR}/"
-  cp "${ROOT}/client/Makefile.emscripten" "${ROOT}/client/shell/shell.html" "${ROOT}/client/shell/shell.css" "${ROOT}/client/shell/favicon.svg" "${ROOT}/../VERSION" "${OUT_DIR}/"
+  cp "${ROOT}/client/Makefile.emscripten" "${ROOT}/client/shell/shell.html" "${ROOT}/client/shell/shell.css" "${ROOT}/client/shell/favicon.svg" "${OUT_DIR}/"
+  resolve_nq_version
+  client_version="${resolved_nq_version}"
+  if [[ "${NQ_REQUIRE_VERSION:-0}" == "1" ]]; then
+    case "${resolved_nq_version_source}" in
+      env|version-root|version-src)
+        ;;
+      *)
+        echo "failed to resolve client version from explicit metadata (set NQ_VERSION or provide VERSION file)" >&2
+        exit 1
+        ;;
+    esac
+  fi
+  printf '%s\n' "${client_version}" > "${OUT_DIR}/VERSION"
   mkdir -p "${OUT_DIR}/shell"
   cp "${ROOT}/client/shell/"*.js "${OUT_DIR}/shell/"
 
@@ -152,7 +227,6 @@ if [[ "${kind}" == "client" ]]; then
   client_gamename_escaped="$(printf '%s' "${client_gamename}" | sed -e 's/[\/&]/\\&/g')"
   sed -i "s/__NEXQUAKE_GAMENAME__/${client_gamename_escaped}/g" "${OUT_DIR}/shell.html"
 
-  client_version="$(cat "${OUT_DIR}/VERSION" 2>/dev/null || echo "unknown")"
   sed -i "s/__NEXQUAKE_VERSION__/${client_version}/g" "${OUT_DIR}/shell.html"
   client_remote_root_basename_escaped="$(printf '%s' "${client_remote_root_basename}" | sed -e 's/[\/&]/\\&/g')"
 

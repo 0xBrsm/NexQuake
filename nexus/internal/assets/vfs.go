@@ -69,13 +69,17 @@ func NewGameManifestBundleHandler(gameDir string, pakCache *PakIndexCache, prefe
 
 // buildVFSManifest produces a sorted manifest of all files available for one mod.
 func buildVFSManifest(gameDir, mod string, pakCache *PakIndexCache) ([]vfsManifestEntry, error) {
+	return buildVFSManifestWithWarnings(gameDir, mod, pakCache, nil)
+}
+
+func buildVFSManifestWithWarnings(gameDir, mod string, pakCache *PakIndexCache, warnf func(string, ...any)) ([]vfsManifestEntry, error) {
 	layers := []string{"common", "client"}
 
 	// Later layers overwrite earlier ones.
 	byKey := make(map[string]vfsManifestEntry)
 
 	for _, layer := range layers {
-		if err := overlayLayerIntoManifest(byKey, gameDir, mod, layer, pakCache); err != nil {
+		if err := overlayLayerIntoManifest(byKey, gameDir, mod, layer, pakCache, warnf); err != nil {
 			return nil, err
 		}
 	}
@@ -90,7 +94,7 @@ func buildVFSManifest(gameDir, mod string, pakCache *PakIndexCache) ([]vfsManife
 
 var pakNumberRE = regexp.MustCompile(`(?i)^pak(\d+)\.pak$`)
 
-func overlayLayerIntoManifest(byKey map[string]vfsManifestEntry, gameDir, mod, layer string, pakCache *PakIndexCache) error {
+func overlayLayerIntoManifest(byKey map[string]vfsManifestEntry, gameDir, mod, layer string, pakCache *PakIndexCache, warnf func(string, ...any)) error {
 	root := filepath.Join(gameDir, mod, layer)
 	st, err := os.Stat(root)
 	if err != nil || !st.IsDir() {
@@ -112,7 +116,12 @@ func overlayLayerIntoManifest(byKey map[string]vfsManifestEntry, gameDir, mod, l
 	for _, pakRel := range paks {
 		full := filepath.Join(root, pakRel)
 		if err := explodePakIntoManifest(byKey, mod, layer, full, pakRel, pakCache); err != nil {
-			return err
+			// Keep bootstrap resilient when optional/third-party paks are malformed.
+			// Loose files (and other valid paks) still populate the manifest.
+			if warnf != nil {
+				warnf("skipping unreadable pak %q: %v", full, err)
+			}
+			continue
 		}
 	}
 

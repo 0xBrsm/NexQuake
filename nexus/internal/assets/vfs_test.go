@@ -144,6 +144,46 @@ func TestBuildVFSManifest_PakOrderWithinLayer(t *testing.T) {
 	}
 }
 
+func TestBuildVFSManifest_IgnoresCorruptPak(t *testing.T) {
+	gameDir := t.TempDir()
+	mod := "id1"
+
+	commonDir := filepath.Join(gameDir, mod, "common")
+	if err := os.MkdirAll(commonDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Write a malformed pak whose header points the directory beyond EOF.
+	corrupt := []byte{
+		'P', 'A', 'C', 'K',
+		0x64, 0x00, 0x00, 0x00, // dir offset = 100
+		0x40, 0x00, 0x00, 0x00, // dir length = 64
+	}
+	if err := os.WriteFile(filepath.Join(commonDir, "pak0.pak"), corrupt, 0o644); err != nil {
+		t.Fatalf("write corrupt pak: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(commonDir, "config.cfg"), []byte("echo ok"), 0o644); err != nil {
+		t.Fatalf("write loose file: %v", err)
+	}
+
+	manifest, err := buildVFSManifest(gameDir, mod, NewPakIndexCache())
+	if err != nil {
+		t.Fatalf("buildVFSManifest: %v", err)
+	}
+
+	found := false
+	for _, e := range manifest {
+		if e.Path == "config.cfg" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected loose file to remain available, got manifest=%+v", manifest)
+	}
+}
+
 func TestNewGameManifestBundleHandler_ReturnsDirectModManifests(t *testing.T) {
 	gameDir := t.TempDir()
 

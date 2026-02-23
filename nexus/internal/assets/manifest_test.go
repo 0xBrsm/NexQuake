@@ -3,6 +3,7 @@ package assets
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -185,5 +186,60 @@ func TestHashedAssetGateway_RangeRequests(t *testing.T) {
 	}
 	if string(got) != "bcd" {
 		t.Fatalf("range body=%q want=%q", string(got), "bcd")
+	}
+}
+
+func TestHashedAssetGateway_StartIgnoresCorruptPakInOtherMod(t *testing.T) {
+	gameDir := t.TempDir()
+	id1CommonDir := filepath.Join(gameDir, "id1", "common")
+	if err := os.MkdirAll(id1CommonDir, 0o755); err != nil {
+		t.Fatalf("mkdir id1: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(id1CommonDir, "config.cfg"), []byte("echo id1"), 0o644); err != nil {
+		t.Fatalf("write id1: %v", err)
+	}
+
+	otherCommonDir := filepath.Join(gameDir, "ctf", "common")
+	if err := os.MkdirAll(otherCommonDir, 0o755); err != nil {
+		t.Fatalf("mkdir ctf: %v", err)
+	}
+	corrupt := []byte{
+		'P', 'A', 'C', 'K',
+		0x64, 0x00, 0x00, 0x00, // dir offset = 100
+		0x40, 0x00, 0x00, 0x00, // dir length = 64
+	}
+	if err := os.WriteFile(filepath.Join(otherCommonDir, "pak0.pak"), corrupt, 0o644); err != nil {
+		t.Fatalf("write corrupt pak: %v", err)
+	}
+
+	gateway := NewHashedAssetGateway(
+		gameDir,
+		filepath.Join(t.TempDir(), "missing"),
+		NewPakIndexCache(),
+		4,
+		false,
+		nil,
+		false,
+	)
+	var errorLogs []string
+	gateway.SetErrorf(func(format string, args ...any) {
+		errorLogs = append(errorLogs, fmt.Sprintf(format, args...))
+	})
+	startReq := httptest.NewRequest(http.MethodGet, "/start", nil)
+	startRec := httptest.NewRecorder()
+	gateway.StartHandler().ServeHTTP(startRec, startReq)
+	if startRec.Code != http.StatusOK {
+		t.Fatalf("start status=%d body=%q", startRec.Code, startRec.Body.String())
+	}
+
+	bundle := decodeStartBundle(t, startRec.Body.Bytes())
+	if len(bundle.Game["id1"]) == 0 {
+		t.Fatalf("expected id1 entries in bundle, got=%+v", bundle.Game)
+	}
+	if len(errorLogs) == 0 {
+		t.Fatalf("expected gateway to log corrupt pak")
+	}
+	if !strings.Contains(errorLogs[0], "pak0.pak") {
+		t.Fatalf("expected logged path to include pak filename, got=%q", errorLogs[0])
 	}
 }

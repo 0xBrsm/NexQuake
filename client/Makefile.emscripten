@@ -2,7 +2,7 @@
 # Written by Gregory Maynard-Hoare
 
 ifeq ($(NEXQUAKE_VERSION),)
-	NEXQUAKE_VERSION := $(shell cat VERSION 2>/dev/null || echo unknown)
+	NEXQUAKE_VERSION := $(shell cat VERSION 2>/dev/null || git describe --tags --always --dirty 2>/dev/null || echo unknown)
 endif
 
 # Compiler / linker parameters

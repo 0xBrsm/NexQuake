@@ -1,9 +1,15 @@
 name: Publish Image
+run-name: "Publish Image ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.version }}"
 
 on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Image version tag (for example: v1.5.3)"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -28,7 +34,7 @@ jobs:
           if [[ "${GITHUB_EVENT_NAME}" == "release" ]]; then
             echo "version=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
           else
-            echo "version=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Resolve build timestamp

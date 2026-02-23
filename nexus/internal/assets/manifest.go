@@ -80,6 +80,7 @@ type HashedAssetGateway struct {
 	sendArgs            []string
 	urlArgs             bool
 	sessionTTL          time.Duration
+	errorf              func(string, ...any)
 
 	mu           sync.RWMutex
 	sessions     map[string]*gatewaySession
@@ -99,9 +100,18 @@ func NewHashedAssetGateway(gameDir, cdDir string, pakCache *PakIndexCache, prefe
 		sendArgs:            append([]string(nil), sendArgs...),
 		urlArgs:             urlArgs,
 		sessionTTL:          defaultGatewaySessionTTL,
+		errorf:              func(string, ...any) {},
 		sessions:            make(map[string]*gatewaySession),
 		assetsByHash:        make(map[string]hashedAsset),
 	}
+}
+
+func (g *HashedAssetGateway) SetErrorf(logf func(string, ...any)) {
+	if logf == nil {
+		g.errorf = func(string, ...any) {}
+		return
+	}
+	g.errorf = logf
 }
 
 func (g *HashedAssetGateway) StartHandler() http.HandlerFunc {
@@ -226,9 +236,12 @@ func (g *HashedAssetGateway) buildSnapshot(ref string) (*hashedSnapshot, error) 
 		Game: make(map[string][]startManifestEntry, len(mods)),
 	}
 	assets := make(map[string]hashedAsset)
+	errorf := g.errorf
 
 	for _, mod := range mods {
-		manifest, manifestErr := buildVFSManifest(g.gameDir, mod, g.pakCache)
+		manifest, manifestErr := buildVFSManifestWithWarnings(g.gameDir, mod, g.pakCache, func(format string, args ...any) {
+			errorf("asset manifest warning: "+format, args...)
+		})
 		if manifestErr != nil {
 			return nil, manifestErr
 		}
