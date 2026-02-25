@@ -4,6 +4,12 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.5.7
+
+### Changed
+- Production image publish workflow now pushes per-architecture images by digest.
+- Quickstart README minor wording changes.
+
 ## 1.5.6
 
 ### Changed

@@ -14,7 +14,7 @@ Ready for deathmatch?
 docker run -p 1337:1337 -e CL_ARGS=+connect ghcr.io/0xbrsm/nexquake
 ```
 
-Prefer to try a few mods?
+Rather try a few mods?
 
 ```bash
 # launch with several popular late-90s mod servers

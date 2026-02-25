@@ -52,6 +52,8 @@ jobs:
     name: Build amd64 Image
     runs-on: ubuntu-latest
     needs: prepare
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
 
     steps:
       - name: Checkout repository
@@ -67,17 +69,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
           platforms: linux/amd64
-          tags: ${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}:tmp-${{ github.sha }}-amd64
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
             GIT_SHA=${{ github.sha }}
             BUILD_TIME=${{ needs.prepare.outputs.build_time }}
             NQ_VERSION=${{ needs.prepare.outputs.version }}
+          provenance: false
+          sbom: false
           cache-from: type=gha,scope=publish-amd64
           cache-to: type=gha,mode=max,scope=publish-amd64
 
@@ -85,6 +89,8 @@ jobs:
     name: Build arm64 Image
     runs-on: ubuntu-24.04-arm
     needs: prepare
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
 
     steps:
       - name: Checkout repository
@@ -100,17 +106,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
           platforms: linux/arm64
-          tags: ${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}:tmp-${{ github.sha }}-arm64
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
             GIT_SHA=${{ github.sha }}
             BUILD_TIME=${{ needs.prepare.outputs.build_time }}
             NQ_VERSION=${{ needs.prepare.outputs.version }}
+          provenance: false
+          sbom: false
           cache-from: type=gha,scope=publish-arm64
           cache-to: type=gha,mode=max,scope=publish-arm64
 
@@ -130,21 +138,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}
-          tags: |
-            type=raw,value=${{ needs.prepare.outputs.version }}
-            type=raw,value=latest
-
       - name: Publish manifest list tags
         run: |
-          while IFS= read -r tag; do
-            [[ -z "${tag}" ]] && continue
-            docker buildx imagetools create \
-              --tag "${tag}" \
-              "${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}:tmp-${{ github.sha }}-amd64" \
-              "${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}:tmp-${{ github.sha }}-arm64"
-          done <<< "${{ steps.meta.outputs.tags }}"
+          image="${{ env.REGISTRY }}/${{ needs.prepare.outputs.image_name }}"
+          version="${{ needs.prepare.outputs.version }}"
+          docker buildx imagetools create \
+            --tag "${image}:${version}" \
+            --tag "${image}:latest" \
+            "${image}@${{ needs.build-amd64.outputs.digest }}" \
+            "${image}@${{ needs.build-arm64.outputs.digest }}"
