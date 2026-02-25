@@ -1,46 +1,34 @@
 package admin
 
 import (
+	"context"
 	"net"
-	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/0xBrsm/NexQuake/nexus/internal/nqnet"
 	"github.com/0xBrsm/NexQuake/nexus/internal/orch"
 )
 
-func integrationEnv(mgr *orch.ServerManager, alloc *nqnet.IPAllocator, sessions *nqnet.SessionRegistry) *Env {
-	env := &Env{
-		ServerSnapshots:   mgr.Snapshots,
-		StartServer:       mgr.StartServer,
-		StartServersAll:   mgr.StartServersAll,
-		StopServer:        mgr.StopServer,
-		StopServersAll:    mgr.StopServersAll,
-		RestartServer:     mgr.RestartServer,
-		RestartServersAll: mgr.RestartServersAll,
-		RemoveServer:      mgr.RemoveServer,
-		LaunchServer:      mgr.LaunchServer,
-		ExecServerCmd:     mgr.ExecServerCmd,
+func integrationEnv() *Env {
+	return &Env{
+		ServerSnapshots:   func() []orch.ServerSnapshot { return nil },
+		StartServer:       func(int) error { return nil },
+		StartServersAll:   func() error { return nil },
+		StopServer:        func(context.Context, int, time.Duration) error { return nil },
+		StopServersAll:    func(context.Context, time.Duration) error { return nil },
+		RestartServer:     func(context.Context, int, time.Duration) error { return nil },
+		RestartServersAll: func(context.Context, time.Duration) error { return nil },
+		RemoveServer:      func(int) error { return nil },
+		LaunchServer:      func(string, []string) error { return nil },
+		ExecServerCmd:     func(int, string, string) (string, error) { return "", nil },
 		TailNexusLog:      func(int) []string { return nil },
+		Auditf:            func(string, ...any) {},
+		SessionSnapshots:  func() []nqnet.SessionSnapshot { return nil },
+		SnapshotByVIP:     func(string) ([]*nqnet.Router, []nqnet.BanTarget) { return nil, nil },
+		ReserveAndBlock:   func([4]byte, string) {},
 	}
-	if sessions != nil {
-		env.SessionSnapshots = sessions.SnapshotAll
-		env.SnapshotByVIP = sessions.SnapshotByVirtualIP
-	}
-	if alloc != nil {
-		env.ReserveAndBlock = alloc.ReserveAndBlock
-	}
-	if env.SessionSnapshots == nil {
-		env.SessionSnapshots = func() []nqnet.SessionSnapshot { return nil }
-	}
-	if env.SnapshotByVIP == nil {
-		env.SnapshotByVIP = func(string) ([]*nqnet.Router, []nqnet.BanTarget) { return nil, nil }
-	}
-	if env.ReserveAndBlock == nil {
-		env.ReserveAndBlock = func([4]byte, string) {}
-	}
-	return env
 }
 
 func execNexusCommandThroughFrame(t *testing.T, env *Env, cmd string) string {
@@ -52,24 +40,13 @@ func execNexusCommandThroughFrame(t *testing.T, env *Env, cmd string) string {
 }
 
 func TestAdminIntegration_HandleAdminFrame_ServerCommandReturnsOutput(t *testing.T) {
-	ptyRead, ptyWrite, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
+	env := integrationEnv()
+	env.ExecServerCmd = func(port int, cmd, actorID string) (string, error) {
+		if port != 26000 || cmd != "hostname" {
+			return "", nil
+		}
+		return "hostname is \"fragfest\"\n", nil
 	}
-	t.Cleanup(func() { _ = ptyRead.Close(); _ = ptyWrite.Close() })
-
-	srv := orch.NewTestServerWithPTY(26000, ptyWrite)
-	go func() {
-		buf := make([]byte, 128)
-		_, _ = ptyRead.Read(buf)
-		srv.PublishConsoleLineForTest("hostname is \"fragfest\"\n")
-	}()
-
-	mgr := orch.NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := mgr.RegisterServerLaunch(orch.NewTestServerLaunch(0))
-	mgr.UpdatePort(rec, 26000)
-	mgr.SetServerRunningForTest(rec, srv)
-	env := integrationEnv(mgr, nil, nil)
 
 	r, ch := nqnet.NewTestRouter(true)
 	HandleAdminFrame(r, []byte("\x0026000\x00hostname"), &Auth{}, env)
@@ -83,8 +60,7 @@ func TestAdminIntegration_HandleAdminFrame_ServerCommandReturnsOutput(t *testing
 }
 
 func TestAdminIntegration_HandleAdminFrame_TargetPortZeroRunsNexusCommand(t *testing.T) {
-	mgr := orch.NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	env := integrationEnv(mgr, nil, nil)
+	env := integrationEnv()
 
 	r, ch := nqnet.NewTestRouter(true)
 	HandleAdminFrame(r, []byte("\x000\x00slist"), &Auth{}, env)
@@ -95,16 +71,16 @@ func TestAdminIntegration_HandleAdminFrame_TargetPortZeroRunsNexusCommand(t *tes
 }
 
 func TestAdminIntegration_HandleAdminFrame_SessionListClientSessions(t *testing.T) {
-	mgr := orch.NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := mgr.RegisterServerLaunch(orch.NewTestServerLaunch(0))
-	mgr.UpdatePort(rec, 26000)
-	mgr.UpdateSearchPath(rec, []string{"id1"})
-	mgr.SetServerInfoForTest(rec, "fragfest", "", 0, 0)
-
-	serverIP := net.ParseIP(nqnet.DefaultNQServerIP).To4()
+	serverIP := parseDefaultServerIP(t)
 	alloc := nqnet.NewIPAllocator(serverIP)
 	sessions := nqnet.NewSessionRegistry()
-	env := integrationEnv(mgr, alloc, sessions)
+	env := integrationEnv()
+	env.ServerSnapshots = func() []orch.ServerSnapshot {
+		return []orch.ServerSnapshot{{ListenPort: 26000, Hostname: "fragfest"}}
+	}
+	env.SessionSnapshots = sessions.SnapshotAll
+	env.SnapshotByVIP = sessions.SnapshotByVirtualIP
+	env.ReserveAndBlock = alloc.ReserveAndBlock
 
 	clientRouter, _ := nqnet.NewTestRouterWith(false, alloc, sessions)
 	clientRouter.NoteServerRoutePort(26000)
@@ -123,27 +99,35 @@ func TestAdminIntegration_HandleAdminFrame_SessionListClientSessions(t *testing.
 }
 
 func TestAdminIntegration_HandleAdminFrame_RemoveDispatchesForStoppedServer(t *testing.T) {
-	mgr := orch.NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := mgr.RegisterServerLaunch(orch.NewTestServerLaunch(0))
-	mgr.UpdatePort(rec, 26000)
-	mgr.UpdateSearchPath(rec, []string{"id1"})
-	env := integrationEnv(mgr, nil, nil)
+	servers := []orch.ServerSnapshot{{Line: 0, ListenPort: 26000, GameDir: "id1", State: "stopped"}}
+	env := integrationEnv()
+	env.ServerSnapshots = func() []orch.ServerSnapshot {
+		return append([]orch.ServerSnapshot(nil), servers...)
+	}
+	env.RemoveServer = func(target int) error {
+		if target == 1 || target == 26000 {
+			servers = nil
+		}
+		return nil
+	}
 
 	reply := execNexusCommandThroughFrame(t, env, "remove 1")
 	if reply != "server removed\n" {
 		t.Fatalf("expected server removed reply, got %q", reply)
 	}
-	if snaps := mgr.Snapshots(); len(snaps) != 0 {
+	if snaps := env.ServerSnapshots(); len(snaps) != 0 {
 		t.Fatalf("expected removed server to be gone from registry, still have %d snapshots", len(snaps))
 	}
 }
 
 func TestAdminIntegration_HandleAdminFrame_SessionBanDisconnectsAndBlocksIdentity(t *testing.T) {
-	serverIP := net.ParseIP(nqnet.DefaultNQServerIP).To4()
+	serverIP := parseDefaultServerIP(t)
 	alloc := nqnet.NewIPAllocator(serverIP)
-	mgr := orch.NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 	sessions := nqnet.NewSessionRegistry()
-	env := integrationEnv(mgr, alloc, sessions)
+	env := integrationEnv()
+	env.SessionSnapshots = sessions.SnapshotAll
+	env.SnapshotByVIP = sessions.SnapshotByVirtualIP
+	env.ReserveAndBlock = alloc.ReserveAndBlock
 
 	clientRouter, _ := nqnet.NewTestRouterWith(false, alloc, sessions)
 	vip := clientRouter.VirtualClientIP()
@@ -161,10 +145,12 @@ func TestAdminIntegration_HandleAdminFrame_SessionBanDisconnectsAndBlocksIdentit
 }
 
 func TestAdminIntegration_HandleAdminFrame_SessionBanAdminRejected(t *testing.T) {
-	alloc := nqnet.NewIPAllocator(net.ParseIP(nqnet.DefaultNQServerIP).To4())
-	mgr := orch.NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	alloc := nqnet.NewIPAllocator(parseDefaultServerIP(t))
 	sessions := nqnet.NewSessionRegistry()
-	env := integrationEnv(mgr, alloc, sessions)
+	env := integrationEnv()
+	env.SessionSnapshots = sessions.SnapshotAll
+	env.SnapshotByVIP = sessions.SnapshotByVirtualIP
+	env.ReserveAndBlock = alloc.ReserveAndBlock
 
 	adminRouter, _ := nqnet.NewTestRouterWith(true, alloc, sessions)
 	vip := adminRouter.VirtualClientIP()
@@ -179,4 +165,13 @@ func TestAdminIntegration_HandleAdminFrame_SessionBanAdminRejected(t *testing.T)
 	if routers, _ := sessions.SnapshotByVirtualIP(vip); len(routers) != 1 {
 		t.Fatalf("expected admin session to remain connected after rejected ban")
 	}
+}
+
+func parseDefaultServerIP(t *testing.T) net.IP {
+	t.Helper()
+	ip := net.ParseIP(nqnet.DefaultNQServerIP).To4()
+	if ip == nil {
+		t.Fatalf("failed to parse default server ip")
+	}
+	return ip
 }

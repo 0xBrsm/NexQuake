@@ -61,10 +61,7 @@ func fillRunningPorts(mgr *ServerManager, dst []int) []int {
 		}
 		for _, serverID := range ids {
 			rec := mgr.serversByID[serverID]
-			if rec == nil || rec.Running == nil || rec.Running.Cmd == nil || rec.Running.Cmd.Process == nil {
-				continue
-			}
-			if !isProcessAlive(rec.Running.Cmd.Process) {
+			if !mgr.serverRecordRunningLocked(rec) {
 				continue
 			}
 			dst = append(dst, port)
@@ -89,29 +86,44 @@ func SnapshotForSlist(mgr *ServerManager) []nqnet.ServerListEntry {
 	now := time.Now()
 
 	mgr.mu.RLock()
-	out := make([]nqnet.ServerListEntry, 0, len(ports))
+	out := make([]nqnet.ServerListEntry, 0, len(ports)+len(mgr.poolsByID))
+
+	pools := make([]*serverPool, 0, len(mgr.poolsByID))
+	for _, pool := range mgr.poolsByID {
+		if pool != nil {
+			pools = append(pools, pool)
+		}
+	}
+	sort.Slice(pools, func(i, j int) bool {
+		return pools[i].ListenPort < pools[j].ListenPort
+	})
+	for _, pool := range pools {
+		if pool.ListenPort < 1 || pool.ListenPort > 65535 || pool.AggregateInstances == 0 {
+			continue
+		}
+		out = append(out, nqnet.ServerListEntry{
+			ListenPort: pool.ListenPort,
+			Hostname:   pool.DisplayHostname,
+			MapName:    pool.DisplayMap,
+			GameDir:    pool.DisplayGameDir,
+			Users:      pool.AggregateUsers,
+			MaxUsers:   pool.AggregateMaxUsers,
+			Instances:  pool.AggregateInstances,
+		})
+	}
+
 	for _, port := range ports {
 		ids := mgr.serverIDsByPort[port]
 		var rec *serverRecord
 		for _, serverID := range ids {
 			r := mgr.serversByID[serverID]
-			if r == nil || r.Running == nil || r.Running.Cmd == nil || r.Running.Cmd.Process == nil {
-				continue
-			}
-			if !isProcessAlive(r.Running.Cmd.Process) {
+			if !mgr.serverRecordRunningLocked(r) || mgr.poolByServerID[r.id] != nil {
 				continue
 			}
 			rec = r
 			break
 		}
-		if rec == nil {
-			continue
-		}
-		if now.Sub(rec.LastSeen) > staleAfter {
-			continue
-		}
-
-		if rec.spec == nil {
+		if rec == nil || now.Sub(rec.LastSeen) > staleAfter || rec.spec == nil {
 			continue
 		}
 
@@ -120,8 +132,9 @@ func SnapshotForSlist(mgr *ServerManager) []nqnet.ServerListEntry {
 			Hostname:   rec.Hostname,
 			MapName:    rec.MapName,
 			GameDir:    activeGameDir(rec.spec.SearchPath),
-			Players:    rec.Players,
-			MaxPlayers: rec.MaxPlayers,
+			Users:      uint16(rec.Players),
+			MaxUsers:   uint16(rec.MaxPlayers),
+			Instances:  1,
 		})
 	}
 	mgr.mu.RUnlock()
@@ -179,6 +192,7 @@ func (p *serverInfoPoller) pollLoop(ctx context.Context, conn *net.UDPConn) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			p.mgr.reconcileAllPools()
 			ports = fillRunningPorts(p.mgr, ports)
 			if len(ports) == 0 {
 				continue

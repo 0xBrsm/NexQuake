@@ -70,6 +70,8 @@ func queryNexusClientRows(env *Env) []nexusClientRow {
 				if server == "" {
 					server = "UNNAMED"
 				}
+			} else if env.IsManagedListenPort != nil && env.IsManagedListenPort(session.ActiveServerPort) {
+				port = session.ActiveServerPort
 			}
 		}
 

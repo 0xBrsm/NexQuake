@@ -8,192 +8,77 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 	"time"
 )
 
 var (
-	ErrAlreadyRunning = errors.New("already running")
-	ErrAlreadyStopped = errors.New("already stopped")
+	errAlreadyRunning = errors.New("already running")
+	errAlreadyStopped = errors.New("already stopped")
 )
 
-const serverStartupCCREPTimeout = 10 * time.Second
-
-func resetRecordStartupState(rec *serverRecord) {
-	if rec == nil {
-		return
+func (m *ServerManager) findPoolByPortOrIndexLocked(target int) (*serverPool, error) {
+	if pool := m.poolByListenPort[target]; pool != nil {
+		return pool, nil
 	}
-	rec.relayConsoleReady = false
-	rec.awaitingServerInfo = false
-	rec.startupTimedOutOnce = false
-}
 
-func (m *ServerManager) findRecordByPortOrIndexLocked(target int) (*serverRecord, error) {
-	var byPort *serverRecord
-	for _, rec := range m.serversByID {
-		if rec == nil {
+	pools := make([]*serverPool, 0, len(m.poolsByID))
+	for _, pool := range m.poolsByID {
+		if pool == nil {
 			continue
 		}
-
-		isMatch := (rec.resolvedPort == target) || (rec.spec != nil && rec.spec.ListenPort == target)
-		if isMatch {
-			if byPort != nil && byPort != rec {
-				return nil, fmt.Errorf("ambiguous port %d", target)
-			}
-			byPort = rec
-		}
+		pools = append(pools, pool)
 	}
-	if byPort != nil {
-		return byPort, nil
-	}
-
-	records := make([]*serverRecord, 0, len(m.serversByID))
-	for _, rec := range m.serversByID {
-		if rec == nil {
-			continue
-		}
-		records = append(records, rec)
-	}
-	slices.SortFunc(records, func(a, b *serverRecord) int {
-		return cmp.Compare(a.Launch.Slot, b.Launch.Slot)
+	slices.SortFunc(pools, func(a, b *serverPool) int {
+		return cmp.Compare(a.Line, b.Line)
 	})
 	index := target - 1
-	if index >= 0 && index < len(records) {
-		return records[index], nil
+	if index >= 0 && index < len(pools) {
+		return pools[index], nil
 	}
 
 	return nil, fmt.Errorf("unknown target %d", target)
 }
 
-func (m *ServerManager) nextLaunchSlotLocked() int {
-	maxSlot := -1
-	for _, rec := range m.serversByID {
+func (m *ServerManager) nextPoolLineLocked() int {
+	maxLine := -1
+	for _, pool := range m.poolsByID {
+		if pool == nil {
+			continue
+		}
+		if pool.Line > maxLine {
+			maxLine = pool.Line
+		}
+	}
+	return maxLine + 1
+}
+
+func (m *ServerManager) poolBackendsLocked(pool *serverPool) []*serverRecord {
+	if pool == nil {
+		return nil
+	}
+	out := make([]*serverRecord, 0, len(pool.BackendServerIDs))
+	for _, serverID := range pool.BackendServerIDs {
+		rec := m.serversByID[serverID]
 		if rec == nil {
 			continue
 		}
-		if rec.Launch.Slot > maxSlot {
-			maxSlot = rec.Launch.Slot
+		out = append(out, rec)
+	}
+	slices.SortFunc(out, func(a, b *serverRecord) int {
+		aPort, bPort := recordListenPort(a), recordListenPort(b)
+		switch {
+		case aPort > 0 && bPort > 0:
+			if aPort != bPort {
+				return cmp.Compare(aPort, bPort)
+			}
+		case aPort > 0:
+			return -1
+		case bPort > 0:
+			return 1
 		}
-	}
-	return maxSlot + 1
-}
-
-func (m *ServerManager) removeServerIDFromPortLocked(port int, serverID int) {
-	if port <= 0 {
-		return
-	}
-	ids := m.serverIDsByPort[port]
-	if len(ids) == 0 {
-		return
-	}
-	out := ids[:0]
-	for _, id := range ids {
-		if id != serverID {
-			out = append(out, id)
-		}
-	}
-	if len(out) == 0 {
-		delete(m.serverIDsByPort, port)
-		return
-	}
-	m.serverIDsByPort[port] = out
-}
-
-func (m *ServerManager) startRecord(rec *serverRecord) error {
-	if rec == nil {
-		return fmt.Errorf("server record not found")
-	}
-
-	m.mu.Lock()
-	if m.runtimeBasedir == "" {
-		m.mu.Unlock()
-		return fmt.Errorf("runtime not initialized")
-	}
-	if rec.Running != nil && rec.Running.Cmd != nil && rec.Running.Cmd.Process != nil && isProcessAlive(rec.Running.Cmd.Process) {
-		m.mu.Unlock()
-		return ErrAlreadyRunning
-	}
-	runtimeBasedir := m.runtimeBasedir
-	launch := cloneServerLaunch(rec.Launch)
-
-	// Clear stale resolved-port state from any previous run so that
-	// assignPortLocked will accept the new port the OS hands out
-	// (critical for -port 0 servers that get a different ephemeral port
-	// each time they start).
-	m.removeServerIDFromPortLocked(rec.resolvedPort, rec.id)
-	if rec.spec != nil {
-		m.removeServerIDFromPortLocked(rec.spec.ListenPort, rec.id)
-	}
-	rec.resolvedPortKnown = false
-	rec.resolvedPort = 0
-	rec.resolvedSearchPath = nil
-	rec.spec = nil
-	m.mu.Unlock()
-
-	srv, err := m.startServer(
-		runtimeBasedir,
-		launch,
-		func(port int) {
-			m.UpdatePort(rec, port)
-			m.debugf("Resolved server %d port: %d", rec.Launch.Slot+1, port)
-		},
-		func(searchPath []string) {
-			searchPath = normalizeSearchPath(searchPath)
-			m.UpdateSearchPath(rec, searchPath)
-			m.debugf("Resolved server search path (slot=%d active=%q paths=%q)",
-				rec.Launch.Slot, activeGameDir(searchPath), searchPath)
-		},
-	)
-	if err != nil {
-		m.mu.Lock()
-		rec.Running = nil
-		resetRecordStartupState(rec)
-		rec.lastError = err.Error()
-		m.mu.Unlock()
-		return err
-	}
-
-	m.mu.Lock()
-	rec.Running = srv
-	if rec.spec != nil {
-		rec.Running.spec = *rec.spec
-	}
-	rec.relayConsoleReady = false
-	rec.awaitingServerInfo = true
-	rec.startupTimedOutOnce = false
-	rec.lastError = ""
-	rec.Hostname = ""
-	rec.MapName = ""
-	rec.Players = 0
-	rec.MaxPlayers = 0
-	rec.LastSeen = time.Time{}
-	m.mu.Unlock()
-
-	go m.relayServerConsoleToNexus(rec, srv.Console)
-	go m.monitorServerStartupTimeout(rec, srv, serverStartupCCREPTimeout)
-
-	return nil
-}
-
-func (m *ServerManager) monitorServerStartupTimeout(rec *serverRecord, srv *managedServer, timeout time.Duration) {
-	if rec == nil || srv == nil || timeout <= 0 {
-		return
-	}
-
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	<-timer.C
-
-	m.mu.Lock()
-	if rec.Running != srv || !rec.awaitingServerInfo || rec.startupTimedOutOnce {
-		m.mu.Unlock()
-		return
-	}
-	rec.startupTimedOutOnce = true
-	slot := rec.Launch.Slot
-	m.mu.Unlock()
-
-	m.warnf("server %d failed to start in %d seconds", slot, int(timeout/time.Second))
+		return cmp.Compare(a.id, b.id)
+	})
+	return out
 }
 
 func (m *ServerManager) LaunchServer(binary string, args []string) error {
@@ -215,20 +100,19 @@ func (m *ServerManager) LaunchServer(binary string, args []string) error {
 	startTag := time.Now().UTC().Format("20060102T150405Z")
 
 	m.mu.Lock()
-	slot := m.nextLaunchSlotLocked()
-	rec := &serverRecord{
-		id: m.nextServerID,
-		Launch: serverLaunch{
-			Slot:   slot,
-			LogDir: fmt.Sprintf("%d-%s-%s", slot, filepath.Base(binary), startTag),
-			Binary: binary,
-			Args:   append([]string(nil), args...),
-		},
+	line := m.nextPoolLineLocked()
+	launch := serverLaunch{
+		Line:   line,
+		LogDir: fmt.Sprintf("%d-%s-%s", line, filepath.Base(binary), startTag),
+		Binary: binary,
+		Args:   append([]string(nil), args...),
 	}
-	m.nextServerID++
-	m.serversByID[rec.id] = rec
 	m.mu.Unlock()
 
+	rec, err := m.registerPoolLaunch(launch)
+	if err != nil {
+		return err
+	}
 	return m.startRecord(rec)
 }
 
@@ -238,13 +122,43 @@ func (m *ServerManager) StartServer(target int) error {
 	}
 
 	m.mu.RLock()
-	rec, err := m.findRecordByPortOrIndexLocked(target)
+	pool, err := m.findPoolByPortOrIndexLocked(target)
 	if err != nil {
 		m.mu.RUnlock()
 		return err
 	}
+	poolID := pool.PoolID
+	records := m.poolBackendsLocked(pool)
 	m.mu.RUnlock()
-	return m.startRecord(rec)
+
+	if len(records) == 0 {
+		m.mu.Lock()
+		pool = m.poolsByID[poolID]
+		if pool == nil {
+			m.mu.Unlock()
+			return fmt.Errorf("unknown target %d", target)
+		}
+		rec := m.appendPoolBackendRecordLocked(pool, pool.TemplateLaunch, poolBackendLifecycleWarming)
+		m.mu.Unlock()
+		records = []*serverRecord{rec}
+	}
+
+	started := false
+	for _, rec := range records {
+		err := m.startRecord(rec)
+		if err == nil {
+			started = true
+			continue
+		}
+		if errors.Is(err, errAlreadyRunning) {
+			continue
+		}
+		return err
+	}
+	if started {
+		return nil
+	}
+	return errAlreadyRunning
 }
 
 func (m *ServerManager) runServersAll(runOne func(target int) error, ignoreErr func(error) bool) error {
@@ -267,7 +181,7 @@ func (m *ServerManager) runServersAll(runOne func(target int) error, ignoreErr f
 func (m *ServerManager) StartServersAll() error {
 	return m.runServersAll(
 		m.StartServer,
-		func(err error) bool { return errors.Is(err, ErrAlreadyRunning) },
+		func(err error) bool { return errors.Is(err, errAlreadyRunning) },
 	)
 }
 
@@ -277,31 +191,43 @@ func (m *ServerManager) StopServer(ctx context.Context, target int, killAfter ti
 	}
 
 	m.mu.RLock()
-	rec, err := m.findRecordByPortOrIndexLocked(target)
+	pool, err := m.findPoolByPortOrIndexLocked(target)
 	if err != nil {
 		m.mu.RUnlock()
 		return err
 	}
-	s := rec.Running
+	records := m.poolBackendsLocked(pool)
 	m.mu.RUnlock()
 
-	if s == nil || s.Cmd == nil || s.Cmd.Process == nil || !isProcessAlive(s.Cmd.Process) {
-		m.mu.Lock()
-		if rec.Running == s {
-			rec.Running = nil
-			resetRecordStartupState(rec)
+	stopped := false
+	for _, rec := range records {
+		s := rec.Running
+		if s == nil || s.Cmd == nil || s.Cmd.Process == nil || !isProcessAlive(s.Cmd.Process) {
+			m.mu.Lock()
+			m.removeServerRecordLocked(rec.id)
+			m.mu.Unlock()
+			continue
 		}
+		if err := m.stopServer(ctx, rec, s, killAfter, true); err != nil {
+			return err
+		}
+		m.mu.Lock()
+		m.removeServerRecordLocked(rec.id)
 		m.mu.Unlock()
-		return ErrAlreadyStopped
+		stopped = true
 	}
 
-	return m.stopServer(ctx, rec, s, killAfter, true)
+	if !stopped {
+		return errAlreadyStopped
+	}
+
+	return nil
 }
 
 func (m *ServerManager) StopServersAll(ctx context.Context, killAfter time.Duration) error {
 	return m.runServersAll(
 		func(target int) error { return m.StopServer(ctx, target, killAfter) },
-		func(err error) bool { return errors.Is(err, ErrAlreadyStopped) },
+		func(err error) bool { return errors.Is(err, errAlreadyStopped) },
 	)
 }
 
@@ -309,29 +235,9 @@ func (m *ServerManager) RestartServer(ctx context.Context, target int, killAfter
 	if target <= 0 {
 		return fmt.Errorf("invalid target %d", target)
 	}
-
-	m.mu.RLock()
-	rec, err := m.findRecordByPortOrIndexLocked(target)
-	if err != nil {
-		m.mu.RUnlock()
+	if err := m.StopServer(ctx, target, killAfter); err != nil && !errors.Is(err, errAlreadyStopped) {
 		return err
 	}
-	s := rec.Running
-	m.mu.RUnlock()
-
-	if s != nil && s.Cmd != nil && s.Cmd.Process != nil && isProcessAlive(s.Cmd.Process) {
-		if err := m.stopServer(ctx, rec, s, killAfter, true); err != nil {
-			return err
-		}
-	} else {
-		m.mu.Lock()
-		if rec.Running == s {
-			rec.Running = nil
-			resetRecordStartupState(rec)
-		}
-		m.mu.Unlock()
-	}
-
 	return m.StartServer(target)
 }
 
@@ -342,81 +248,6 @@ func (m *ServerManager) RestartServersAll(ctx context.Context, killAfter time.Du
 	)
 }
 
-func (m *ServerManager) stopServer(ctx context.Context, rec *serverRecord, s *managedServer, killAfter time.Duration, sendSignal bool) error {
-	if s == nil {
-		return nil
-	}
-	waitAfterSignal := killAfter
-
-	clearRunning := func(err error) error {
-		m.mu.Lock()
-		if rec != nil && rec.Running == s {
-			rec.Running = nil
-			resetRecordStartupState(rec)
-			rec.lastError = ""
-		}
-		m.mu.Unlock()
-		return err
-	}
-
-	if sendSignal && s.Cmd != nil && s.Cmd.Process != nil && isProcessAlive(s.Cmd.Process) {
-		_ = s.writeConsole("quit")
-
-		quitGrace := 750 * time.Millisecond
-		if killAfter > 0 && killAfter < quitGrace {
-			quitGrace = killAfter
-		}
-		if waitAfterSignal > quitGrace {
-			waitAfterSignal -= quitGrace
-		} else {
-			waitAfterSignal = 0
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case err := <-s.done:
-			return clearRunning(err)
-		case <-time.After(quitGrace):
-		}
-
-		if isProcessAlive(s.Cmd.Process) {
-			_ = s.Cmd.Process.Signal(syscall.SIGTERM)
-		}
-	}
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case err := <-s.done:
-		return clearRunning(err)
-	case <-time.After(waitAfterSignal):
-		if s.Cmd != nil && s.Cmd.Process != nil && isProcessAlive(s.Cmd.Process) {
-			_ = s.Cmd.Process.Kill()
-		}
-		select {
-		case err := <-s.done:
-			return clearRunning(err)
-		case <-time.After(1 * time.Second):
-			slot := -1
-			gameDir := ""
-			m.mu.Lock()
-			if rec != nil {
-				if rec.Running == s {
-					rec.lastError = "did not exit after kill"
-				}
-				slot = rec.Launch.Slot
-				if rec.spec != nil {
-					gameDir = activeGameDir(rec.spec.SearchPath)
-				}
-			}
-			m.mu.Unlock()
-			return fmt.Errorf("server slot=%d mod=%q did not exit after kill", slot, gameDir)
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-}
-
 func (m *ServerManager) RemoveServer(target int) error {
 	if target <= 0 {
 		return fmt.Errorf("invalid target %d", target)
@@ -425,22 +256,33 @@ func (m *ServerManager) RemoveServer(target int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	rec, err := m.findRecordByPortOrIndexLocked(target)
+	pool, err := m.findPoolByPortOrIndexLocked(target)
 	if err != nil {
 		return err
 	}
-	if rec.Running != nil && rec.Running.Cmd != nil && rec.Running.Cmd.Process != nil && isProcessAlive(rec.Running.Cmd.Process) {
-		return fmt.Errorf("server is running; stop server first")
-	}
-	if rec.Running != nil {
-		rec.Running = nil
-		resetRecordStartupState(rec)
+
+	backendIDs := append([]int(nil), pool.BackendServerIDs...)
+	for _, serverID := range backendIDs {
+		rec := m.serversByID[serverID]
+		if rec == nil {
+			continue
+		}
+		if rec.Running != nil && rec.Running.Cmd != nil && rec.Running.Cmd.Process != nil && isProcessAlive(rec.Running.Cmd.Process) {
+			return fmt.Errorf("server is running; stop server first")
+		}
+		if rec.Running != nil {
+			rec.Running = nil
+			resetRecordStartupState(rec)
+		}
+		m.removeServerRecordLocked(rec.id)
 	}
 
-	m.removeServerIDFromPortLocked(rec.resolvedPort, rec.id)
-	if rec.spec != nil {
-		m.removeServerIDFromPortLocked(rec.spec.ListenPort, rec.id)
+	if pool.ListenReserveConn != nil {
+		_ = pool.ListenReserveConn.Close()
 	}
-	delete(m.serversByID, rec.id)
+	if pool.ListenPort > 0 {
+		delete(m.poolByListenPort, pool.ListenPort)
+	}
+	delete(m.poolsByID, pool.PoolID)
 	return nil
 }

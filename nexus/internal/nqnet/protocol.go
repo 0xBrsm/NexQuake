@@ -19,7 +19,7 @@ const (
 
 	// Quake client hostcache entry limits:
 	// host name is char[24] (23 chars + NUL), map/game stay at 15 chars + NUL.
-	hostcacheNameMax = 23
+	hostcacheNameMax  = 23
 	hostcacheFieldMax = 15
 
 	ccreqServerInfo byte = 0x02
@@ -41,8 +41,9 @@ type ServerListEntry struct {
 	Hostname   string
 	MapName    string
 	GameDir    string
-	Players    byte
-	MaxPlayers byte
+	Users      uint16
+	MaxUsers   uint16
+	Instances  uint16
 }
 
 // BuildCCREQServerInfo constructs a CCREQ_SERVER_INFO datagram.
@@ -173,7 +174,12 @@ func BuildCCREPServerList(entries []ServerListEntry) ([]byte, int) {
 		mapName = truncateQuakeString(mapName, hostcacheFieldMax)
 		gameDir = truncateQuakeString(gameDir, hostcacheFieldMax)
 
-		entrySize := len(serverPortText) + 1 + len(hostname) + 1 + len(mapName) + 1 + len(gameDir) + 1 + 3
+		instances := e.Instances
+		if instances == 0 {
+			instances = 1
+		}
+
+		entrySize := len(serverPortText) + 1 + len(hostname) + 1 + len(mapName) + 1 + len(gameDir) + 1 + 7
 		if len(buf)+entrySize > maxNetDatagramSize {
 			break
 		}
@@ -182,7 +188,10 @@ func BuildCCREPServerList(entries []ServerListEntry) ([]byte, int) {
 		buf = appendCString(buf, hostname)
 		buf = appendCString(buf, mapName)
 		buf = appendCString(buf, gameDir)
-		buf = append(buf, e.Players, e.MaxPlayers, netProtocolVersion)
+		buf = appendU16LE(buf, e.Users)
+		buf = appendU16LE(buf, e.MaxUsers)
+		buf = appendU16LE(buf, instances)
+		buf = append(buf, netProtocolVersion)
 		count++
 	}
 
@@ -190,6 +199,10 @@ func BuildCCREPServerList(entries []ServerListEntry) ([]byte, int) {
 	control := netFlagCtl | uint32(len(buf))
 	binary.BigEndian.PutUint32(buf[0:4], control)
 	return buf, count
+}
+
+func appendU16LE(buf []byte, value uint16) []byte {
+	return append(buf, byte(value&0xff), byte(value>>8))
 }
 
 // buildWSFrame builds a Nexus WS frame: 2-byte port header + payload.

@@ -24,6 +24,16 @@ type FrameDispatch struct {
 
 	// HandleAdminFrame is called for non-slist port-0 frames (rcon).
 	HandleAdminFrame func(router *Router, payload []byte)
+
+	// ResolveDestinationPort rewrites client frame destination ports.
+	// Return ok=false to drop the frame.
+	ResolveDestinationPort func(router *Router, dstPort int) (resolvedPort int, ok bool)
+
+	// RewriteSourcePort rewrites server reply source ports before WS send.
+	RewriteSourcePort func(router *Router, srcPort int) (rewrittenPort int)
+
+	// HandleRouterClose is invoked once during router close.
+	HandleRouterClose func(router *Router)
 }
 
 // Router relays WebSocket frames to/from UDP servers for a single client.
@@ -31,6 +41,7 @@ type Router struct {
 	ws        *websocket.Conn
 	udpConn   *net.UDPConn
 	wsTx      chan []byte
+	sessionID uint64
 	clientIP  [4]byte
 	sourceKey string
 	sourceIP  string
@@ -51,6 +62,8 @@ type Router struct {
 	cancel    context.CancelFunc
 	closeOnce sync.Once
 }
+
+var nextRouterSessionID atomic.Uint64
 
 // NewRouter creates a new WebSocket↔UDP relay router.
 func NewRouter(
@@ -91,6 +104,7 @@ func NewRouter(
 		ws:        ws,
 		udpConn:   udpConn,
 		wsTx:      make(chan []byte, 1024),
+		sessionID: nextRouterSessionID.Add(1),
 		clientIP:  clientIP,
 		sourceKey: strings.TrimSpace(sourceKey),
 		sourceIP:  strings.TrimSpace(sourceIP),
@@ -111,6 +125,9 @@ func NewRouter(
 // Close tears down the router, releasing all resources.
 func (r *Router) Close() {
 	r.closeOnce.Do(func() {
+		if r.dispatch.HandleRouterClose != nil {
+			r.dispatch.HandleRouterClose(r)
+		}
 		r.sessions.untrack(r)
 		r.cancel()
 		if r.udpConn != nil {
@@ -150,6 +167,11 @@ func (r *Router) SourceIP() string {
 // UserID returns the best-effort authenticated user identity for this session.
 func (r *Router) UserID() string {
 	return r.userID
+}
+
+// SessionID returns the router's unique per-websocket session identifier.
+func (r *Router) SessionID() uint64 {
+	return r.sessionID
 }
 
 // IsAdmin reports whether this router has admin privileges.
@@ -247,6 +269,18 @@ func (r *Router) handleWSFrame(packet []byte) {
 		return
 	}
 
-	r.NoteServerRoutePort(dstPort)
-	r.udpWrite(dstPort, payload)
+	resolvedPort := dstPort
+	if r.dispatch.ResolveDestinationPort != nil {
+		var ok bool
+		resolvedPort, ok = r.dispatch.ResolveDestinationPort(r, dstPort)
+		if !ok {
+			return
+		}
+	}
+	if resolvedPort < 1 || resolvedPort > 65535 {
+		return
+	}
+
+	r.NoteServerRoutePort(resolvedPort)
+	r.udpWrite(resolvedPort, payload)
 }

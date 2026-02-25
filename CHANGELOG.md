@@ -4,6 +4,16 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.6.0
+
+### Added
+- Nexus dynamic server scaling for startup entries configured with `-port 0`, including demand-aware scale-up/scale-down headroom and per-line caps via `POOL_SIZE`.
+- Session-affine relay routing for scaled server entries so join/handshake flows stay backend-consistent while preserving raw NetQuake datagram tunneling.
+
+### Changed
+- `slist` now reports aggregate users/maxusers plus instance counts for scaled server entries, with client server-list formatting updated to display the instance total.
+- RCON target resolution for scaled server entries now requires a single routable backend listen port and returns an explicit ambiguity error otherwise.
+- Nexus orchestration internals and docs now use explicit registry/policy/proxy lifecycle paths for reconcile heartbeat, draining, despawn, and routing decisions.
 ## 1.5.7
 
 ### Changed

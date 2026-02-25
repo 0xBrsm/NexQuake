@@ -217,7 +217,7 @@ func TestExecNexusCommand_Slist(t *testing.T) {
 	env := &Env{
 		ServerSnapshots: func() []orch.ServerSnapshot {
 			return []orch.ServerSnapshot{
-				{Slot: 0, ListenPort: 26000, GameDir: "id1", Hostname: "fragfest", MapName: "dm6", Players: 1, MaxPlayers: 16, State: "stopped"},
+				{Line: 0, ListenPort: 26000, GameDir: "id1", Hostname: "fragfest", MapName: "dm6", Players: 1, MaxPlayers: 16, State: "stopped"},
 			}
 		},
 		SessionSnapshots: func() []nqnet.SessionSnapshot { return nil },

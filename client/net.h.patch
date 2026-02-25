@@ -1,6 +1,6 @@
 --- net.h
 +++ net.h
-@@ -227,6 +227,7 @@
+@@ -227,6 +227,8 @@
  {
 -	char	name[16];
 +	char	name[24];
@@ -9,6 +9,7 @@
  	char	cname[32];
  	int		users;
  	int		maxusers;
++	int		instances;
 @@ -237,6 +238,7 @@
  
  extern int hostCacheCount;

@@ -37,8 +37,8 @@ func TestExecServerCmd_CapturesConsoleOutput(t *testing.T) {
 	}()
 
 	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := mgr.RegisterServerLaunch(serverLaunch{Slot: 0})
-	mgr.UpdatePort(rec, 26000)
+	rec := mgr.registerServerLaunch(serverLaunch{Line: 0})
+	mgr.updatePort(rec, 26000)
 	rec.Running = srv
 	globalMgr := mgr
 
@@ -83,8 +83,8 @@ func TestExecServerCmd_FiltersNoisyConsoleOutput(t *testing.T) {
 	}()
 
 	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := mgr.RegisterServerLaunch(serverLaunch{Slot: 0})
-	mgr.UpdatePort(rec, 26000)
+	rec := mgr.registerServerLaunch(serverLaunch{Line: 0})
+	mgr.updatePort(rec, 26000)
 	rec.Running = srv
 
 	reply, err := mgr.ExecServerCmd(26000, "sv_maxspeed", "")
@@ -137,8 +137,8 @@ func TestExecServerCmd_AppendsAuditEcho(t *testing.T) {
 	}()
 
 	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := mgr.RegisterServerLaunch(serverLaunch{Slot: 0})
-	mgr.UpdatePort(rec, 26000)
+	rec := mgr.registerServerLaunch(serverLaunch{Line: 0})
+	mgr.updatePort(rec, 26000)
 	rec.Running = srv
 
 	reply, err := mgr.ExecServerCmd(26000, "status;", "alice@example.com")
@@ -190,8 +190,8 @@ func TestExecServerCmd_SuppressesEchoAndCapturesDelayedOutput(t *testing.T) {
 	}()
 
 	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := mgr.RegisterServerLaunch(serverLaunch{Slot: 0})
-	mgr.UpdatePort(rec, 26000)
+	rec := mgr.registerServerLaunch(serverLaunch{Line: 0})
+	mgr.updatePort(rec, 26000)
 	rec.Running = srv
 
 	reply, err := mgr.ExecServerCmd(26000, "status", "")
@@ -236,8 +236,8 @@ func TestExecServerCmd_AuditEchoCapturesOutputAfterWaitGap(t *testing.T) {
 	}()
 
 	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := mgr.RegisterServerLaunch(serverLaunch{Slot: 0})
-	mgr.UpdatePort(rec, 26000)
+	rec := mgr.registerServerLaunch(serverLaunch{Line: 0})
+	mgr.updatePort(rec, 26000)
 	rec.Running = srv
 
 	reply, err := mgr.ExecServerCmd(26000, "timelimit", "alice@example.com")
@@ -260,8 +260,8 @@ func TestExecServerCmd_TailDefaultsToLastTenLines(t *testing.T) {
 	}
 
 	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := mgr.RegisterServerLaunch(serverLaunch{Slot: 0})
-	mgr.UpdatePort(rec, 26000)
+	rec := mgr.registerServerLaunch(serverLaunch{Line: 0})
+	mgr.updatePort(rec, 26000)
 	rec.Running = srv
 
 	reply, err := mgr.ExecServerCmd(26000, "tail", "")
@@ -289,8 +289,8 @@ func TestExecServerCmd_TailUsesFilteredOutput(t *testing.T) {
 	srv.Console.publishLine("line b\n")
 
 	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := mgr.RegisterServerLaunch(serverLaunch{Slot: 0})
-	mgr.UpdatePort(rec, 26000)
+	rec := mgr.registerServerLaunch(serverLaunch{Line: 0})
+	mgr.updatePort(rec, 26000)
 	rec.Running = srv
 
 	reply, err := mgr.ExecServerCmd(26000, "tail", "")
@@ -312,8 +312,8 @@ func TestExecServerCmd_TailUsageError(t *testing.T) {
 	}
 	srv := &managedServer{Cmd: &exec.Cmd{Process: process}, Console: newServerConsole(nil)}
 	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := mgr.RegisterServerLaunch(serverLaunch{Slot: 0})
-	mgr.UpdatePort(rec, 26000)
+	rec := mgr.registerServerLaunch(serverLaunch{Line: 0})
+	mgr.updatePort(rec, 26000)
 	rec.Running = srv
 
 	_, err = mgr.ExecServerCmd(26000, "tail 5", "")
@@ -346,8 +346,8 @@ func TestExecServerCmd_NoOutputUsesSuccessFallback(t *testing.T) {
 	t.Cleanup(func() { _ = ptyRead.Close(); _ = ptyWrite.Close() })
 
 	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := mgr.RegisterServerLaunch(serverLaunch{Slot: 0})
-	mgr.UpdatePort(rec, 26000)
+	rec := mgr.registerServerLaunch(serverLaunch{Line: 0})
+	mgr.updatePort(rec, 26000)
 	rec.Running = &managedServer{Cmd: &exec.Cmd{Process: process}, Console: newServerConsole(ptyWrite)}
 
 	reply, err := mgr.ExecServerCmd(26000, "status", "")

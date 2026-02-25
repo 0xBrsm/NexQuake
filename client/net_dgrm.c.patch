@@ -55,7 +55,7 @@
  	struct qsockaddr readaddr;
  	struct qsockaddr myaddr;
  	int		control;
-@@ -1150,51 +1159,54 @@
+@@ -1150,51 +1159,60 @@
  		if (MSG_ReadByte() != CCREP_SERVER_INFO)
  			continue;
  
@@ -106,6 +106,10 @@
 +				MSG_ReadByte();
 +				MSG_ReadByte();
 +				MSG_ReadByte();
++				MSG_ReadByte();
++				MSG_ReadByte();
++				MSG_ReadByte();
++				MSG_ReadByte();
  				continue;
 -			if (Q_strcasecmp (hostcache[n].name, hostcache[i].name) == 0)
 +			}
@@ -118,14 +122,16 @@
 +				dfunc.SetSocketPort(&readaddr, server_port);
 +
 +			slot = hostCacheCount++;
++			hostcache[slot].instances = 1;
 +			Q_strncpy(hostcache[slot].name, MSG_ReadString(), sizeof(hostcache[slot].name) - 1);
 +			hostcache[slot].name[sizeof(hostcache[slot].name) - 1] = 0;
 +			Q_strncpy(hostcache[slot].map, MSG_ReadString(), sizeof(hostcache[slot].map) - 1);
 +			hostcache[slot].map[sizeof(hostcache[slot].map) - 1] = 0;
 +			Q_strncpy(hostcache[slot].gamedir, MSG_ReadString(), sizeof(hostcache[slot].gamedir) - 1);
 +			hostcache[slot].gamedir[sizeof(hostcache[slot].gamedir) - 1] = 0;
-+			hostcache[slot].users = MSG_ReadByte();
-+			hostcache[slot].maxusers = MSG_ReadByte();
++			hostcache[slot].users = MSG_ReadByte() | (MSG_ReadByte() << 8);
++			hostcache[slot].maxusers = MSG_ReadByte() | (MSG_ReadByte() << 8);
++			hostcache[slot].instances = MSG_ReadByte() | (MSG_ReadByte() << 8);
 +			if (MSG_ReadByte() != NET_PROTOCOL_VERSION)
  			{
 -				i = Q_strlen(hostcache[n].name);

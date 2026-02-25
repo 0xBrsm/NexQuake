@@ -82,6 +82,7 @@ func main() {
 		errorf,
 		formatTimestampedLogText,
 	)
+	serverMgr.SetPoolMaxSize(cfg.poolSize)
 	if err := serverMgr.StartAll(); err != nil {
 		fatalf("Failed to start servers: %v", err)
 	}
@@ -148,6 +149,7 @@ type runtimeConfig struct {
 	clientAutoSMenu        bool
 	clientSendArgs         []string
 	clientURLArgs          bool
+	poolSize               int
 }
 
 func loadRuntimeConfig() runtimeConfig {
@@ -167,6 +169,7 @@ func loadRuntimeConfig() runtimeConfig {
 		clientAutoSMenu:        getEnvBool01("CL_SMENU", false),
 		clientSendArgs:         getEnvArgs("CL_ARGS", nil),
 		clientURLArgs:          getEnvBool01("CL_URL_ARGS", false),
+		poolSize:               getEnvIntMin("POOL_SIZE", 10, 1),
 	}
 }
 
@@ -280,6 +283,15 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			listPayload, _ := nqnet.BuildCCREPServerList(entries)
 			return listPayload
 		},
+		ResolveDestinationPort: func(router *nqnet.Router, dstPort int) (int, bool) {
+			return globalServerManager.ResolveDestinationPort(router, dstPort)
+		},
+		RewriteSourcePort: func(router *nqnet.Router, srcPort int) int {
+			return globalServerManager.RewriteSourcePort(router, srcPort)
+		},
+		HandleRouterClose: func(router *nqnet.Router) {
+			globalServerManager.ReleaseSessionAffinity(router)
+		},
 		HandleAdminFrame: func(router *nqnet.Router, payload []byte) {
 			admin.HandleAdminFrameWithIdentityAndPromotionHook(router, payload, globalAuth, globalAdminEnv, userIdentity, func(r *nqnet.Router) {
 				source := strings.TrimSpace(r.SourceIP())
@@ -345,20 +357,21 @@ func newMux(cfg runtimeConfig, pakCache *assets.PakIndexCache) *http.ServeMux {
 
 func buildAdminEnv() *admin.Env {
 	return &admin.Env{
-		ServerSnapshots:   globalServerManager.Snapshots,
-		StartServer:       globalServerManager.StartServer,
-		StartServersAll:   globalServerManager.StartServersAll,
-		StopServer:        globalServerManager.StopServer,
-		StopServersAll:    globalServerManager.StopServersAll,
-		RestartServer:     globalServerManager.RestartServer,
-		RestartServersAll: globalServerManager.RestartServersAll,
-		RemoveServer:      globalServerManager.RemoveServer,
-		LaunchServer:      globalServerManager.LaunchServer,
-		ExecServerCmd:     globalServerManager.ExecServerCmd,
-		TailNexusLog:      tailNexusLogLines,
-		Auditf:            auditf,
-		SessionSnapshots:  globalSessionRegistry.SnapshotAll,
-		SnapshotByVIP:     globalSessionRegistry.SnapshotByVirtualIP,
-		ReserveAndBlock:   globalIPAllocator.ReserveAndBlock,
+		ServerSnapshots:     globalServerManager.Snapshots,
+		StartServer:         globalServerManager.StartServer,
+		StartServersAll:     globalServerManager.StartServersAll,
+		StopServer:          globalServerManager.StopServer,
+		StopServersAll:      globalServerManager.StopServersAll,
+		RestartServer:       globalServerManager.RestartServer,
+		RestartServersAll:   globalServerManager.RestartServersAll,
+		RemoveServer:        globalServerManager.RemoveServer,
+		LaunchServer:        globalServerManager.LaunchServer,
+		ExecServerCmd:       globalServerManager.ExecServerCmd,
+		IsManagedListenPort: globalServerManager.IsManagedListenPort,
+		TailNexusLog:        tailNexusLogLines,
+		Auditf:              auditf,
+		SessionSnapshots:    globalSessionRegistry.SnapshotAll,
+		SnapshotByVIP:       globalSessionRegistry.SnapshotByVirtualIP,
+		ReserveAndBlock:     globalIPAllocator.ReserveAndBlock,
 	}
 }

@@ -33,6 +33,7 @@ func NewTestRouterWith(isAdmin bool, alloc *IPAllocator, sessions *SessionRegist
 	clientIP, _ := alloc.alloc(sourceKey)
 	r := &Router{
 		wsTx:      ch,
+		sessionID: nextRouterSessionID.Add(1),
 		clientIP:  clientIP,
 		sourceKey: sourceKey,
 		sourceIP:  sourceIP,

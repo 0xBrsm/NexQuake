@@ -58,8 +58,8 @@ nqserver @def -game ctf +hostname %game
 
 | Argument | Purpose |
 |-----|---------|
-| `-dedicated <N>` | Maximum client count. Stock NetQuake caps at 16, but 99 is a good default if you use custom binaries that may have higher limits. Lower the visible limit with `maxplayers <M>` in config (`M` cannot exceed `N`). |
-| `-port 0` | Bind to a random open port so you don't have to manually assign a port to each server. Nexus detects the ephemeral port and routes traffic automatically. |
+| `-dedicated <N>` | Maximum client count. Stock NetQuake caps at 16. Use higher values only with custom binaries that actually support them. Lower the visible limit with `maxplayers <M>` in config (`M` cannot exceed `N`). |
+| `-port 0` | Bind to a random open port. On startup entries, this enables Nexus dynamic scaling for that server line: `slist` shows one proxy row, `connect <proxy port>` load-balances across backend instances, and `connect <backend port>` still targets that exact backend. Scaling lifecycle/autoscale keeps one backend routable while draining/despawning idle replicas. |
 | `-mem <MB>` | Specifies the RAM to reserve for game server memory. Default is 8 MB for Linux Quake, which may not be enough for some mods. Generally, `16` is a safe number.
 | `+hostname "Name"` | Set a unique server name. Critical when multiple servers share a game directory, since they share `config.cfg` and may end up with identical hostnames. |
 | `@groupname ...` | Define a reusable macro for common flags like `-dedicated 16 -port 0`. |

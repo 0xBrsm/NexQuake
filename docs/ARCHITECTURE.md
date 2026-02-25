@@ -113,9 +113,52 @@ Because Nexus never parses the datagram payload, it has no knowledge of whether 
 
 ### Multi-Server Routing
 
-Server selection is port-based: each server's listen port is set explicitly in `servers.ini` via the `-port` flag (or assigned by the OS when `-port 0` is used). Nexus discovers the actual port at startup by querying the server console.
+Server selection is port-based:
 
-Control/broadcast traffic uses `udp_port = 0`. For `slist`, Nexus detects `CCREQ_SERVER_INFO` and replies with aggregated `CCREP_SERVER_INFO` data built from its polled server cache. This replaces NetQuake's UDP broadcast, which never worked well and doesn't work across loopback addresses on Linux anyway.
+- `connect <backend port>` targets that backend instance directly.
+- Startup entries using `-port 0` are treated as scaling-enabled seeds. Nexus assigns each seed a dynamic proxy port.
+- `connect <pool proxy port>` load-balances across running backend members in that scaled entry.
+
+Nexus keeps short-lived per-session affinity (`300s`) for scaled proxy joins so multi-packet handshakes remain coherent and connect spam cannot spray a single client across many backends.
+
+Backend selection inside a scaled proxy follows this order:
+
+1. Prefer `active` backends.
+2. Prefer candidates with free slots (`players < maxplayers`, treating unknown `maxplayers` as temporarily usable).
+3. If no active backend is available, or all active backends are full, fall back to `draining` backends rather than black-holing joins.
+4. Among candidates, pick the least loaded backend by relative fill ratio (`players/maxplayers`) and break ties with round-robin.
+
+If no routable backend exists, the join fails as unknown/unavailable instead of sending to a random dead target.
+
+### Scaling Lifecycle and Autoscaling
+
+Each `-port 0` startup line becomes a managed backend pool with lifecycle states:
+
+- `warming`: process started but not yet seen in `CCREP_SERVER_INFO`.
+- `active`: routable for new proxy joins.
+- `draining`: still routable as fallback, but no longer preferred for new joins.
+- `terminating`: selected for despawn; removed once stop completes.
+
+Pool reconcile runs in two loops:
+
+- Event-driven: every server-info update for a scaled backend triggers pool reconcile.
+- Heartbeat: every server-info poll tick (`500ms`) reconciles all backend pools, so autoscaling still progresses even when no new server-info packets arrive.
+
+Scale-up and scale-down policy:
+
+- Headroom target is `max(4, ceil(joinRPS * 12s * 1.5))`, where `joinRPS` is observed from proxy-routed session demand over a `30s` window.
+- Scale-up happens when current free slots fall below target headroom, no scale-up is already in flight, cooldown (`30s`) has elapsed, and running backends are below `POOL_SIZE`.
+- Idle backends only move to `draining` when at least two active routable backends remain and enough headroom would still exist after draining.
+- While scale-up is in flight, additional active backends are not moved to `draining`.
+- Draining backends with zero players for 6 reconcile polls are despawned.
+- A hard safety guard prevents despawning the last running backend in a pool.
+
+Control/broadcast traffic uses `udp_port = 0`. For `slist`, Nexus detects `CCREQ_SERVER_INFO` and replies with aggregated `CCREP_SERVER_INFO` data built from its polled cache:
+
+- one row per scaled entry (proxy port, aggregate users/maxusers, instance count),
+- plus non-scaled servers as direct entries.
+
+This replaces NetQuake's UDP broadcast, which never worked well and doesn't work across loopback addresses on Linux anyway.
 
 ## Port-Only Relay Addressing
 

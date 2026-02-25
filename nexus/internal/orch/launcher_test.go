@@ -63,11 +63,11 @@ func TestLoadServerLaunchesFromINI_ParsesRawArgsUnchanged(t *testing.T) {
 	if e.Binary != "nqserver" {
 		t.Fatalf("expected binary nqserver, got %q", e.Binary)
 	}
-	if e.Slot != 0 {
-		t.Fatalf("expected slot 0, got %d", e.Slot)
+	if e.Line != 0 {
+		t.Fatalf("expected line 0, got %d", e.Line)
 	}
 	if e.LogDir != "0-nqserver-20260108T140506Z" {
-		t.Fatalf("expected log dir slot-bin-timestamp, got %q", e.LogDir)
+		t.Fatalf("expected log dir line-bin-timestamp, got %q", e.LogDir)
 	}
 	want := []string{"-dedicated", "8", "-game", "ctf"}
 	if len(e.Args) != len(want) {
@@ -94,8 +94,8 @@ func TestLoadServerLaunchesFromINI_ExplicitPortTokenPassesThrough(t *testing.T) 
 	if entries[0].Binary != "nqserver" {
 		t.Fatalf("expected binary nqserver, got %q", entries[0].Binary)
 	}
-	if entries[0].Slot != 0 {
-		t.Fatalf("expected slot 0 (entry order), got %d", entries[0].Slot)
+	if entries[0].Line != 0 {
+		t.Fatalf("expected line 0 (entry order), got %d", entries[0].Line)
 	}
 	if entries[0].LogDir != "0-nqserver-20260108T140506Z" {
 		t.Fatalf("expected nqserver log dir with entry-order id and timestamp, got %q", entries[0].LogDir)
@@ -116,8 +116,8 @@ func TestLoadServerLaunchesFromINI_IPXPortTokenPassesThrough(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(entries))
 	}
-	if entries[0].Slot != 0 {
-		t.Fatalf("expected slot=0, got %d", entries[0].Slot)
+	if entries[0].Line != 0 {
+		t.Fatalf("expected line=0, got %d", entries[0].Line)
 	}
 }
 
@@ -323,8 +323,8 @@ func TestLoadServerLaunchesFromINI_AllowsMissingPortValuePassThrough(t *testing.
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(entries))
 	}
-	if entries[0].Slot != 0 {
-		t.Fatalf("expected default slot 0, got %d", entries[0].Slot)
+	if entries[0].Line != 0 {
+		t.Fatalf("expected default line 0, got %d", entries[0].Line)
 	}
 	if !strings.Contains(strings.Join(entries[0].Args, " "), "-port") {
 		t.Fatalf("expected malformed -port to pass through untouched, got %v", entries[0].Args)
@@ -396,7 +396,7 @@ func TestLoadServerLaunchesFromINI_AllUnsupportedIsError(t *testing.T) {
 	}
 }
 
-func TestLoadServerLaunchesFromINI_LogDirIncludesSlotBinaryTimestamp(t *testing.T) {
+func TestLoadServerLaunchesFromINI_LogDirIncludesLineBinaryTimestamp(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "servers.ini")
 	content := "nqserver -dedicated 8 -game ctf\nnqserver -dedicated 12 -game ctf\n"
@@ -416,10 +416,10 @@ func TestLoadServerLaunchesFromINI_LogDirIncludesSlotBinaryTimestamp(t *testing.
 		t.Fatalf("expected 2 entries, got %d", len(entries))
 	}
 	if entries[0].LogDir != "0-nqserver-20260108T140506Z" {
-		t.Fatalf("expected first log dir with slot-bin-timestamp, got %q", entries[0].LogDir)
+		t.Fatalf("expected first log dir with line-bin-timestamp, got %q", entries[0].LogDir)
 	}
 	if entries[1].LogDir != "1-nqserver-20260108T140506Z" {
-		t.Fatalf("expected second log dir with slot-bin-timestamp, got %q", entries[1].LogDir)
+		t.Fatalf("expected second log dir with line-bin-timestamp, got %q", entries[1].LogDir)
 	}
 	if strings.Contains(strings.Join(entries[0].Args, " "), "-port") {
 		t.Fatalf("expected first args to remain unchanged (no auto -port), got %v", entries[0].Args)
@@ -439,8 +439,8 @@ func TestPlanLaunches_DefaultWhenServersINIMissing(t *testing.T) {
 	if len(launches) != 1 {
 		t.Fatalf("expected single default launch, got %d", len(launches))
 	}
-	if launches[0].Slot != 0 {
-		t.Fatalf("expected default slot 0, got %d", launches[0].Slot)
+	if launches[0].Line != 0 {
+		t.Fatalf("expected default line 0, got %d", launches[0].Line)
 	}
 	// planLaunches uses current time; validate shape instead of exact value.
 	if !strings.HasPrefix(launches[0].LogDir, "0-nqserver-") {

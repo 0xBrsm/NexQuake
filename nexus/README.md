@@ -38,17 +38,20 @@ A standalone Go library that extracts `pak0.pak` directly from the original Quak
 
 ### `internal/orch/` — Orchestration
 
-Manages dedicated server processes. Parses old-school, .bat-style `servers.ini` into a launch plan, starts processes under PTY for console capture, polls server-info for the slist cache, and exposes operations for the admin rcon interface.
+Manages dedicated server processes and scaled-backend lifecycle. Parses old-school, `.bat`-style `servers.ini` into a launch plan, starts processes under PTY for console capture, runs backend-pool reconcile/autoscale policy, polls server-info for the `slist` cache, and exposes operations for the admin rcon interface.
 
 | File | Purpose |
 |------|---------|
-| `launcher.go` | `servers.ini` parser (with `@macro` + `%arg` expansion), launch plan builder, argument validation. |
-| `manager.go` | Server manager wiring + process lifecycle: start under PTY, wait for exit, graceful and forced shutdown. |
-| `state.go` | In-memory server registry/state model, resolved port/search-path updates, and snapshot generation for operator/admin views. |
-| `ops.go` | High-level server operations (start/stop/restart/remove/launch by port or index). Resolves targets, coordinates state transitions. |
+| `launcher.go` | `servers.ini` parser (with `@macro` + `%arg` expansion), launch plan builder, and process start/stop wiring under PTY. |
+| `manager.go` | `ServerManager` construction, shared logging hooks, and operator console relay formatting. |
+| `registry.go` | Pool/server registry model, backend lifecycle state (`warming/active/draining/terminating`), proxy-port reservation, and aggregate pool snapshot refresh. |
+| `state.go` | In-memory server state updates (resolved port/search-path + observed server-info), startup-online transitions, and per-update pool reconcile trigger. |
+| `proxy.go` | Scaled-entry proxy routing: destination backend selection, source-port rewrite, per-session affinity TTL, demand accounting, and scaled-target RCON resolution. |
+| `policy.go` | Pool policy engine: headroom calculation, autoscale scale-up/drain/despawn decisions, and reconcile loops (`observed` + heartbeat all-pools). |
+| `ops.go` | High-level server operations (start/stop/restart/remove/launch by port or index). Resolves targets and coordinates pool/member transitions. |
 | `console.go` | PTY-based server console I/O. Captures output lines, detects listen port from console, supports filtered reads for rcon command capture. |
 | `rcon.go` | Server command execution: writes a command to the PTY, captures output with idle/max timeouts, formats the reply. |
-| `slist.go` | Server-info poller. Periodically sends CCREQ_SERVER_INFO to each managed server and caches CCREP responses for the WebSocket slist handler. |
+| `slist.go` | Server-info poller. Sends `CCREQ_SERVER_INFO` in round-robin, updates cache for WebSocket `slist`, and drives periodic all-pool reconcile heartbeat. |
 
 ### `internal/admin/` — Admin
 

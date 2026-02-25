@@ -10,7 +10,7 @@ Authentication is handled either by connection-level OIDC JWT auth or by in-game
 |------|----------|
 | `rcon <cmd>` | If connected to a server, sends to that server. If disconnected, sends to Nexus (`port 0`). |
 | `rcon nexus <cmd>` | Forces a Nexus command even while connected to a game server. |
-| `rcon <host> <cmd>` | Targets a server by `slist` hostname cache entry. |
+| `rcon <host> <cmd>` | Targets a server by `slist` hostname cache entry. For scaled proxy rows, this succeeds only when the entry resolves to one routable backend listen port; otherwise Nexus returns an ambiguous-target error. |
 | `rcon <port> <cmd>` | Targets a server by listen port. |
 
 ## Nexus Command Reference

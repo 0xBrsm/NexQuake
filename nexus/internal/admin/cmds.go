@@ -14,18 +14,19 @@ import (
 
 // Env provides all external dependencies for admin command execution.
 type Env struct {
-	ServerSnapshots   func() []orch.ServerSnapshot
-	StartServer       func(target int) error
-	StartServersAll   func() error
-	StopServer        func(ctx context.Context, target int, killAfter time.Duration) error
-	StopServersAll    func(ctx context.Context, killAfter time.Duration) error
-	RestartServer     func(ctx context.Context, target int, killAfter time.Duration) error
-	RestartServersAll func(ctx context.Context, killAfter time.Duration) error
-	RemoveServer      func(target int) error
-	LaunchServer      func(binary string, args []string) error
-	ExecServerCmd     func(port int, cmd, actorID string) (string, error)
-	TailNexusLog      func(n int) []string
-	Auditf            func(format string, args ...any)
+	ServerSnapshots     func() []orch.ServerSnapshot
+	StartServer         func(target int) error
+	StartServersAll     func() error
+	StopServer          func(ctx context.Context, target int, killAfter time.Duration) error
+	StopServersAll      func(ctx context.Context, killAfter time.Duration) error
+	RestartServer       func(ctx context.Context, target int, killAfter time.Duration) error
+	RestartServersAll   func(ctx context.Context, killAfter time.Duration) error
+	RemoveServer        func(target int) error
+	LaunchServer        func(binary string, args []string) error
+	ExecServerCmd       func(port int, cmd, actorID string) (string, error)
+	IsManagedListenPort func(port int) bool
+	TailNexusLog        func(n int) []string
+	Auditf              func(format string, args ...any)
 
 	SessionSnapshots func() []nqnet.SessionSnapshot
 	SnapshotByVIP    func(vip string) ([]*nqnet.Router, []nqnet.BanTarget)

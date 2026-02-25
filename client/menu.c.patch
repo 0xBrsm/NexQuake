@@ -19,7 +19,7 @@
  int		slist_cursor;
  qboolean slist_sorted;
  
-@@ -2914,7 +2919,13 @@
+@@ -2914,7 +2919,12 @@
  void M_ServerList_Draw (void)
  {
  	int		n;
@@ -28,22 +28,17 @@
 +	int		list_chars;
 +	int		list_x;
 +	int		list_top;
-+	const char	*list_header;
-+	const char	*list_rule;
++	char	*list_header;
 +	char	string [96];
  	qpic_t	*p;
  
  	if (!slist_sorted)
-@@ -2937,18 +2948,40 @@
+@@ -2937,18 +2948,35 @@
  
  	p = Draw_CachePic ("gfx/p_multi.lmp");
  	M_DrawPic ( (320-p->width)/2, 4, p);
 +	list_header = "Server                   Map             Game            Users";
-+	list_rule = "";
 +	list_chars = Q_strlen(list_header);
-+	i = Q_strlen(list_rule);
-+	if (i > list_chars)
-+		list_chars = i;
  	for (n = 0; n < hostCacheCount; n++)
  	{
  		if (hostcache[n].maxusers)
@@ -62,7 +57,6 @@
 +	list_x = (320 - list_chars * 8) / 2;
 +	list_top = 48;
 +	M_Print (list_x, 32, list_header);
-+	M_Print (list_x, 40, list_rule);
 +	for (n = 0; n < hostCacheCount; n++)
 +	{
 +		if (hostcache[n].maxusers)
