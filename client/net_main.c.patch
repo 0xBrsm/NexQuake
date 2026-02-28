@@ -51,8 +51,12 @@
 +	char users[16];
 +	int instances = host->instances > 0 ? host->instances : 1;
 +	sprintf(users, "%u/%u", host->users, host->maxusers);
-+	sprintf(string, "%-24.24s %-15.15s %-15.15s %-8s (%u)\n",
-+			host->name, host->map, host->gamedir, users, instances);
++	if (instances > 1)
++		sprintf(string, "%-24.24s %-15.15s %-15.15s %-8s (%u)\n",
++				host->name, host->map, host->gamedir, users, instances);
++	else
++		sprintf(string, "%-24.24s %-15.15s %-15.15s %s\n",
++				host->name, host->map, host->gamedir, users);
 +	return string;
 +}
 +

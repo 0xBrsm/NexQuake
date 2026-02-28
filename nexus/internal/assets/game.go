@@ -319,11 +319,7 @@ func layerNeedsInstall(gameDir, game, layer string, sources []string, force bool
 	if len(sources) == 0 {
 		return false
 	}
-	destRoot := filepath.Join(gameDir, game, layer)
-	if !force && dirHasEntries(destRoot) {
-		return false
-	}
-	return true
+	return force || !dirHasEntries(filepath.Join(gameDir, game, layer))
 }
 
 func installLayer(ctx context.Context, gameDir, game, layer string, sources []string, force bool) error {

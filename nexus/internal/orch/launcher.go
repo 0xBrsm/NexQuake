@@ -34,9 +34,6 @@ var unsupportedLaunchArgs = map[string]struct{}{
 const serverStartupCCREPTimeout = 10 * time.Second
 
 func resetRecordStartupState(rec *serverRecord) {
-	if rec == nil {
-		return
-	}
 	rec.relayConsoleReady = false
 	rec.awaitingServerInfo = false
 	rec.startupTimedOutOnce = false
@@ -266,13 +263,9 @@ func (m *ServerManager) StopAll(ctx context.Context, killAfter time.Duration) er
 
 	for _, entry := range running {
 		s := entry.srv
-		if s == nil || s.Cmd == nil || s.Cmd.Process == nil {
-			continue
+		if s != nil && s.Cmd != nil && s.Cmd.Process != nil && isProcessAlive(s.Cmd.Process) {
+			_ = s.Cmd.Process.Signal(syscall.SIGTERM)
 		}
-		if !isProcessAlive(s.Cmd.Process) {
-			continue
-		}
-		_ = s.Cmd.Process.Signal(syscall.SIGTERM)
 	}
 
 	for _, entry := range running {
@@ -320,11 +313,7 @@ func (m *ServerManager) stopServer(ctx context.Context, rec *serverRecord, s *ma
 		if killAfter > 0 && killAfter < quitGrace {
 			quitGrace = killAfter
 		}
-		if waitAfterSignal > quitGrace {
-			waitAfterSignal -= quitGrace
-		} else {
-			waitAfterSignal = 0
-		}
+		waitAfterSignal = max(0, killAfter-quitGrace)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -410,12 +399,12 @@ func (m *ServerManager) planLaunches() ([]serverLaunch, []string, error) {
 }
 
 func loadServersIni(iniPath string, startedAt time.Time, warnf func(string, ...any)) (entries []serverLaunch, found bool, err error) {
-	st, statErr := os.Stat(iniPath)
-	if statErr != nil {
-		if errors.Is(statErr, os.ErrNotExist) {
-			return nil, false, nil
-		}
-		return nil, false, fmt.Errorf("stat %s: %w", iniPath, statErr)
+	st, err := os.Stat(iniPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("stat %s: %w", iniPath, err)
 	}
 	if st.IsDir() {
 		return nil, false, fmt.Errorf("servers.ini path is a directory: %s", iniPath)
@@ -512,15 +501,11 @@ func applyLaunchArgTemplates(args []string) []string {
 	seen := make(map[string]string)
 
 	for i := 0; i < len(out); i++ {
-		token := out[i]
-		if !isLaunchKeyToken(token) {
+		if !isLaunchKeyToken(out[i]) {
 			continue
 		}
-		key := token[1:]
-		if _, found := seen[key]; found {
-			continue
-		}
-		if i+1 < len(out) && !isLaunchKeyToken(out[i+1]) {
+		key := out[i][1:]
+		if _, found := seen[key]; !found && i+1 < len(out) && !isLaunchKeyToken(out[i+1]) {
 			seen[key] = out[i+1]
 		}
 		for i+1 < len(out) && !isLaunchKeyToken(out[i+1]) {
@@ -555,7 +540,7 @@ func mergeLaunchGroups(fields []string, launchGroups map[string][]string) []stri
 		explicitKeys[token[1:]] = struct{}{}
 	}
 
-	var insertedKeys map[string]struct{}
+	insertedKeys := make(map[string]struct{})
 	out := make([]string, 0, len(fields))
 	for i := 0; i < len(fields); i++ {
 		token := fields[i]
@@ -563,10 +548,6 @@ func mergeLaunchGroups(fields []string, launchGroups map[string][]string) []stri
 		if !ok {
 			out = append(out, token)
 			continue
-		}
-
-		if insertedKeys == nil {
-			insertedKeys = make(map[string]struct{})
 		}
 
 		// Insert group fields at the reference point, but skip any keys already
@@ -579,13 +560,9 @@ func mergeLaunchGroups(fields []string, launchGroups map[string][]string) []stri
 			}
 
 			key := token[1:]
-			if _, found := explicitKeys[key]; found {
-				for j+1 < len(groupFields) && !isLaunchKeyToken(groupFields[j+1]) {
-					j++
-				}
-				continue
-			}
-			if _, found := insertedKeys[key]; found {
+			_, inExplicit := explicitKeys[key]
+			_, inInserted := insertedKeys[key]
+			if inExplicit || inInserted {
 				for j+1 < len(groupFields) && !isLaunchKeyToken(groupFields[j+1]) {
 					j++
 				}

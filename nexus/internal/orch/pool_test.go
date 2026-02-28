@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/0xBrsm/NexQuake/nexus/internal/nqnet"
 )
 
 func newRunningPoolTestRecord(t *testing.T, m *ServerManager, line, port int, args []string, players, maxPlayers byte) *serverRecord {
@@ -91,59 +89,42 @@ func TestRegisterPoolSeed_OnlyPortZeroLaunches(t *testing.T) {
 	}
 }
 
-func TestPoolRouting_AffinityAndSourceRewrite(t *testing.T) {
-	oldTTL := proxyAffinityTTL
-	proxyAffinityTTL = 40 * time.Millisecond
-	t.Cleanup(func() { proxyAffinityTTL = oldTTL })
-
+func TestPoolRouting_PicksLeastLoadedBackend(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 	t.Cleanup(m.closePoolRegistry)
 
+	// seed has 8/16 players, replica has 1/16 — replica is less loaded.
 	seed := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 8, 16)
 	if err := m.registerPoolSeed(seed); err != nil {
 		t.Fatalf("register pool seed: %v", err)
 	}
 	replica := newRunningPoolTestRecord(t, m, 1, 26001, []string{"-dedicated", "-port", "0"}, 1, 16)
-	proxyPort := attachPoolBackendForTest(t, m, seed.id, replica)
+	attachPoolBackendForTest(t, m, seed.id, replica)
 
-	router, _ := nqnet.NewTestRouter(false)
-	t.Cleanup(router.Close)
+	m.mu.Lock()
+	pool := m.poolByServerID[seed.id]
+	port, ok := m.pickPoolBackendLocked(pool)
+	m.mu.Unlock()
 
-	first, ok := m.ResolveDestinationPort(router, proxyPort)
 	if !ok {
 		t.Fatalf("expected routed destination")
 	}
-	if first != 26001 {
-		t.Fatalf("first routed backend = %d, want 26001", first)
+	if port != 26001 {
+		t.Fatalf("routed backend = %d, want 26001 (less loaded)", port)
 	}
 
-	rewritten := m.RewriteSourcePort(router, 26001)
-	if rewritten != proxyPort {
-		t.Fatalf("rewritten source = %d, want proxy %d", rewritten, proxyPort)
-	}
-	if got := m.RewriteSourcePort(router, 30000); got != 30000 {
-		t.Fatalf("accept-port rewrite should not trigger: got %d", got)
-	}
+	// After replica fills up, seed should be selected.
+	m.SetServerInfoForTest(replica, replica.Hostname, replica.MapName, 16, 16)
 
-	m.SetServerInfoForTest(seed, seed.Hostname, seed.MapName, 0, 16)
-	m.SetServerInfoForTest(replica, replica.Hostname, replica.MapName, 12, 16)
+	m.mu.Lock()
+	port, ok = m.pickPoolBackendLocked(pool)
+	m.mu.Unlock()
 
-	stillSticky, ok := m.ResolveDestinationPort(router, proxyPort)
 	if !ok {
-		t.Fatalf("expected sticky route")
+		t.Fatalf("expected routed destination after replica full")
 	}
-	if stillSticky != 26001 {
-		t.Fatalf("sticky route backend = %d, want 26001", stillSticky)
-	}
-
-	time.Sleep(proxyAffinityTTL + 20*time.Millisecond)
-
-	afterTTL, ok := m.ResolveDestinationPort(router, proxyPort)
-	if !ok {
-		t.Fatalf("expected routed destination after ttl")
-	}
-	if afterTTL != 26000 {
-		t.Fatalf("post-ttl backend = %d, want 26000", afterTTL)
+	if port != 26000 {
+		t.Fatalf("routed backend = %d, want 26000 after replica full", port)
 	}
 }
 
@@ -156,7 +137,7 @@ func TestPoolRouting_UsesDrainingBackendWhenOnlyFreeSlotsRemain(t *testing.T) {
 		t.Fatalf("register pool seed: %v", err)
 	}
 	replica := newRunningPoolTestRecord(t, m, 1, 26001, []string{"-dedicated", "-port", "0"}, 0, 16)
-	proxyPort := attachPoolBackendForTest(t, m, seed.id, replica)
+	attachPoolBackendForTest(t, m, seed.id, replica)
 
 	m.mu.Lock()
 	pool := m.poolByServerID[replica.id]
@@ -167,15 +148,12 @@ func TestPoolRouting_UsesDrainingBackendWhenOnlyFreeSlotsRemain(t *testing.T) {
 	}
 	transitionPoolBackendLifecycle(state, poolBackendLifecycleDraining)
 	replicaDraining := state != nil && state.Lifecycle == poolBackendLifecycleDraining
+	routed, ok := m.pickPoolBackendLocked(pool)
 	m.mu.Unlock()
+
 	if !replicaDraining {
 		t.Fatalf("expected replica to be marked draining")
 	}
-
-	router, _ := nqnet.NewTestRouter(false)
-	t.Cleanup(router.Close)
-
-	routed, ok := m.ResolveDestinationPort(router, proxyPort)
 	if !ok {
 		t.Fatalf("expected routed destination")
 	}
@@ -184,16 +162,18 @@ func TestPoolRouting_UsesDrainingBackendWhenOnlyFreeSlotsRemain(t *testing.T) {
 	}
 }
 
-func TestPoolRouting_StickyAffinityPersistsForDrainingBackend(t *testing.T) {
+func TestPoolRouting_PrefersActiveLowerLoadOverDraining(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 	t.Cleanup(m.closePoolRegistry)
 
-	seed := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 16, 16)
+	// seed active with 8/16, replica draining with 0/16.
+	// Active backend with free slots should be preferred.
+	seed := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 8, 16)
 	if err := m.registerPoolSeed(seed); err != nil {
 		t.Fatalf("register pool seed: %v", err)
 	}
 	replica := newRunningPoolTestRecord(t, m, 1, 26001, []string{"-dedicated", "-port", "0"}, 0, 16)
-	proxyPort := attachPoolBackendForTest(t, m, seed.id, replica)
+	attachPoolBackendForTest(t, m, seed.id, replica)
 
 	m.mu.Lock()
 	pool := m.poolByServerID[replica.id]
@@ -203,29 +183,14 @@ func TestPoolRouting_StickyAffinityPersistsForDrainingBackend(t *testing.T) {
 		pool.backendState[replica.id] = state
 	}
 	transitionPoolBackendLifecycle(state, poolBackendLifecycleDraining)
+	port, ok := m.pickPoolBackendLocked(pool)
 	m.mu.Unlock()
 
-	router, _ := nqnet.NewTestRouter(false)
-	t.Cleanup(router.Close)
-
-	first, ok := m.ResolveDestinationPort(router, proxyPort)
 	if !ok {
-		t.Fatalf("expected first routed destination")
+		t.Fatalf("expected routed destination")
 	}
-	if first != 26001 {
-		t.Fatalf("first backend = %d, want 26001", first)
-	}
-
-	// Once a session is pinned to a backend, keep that affinity even if the
-	// backend is marked draining so connect handshakes stay coherent.
-	m.SetServerInfoForTest(seed, seed.Hostname, seed.MapName, 8, 16)
-
-	stillSticky, ok := m.ResolveDestinationPort(router, proxyPort)
-	if !ok {
-		t.Fatalf("expected sticky route")
-	}
-	if stillSticky != 26001 {
-		t.Fatalf("sticky backend = %d, want 26001", stillSticky)
+	if port != 26000 {
+		t.Fatalf("routed backend = %d, want 26000 (active over draining)", port)
 	}
 }
 
@@ -238,7 +203,7 @@ func TestPoolRouting_AllDrainingBackendsRemainRoutable(t *testing.T) {
 		t.Fatalf("register pool seed: %v", err)
 	}
 	replica := newRunningPoolTestRecord(t, m, 1, 26001, []string{"-dedicated", "-port", "0"}, 0, 16)
-	proxyPort := attachPoolBackendForTest(t, m, seed.id, replica)
+	attachPoolBackendForTest(t, m, seed.id, replica)
 
 	m.mu.Lock()
 	pool := m.poolByServerID[seed.id]
@@ -251,12 +216,9 @@ func TestPoolRouting_AllDrainingBackendsRemainRoutable(t *testing.T) {
 		transitionPoolBackendLifecycle(state, poolBackendLifecycleDraining)
 		state.ZeroPollStreak = 0
 	}
+	routed, ok := m.pickPoolBackendLocked(pool)
 	m.mu.Unlock()
 
-	router, _ := nqnet.NewTestRouter(false)
-	t.Cleanup(router.Close)
-
-	routed, ok := m.ResolveDestinationPort(router, proxyPort)
 	if !ok {
 		t.Fatalf("expected routed destination")
 	}
@@ -274,7 +236,7 @@ func TestPoolRouting_SkipsWarmingBackendForNewSessions(t *testing.T) {
 		t.Fatalf("register pool seed: %v", err)
 	}
 	replica := newRunningPoolTestRecord(t, m, 1, 26001, []string{"-dedicated", "-port", "0"}, 0, 16)
-	proxyPort := attachPoolBackendForTest(t, m, seed.id, replica)
+	attachPoolBackendForTest(t, m, seed.id, replica)
 
 	m.mu.Lock()
 	pool := m.poolByServerID[replica.id]
@@ -284,12 +246,9 @@ func TestPoolRouting_SkipsWarmingBackendForNewSessions(t *testing.T) {
 		pool.backendState[replica.id] = state
 	}
 	transitionPoolBackendLifecycle(state, poolBackendLifecycleWarming)
+	routed, ok := m.pickPoolBackendLocked(pool)
 	m.mu.Unlock()
 
-	router, _ := nqnet.NewTestRouter(false)
-	t.Cleanup(router.Close)
-
-	routed, ok := m.ResolveDestinationPort(router, proxyPort)
 	if !ok {
 		t.Fatalf("expected routed destination")
 	}
@@ -298,7 +257,7 @@ func TestPoolRouting_SkipsWarmingBackendForNewSessions(t *testing.T) {
 	}
 }
 
-func TestPoolRouting_RecordsDemandOnFirstBackendReply(t *testing.T) {
+func TestPoolRouting_RecordsDemandOnSlist(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 	t.Cleanup(m.closePoolRegistry)
 
@@ -306,50 +265,56 @@ func TestPoolRouting_RecordsDemandOnFirstBackendReply(t *testing.T) {
 	if err := m.registerPoolSeed(seed); err != nil {
 		t.Fatalf("register pool seed: %v", err)
 	}
-	proxyPort := attachPoolBackendForTest(t, m, seed.id, seed)
+	attachPoolBackendForTest(t, m, seed.id, seed)
 
-	router, _ := nqnet.NewTestRouter(false)
-	t.Cleanup(router.Close)
+	// No slist yet — demand should be zero.
+	m.mu.RLock()
+	pool := m.poolByServerID[seed.id]
+	beforeDemand := len(pool.joinDemandAt)
+	m.mu.RUnlock()
+	if beforeDemand != 0 {
+		t.Fatalf("demand before slist = %d, want 0", beforeDemand)
+	}
 
-	if _, ok := m.ResolveDestinationPort(router, proxyPort); !ok {
-		t.Fatalf("expected first route success")
+	// Slist records one demand event per successful backend pick.
+	entries := SnapshotForSlist(m)
+	if len(entries) == 0 {
+		t.Fatalf("expected at least one slist entry")
+	}
+
+	m.mu.RLock()
+	afterDemand := len(pool.joinDemandAt)
+	m.mu.RUnlock()
+	if afterDemand != 1 {
+		t.Fatalf("demand after slist = %d, want 1", afterDemand)
+	}
+}
+
+func TestPoolRouting_FailedSlistDoesNotRecordDemand(t *testing.T) {
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	t.Cleanup(m.closePoolRegistry)
+
+	// Register pool seed but don't set it running — no routable backend.
+	seed := m.registerServerLaunch(serverLaunch{Line: 0, Binary: "nqserver", Args: []string{"-dedicated", "-port", "0"}})
+	if err := m.registerPoolSeed(seed); err != nil {
+		t.Fatalf("register pool seed: %v", err)
+	}
+
+	entries := SnapshotForSlist(m)
+	if len(entries) != 0 {
+		t.Fatalf("expected no slist entries with no running backends, got %d", len(entries))
 	}
 
 	m.mu.RLock()
 	pool := m.poolByServerID[seed.id]
-	firstDemand := len(pool.joinDemandAt)
+	demandCount := len(pool.joinDemandAt)
 	m.mu.RUnlock()
-	if firstDemand != 0 {
-		t.Fatalf("demand should not increment before backend reply, got %d", firstDemand)
-	}
-
-	if got := m.RewriteSourcePort(router, 26000); got != proxyPort {
-		t.Fatalf("backend reply rewrite = %d, want proxy %d", got, proxyPort)
-	}
-
-	m.mu.RLock()
-	secondDemand := len(pool.joinDemandAt)
-	m.mu.RUnlock()
-	if secondDemand != 1 {
-		t.Fatalf("first backend reply demand count = %d, want 1", secondDemand)
-	}
-
-	if _, ok := m.ResolveDestinationPort(router, proxyPort); !ok {
-		t.Fatalf("expected sticky route success")
-	}
-	if got := m.RewriteSourcePort(router, 26000); got != proxyPort {
-		t.Fatalf("sticky backend reply rewrite = %d, want proxy %d", got, proxyPort)
-	}
-
-	m.mu.RLock()
-	thirdDemand := len(pool.joinDemandAt)
-	m.mu.RUnlock()
-	if thirdDemand != 1 {
-		t.Fatalf("sticky backend replies should not add demand, got %d", thirdDemand)
+	if demandCount != 0 {
+		t.Fatalf("failed slist should not record demand, got %d", demandCount)
 	}
 }
 
-func TestResolveRCONTargetPort_PoolProxyAmbiguity(t *testing.T) {
+func TestResolveRCONTargetPort_DirectBackendPort(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 	t.Cleanup(m.closePoolRegistry)
 
@@ -357,28 +322,27 @@ func TestResolveRCONTargetPort_PoolProxyAmbiguity(t *testing.T) {
 	if err := m.registerPoolSeed(seed); err != nil {
 		t.Fatalf("register pool seed: %v", err)
 	}
-	replica := newRunningPoolTestRecord(t, m, 1, 26001, []string{"-dedicated", "-port", "0"}, 0, 16)
-	proxyPort := attachPoolBackendForTest(t, m, seed.id, replica)
 
-	if _, err := m.resolveRCONTargetPort(proxyPort); err == nil {
-		t.Fatalf("expected ambiguous scaled target error")
+	// RCON to the actual backend port works directly — no proxy resolution.
+	_, err := m.ExecServerCmd(26000, "status", "")
+	// Server has no real console so we expect "server console unavailable", not "unknown server".
+	if err == nil {
+		t.Fatalf("expected error (no console), got nil")
 	}
-	if _, err := m.ExecServerCmd(proxyPort, "status", ""); err == nil || !strings.Contains(err.Error(), "ambiguous scaled target") {
-		t.Fatalf("ExecServerCmd ambiguous error = %v, want ambiguous scaled target", err)
+	if strings.Contains(err.Error(), "unknown server") {
+		t.Fatalf("ExecServerCmd should find backend 26000, got: %v", err)
 	}
 
-	m.mu.Lock()
-	replica.Running = nil
-	m.refreshPoolForServerLocked(replica.id)
-	m.mu.Unlock()
+	// Out-of-range port should return unknown server.
+	if _, err := m.ExecServerCmd(0, "status", ""); err == nil || !strings.Contains(err.Error(), "unknown server") {
+		t.Fatalf("ExecServerCmd invalid port = %v, want unknown server", err)
+	}
 
-	port, err := m.resolveRCONTargetPort(proxyPort)
-	if err != nil {
-		t.Fatalf("resolve pooled target with one backend: %v", err)
+	// Unknown valid port should return unknown server.
+	if _, err := m.ExecServerCmd(9999, "status", ""); err == nil || !strings.Contains(err.Error(), "unknown server") {
+		t.Fatalf("ExecServerCmd unknown port = %v, want unknown server", err)
 	}
-	if port != 26000 {
-		t.Fatalf("resolved backend = %d, want 26000", port)
-	}
+
 }
 
 func setPoolDemandEventsForTest(t *testing.T, m *ServerManager, seedServerID int, count int, now time.Time) {
@@ -399,6 +363,7 @@ func setPoolDemandEventsForTest(t *testing.T, m *ServerManager, seedServerID int
 
 func TestPoolScaleUp_UsesDemandHeadroom(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(10)
 	t.Cleanup(m.closePoolRegistry)
 
 	seed := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 10, 16)
@@ -421,6 +386,7 @@ func TestPoolScaleUp_UsesDemandHeadroom(t *testing.T) {
 
 func TestPoolScaleUp_TriggersOnDemandHeadroom(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(10)
 	t.Cleanup(m.closePoolRegistry)
 
 	seed := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 14, 16)
@@ -467,8 +433,36 @@ func TestPoolScaleUp_HonorsPoolSizeCap(t *testing.T) {
 	}
 }
 
+func TestPoolScaleUp_NoScaleUpWhileWarmingNoCapacityInfo(t *testing.T) {
+	// Seed is running but hasn't yet received server info (MaxPlayers==0, LastSeen
+	// zero). Scale-up must not fire based on the apparent-but-spurious 0 free slots.
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(10) // allow scale-up so only the AggregateMaxUsers guard blocks it
+	t.Cleanup(m.closePoolRegistry)
+
+	seed := m.registerServerLaunch(serverLaunch{
+		Line: 0, Binary: "nqserver", Args: []string{"-dedicated", "-port", "0"},
+	})
+	m.updatePort(seed, 26000)
+	if err := m.registerPoolSeed(seed); err != nil {
+		t.Fatalf("register pool seed: %v", err)
+	}
+	m.SetServerRunningForTest(seed, NewTestServer(26000))
+	// No SetServerInfoForTest / no LastSeen: AggregateMaxUsers remains 0.
+
+	m.mu.Lock()
+	pool := m.poolByServerID[seed.id]
+	scaleUpPoolID, _ := m.decidePoolActionsLocked(pool, time.Now())
+	m.mu.Unlock()
+
+	if scaleUpPoolID != -1 {
+		t.Fatalf("scale-up pool id = %d, want -1 (no scale-up while seed is warming)", scaleUpPoolID)
+	}
+}
+
 func TestReconcileAllPools_AttemptsScaleUpWithoutServerInfoEvents(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(10)
 	t.Cleanup(m.closePoolRegistry)
 
 	seed := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 16, 16)
@@ -504,6 +498,7 @@ func TestReconcileAllPools_AttemptsScaleUpWithoutServerInfoEvents(t *testing.T) 
 
 func TestPoolDrain_DoesNotMarkEmptyBackendWhenHeadroomIsNeeded(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(10)
 	t.Cleanup(m.closePoolRegistry)
 
 	seed := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 1, 1)
@@ -563,31 +558,3 @@ func TestPoolDemand_DecaysOutsideWindow(t *testing.T) {
 	}
 }
 
-func TestPoolRouting_FailedRouteDoesNotRecordDemand(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	t.Cleanup(m.closePoolRegistry)
-
-	seed := m.registerServerLaunch(serverLaunch{Line: 0, Binary: "nqserver", Args: []string{"-dedicated", "-port", "0"}})
-	if err := m.registerPoolSeed(seed); err != nil {
-		t.Fatalf("register pool seed: %v", err)
-	}
-
-	m.mu.RLock()
-	pool := m.poolByServerID[seed.id]
-	proxyPort := pool.ListenPort
-	m.mu.RUnlock()
-
-	router, _ := nqnet.NewTestRouter(false)
-	t.Cleanup(router.Close)
-
-	if _, ok := m.ResolveDestinationPort(router, proxyPort); ok {
-		t.Fatalf("expected route failure with no running backends")
-	}
-
-	m.mu.RLock()
-	demandCount := len(pool.joinDemandAt)
-	m.mu.RUnlock()
-	if demandCount != 0 {
-		t.Fatalf("failed route should not record demand, got %d", demandCount)
-	}
-}

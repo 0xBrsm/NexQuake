@@ -199,9 +199,7 @@ func uniqueSortedSourceIPs(routers []*nqnet.Router) []string {
 	for sourceIP := range seen {
 		out = append(out, sourceIP)
 	}
-	slices.SortFunc(out, func(a, b string) int {
-		return compareClientIPText(a, b)
-	})
+	slices.SortFunc(out, compareClientIPText)
 	return out
 }
 

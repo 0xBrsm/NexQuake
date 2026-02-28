@@ -25,13 +25,6 @@ type FrameDispatch struct {
 	// HandleAdminFrame is called for non-slist port-0 frames (rcon).
 	HandleAdminFrame func(router *Router, payload []byte)
 
-	// ResolveDestinationPort rewrites client frame destination ports.
-	// Return ok=false to drop the frame.
-	ResolveDestinationPort func(router *Router, dstPort int) (resolvedPort int, ok bool)
-
-	// RewriteSourcePort rewrites server reply source ports before WS send.
-	RewriteSourcePort func(router *Router, srcPort int) (rewrittenPort int)
-
 	// HandleRouterClose is invoked once during router close.
 	HandleRouterClose func(router *Router)
 }
@@ -269,18 +262,10 @@ func (r *Router) handleWSFrame(packet []byte) {
 		return
 	}
 
-	resolvedPort := dstPort
-	if r.dispatch.ResolveDestinationPort != nil {
-		var ok bool
-		resolvedPort, ok = r.dispatch.ResolveDestinationPort(r, dstPort)
-		if !ok {
-			return
-		}
-	}
-	if resolvedPort < 1 || resolvedPort > 65535 {
+	if dstPort < 1 || dstPort > 65535 {
 		return
 	}
 
-	r.NoteServerRoutePort(resolvedPort)
-	r.udpWrite(resolvedPort, payload)
+	r.NoteServerRoutePort(dstPort)
+	r.udpWrite(dstPort, payload)
 }

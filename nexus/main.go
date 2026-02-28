@@ -169,7 +169,7 @@ func loadRuntimeConfig() runtimeConfig {
 		clientAutoSMenu:        getEnvBool01("CL_SMENU", false),
 		clientSendArgs:         getEnvArgs("CL_ARGS", nil),
 		clientURLArgs:          getEnvBool01("CL_URL_ARGS", false),
-		poolSize:               getEnvIntMin("POOL_SIZE", 10, 1),
+		poolSize:               getEnvIntMin("POOL_SIZE", 1, 1),
 	}
 }
 
@@ -282,15 +282,6 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			entries := orch.SnapshotForSlist(globalServerManager)
 			listPayload, _ := nqnet.BuildCCREPServerList(entries)
 			return listPayload
-		},
-		ResolveDestinationPort: func(router *nqnet.Router, dstPort int) (int, bool) {
-			return globalServerManager.ResolveDestinationPort(router, dstPort)
-		},
-		RewriteSourcePort: func(router *nqnet.Router, srcPort int) int {
-			return globalServerManager.RewriteSourcePort(router, srcPort)
-		},
-		HandleRouterClose: func(router *nqnet.Router) {
-			globalServerManager.ReleaseSessionAffinity(router)
 		},
 		HandleAdminFrame: func(router *nqnet.Router, payload []byte) {
 			admin.HandleAdminFrameWithIdentityAndPromotionHook(router, payload, globalAuth, globalAdminEnv, userIdentity, func(r *nqnet.Router) {

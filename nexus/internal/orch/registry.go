@@ -1,18 +1,14 @@
 package orch
 
 import (
-	"fmt"
-	"net"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/0xBrsm/NexQuake/nexus/internal/nqnet"
 )
 
 const (
-	defaultPoolSize  = 10
+	defaultPoolSize  = 1
 	scaleUpCooldown  = 30 * time.Second
 	despawnZeroPolls = 6
 
@@ -21,8 +17,6 @@ const (
 	demandSpawnReady   = 12 * time.Second
 	demandSafetyFactor = 1.5
 )
-
-var proxyAffinityTTL = 300 * time.Second
 
 type poolBackendLifecycle uint8
 
@@ -42,11 +36,10 @@ type serverPool struct {
 	PoolID           int
 	Line             int
 	TemplateLaunch   serverLaunch
-	UsesDynamicPort  bool
+	Autoscales  bool
 	BackendServerIDs []int
 
-	ListenPort        int
-	ListenReserveConn *net.UDPConn
+	ListenPort int
 
 	RoundRobinCursor int
 	LastScaleUpAt    time.Time
@@ -156,16 +149,9 @@ func (m *ServerManager) setPoolBackendLifecycleLocked(pool *serverPool, serverID
 }
 
 func (m *ServerManager) resetPoolRegistryLocked() {
-	for _, pool := range m.poolsByID {
-		if pool == nil || pool.ListenReserveConn == nil {
-			continue
-		}
-		_ = pool.ListenReserveConn.Close()
-	}
 	m.poolsByID = make(map[int]*serverPool)
 	m.poolByListenPort = make(map[int]*serverPool)
 	m.poolByServerID = make(map[int]*serverPool)
-	m.affinityBySession = make(map[uint64]*poolSessionAffinity)
 	m.nextPoolID = 1
 }
 
@@ -211,33 +197,11 @@ func forceLaunchPortZero(args []string) []string {
 	return append(out, "-port", "0")
 }
 
-func reservePoolProxyPort() (*net.UDPConn, int, error) {
-	addr := &net.UDPAddr{IP: net.ParseIP(nqnet.DefaultNQServerIP).To4(), Port: 0}
-	conn, err := net.ListenUDP("udp4", addr)
-	if err != nil {
-		return nil, 0, err
-	}
-	udpAddr, ok := conn.LocalAddr().(*net.UDPAddr)
-	if !ok || udpAddr == nil || udpAddr.Port < 1 || udpAddr.Port > 65535 {
-		_ = conn.Close()
-		return nil, 0, fmt.Errorf("unexpected proxy addr: %v", conn.LocalAddr())
-	}
-	return conn, udpAddr.Port, nil
-}
-
 func (m *ServerManager) registerPoolLaunch(launch serverLaunch) (*serverRecord, error) {
 	configuredPort, hasConfiguredPort := launchConfiguredPort(launch)
-	usesDynamic := hasConfiguredPort && configuredPort == 0
+	autoscales := hasConfiguredPort && configuredPort == 0
 	listenPort := 0
-	var reserveConn *net.UDPConn
-	if usesDynamic {
-		conn, port, err := reservePoolProxyPort()
-		if err != nil {
-			return nil, fmt.Errorf("pool proxy reserve for line=%d: %w", launch.Line+1, err)
-		}
-		reserveConn = conn
-		listenPort = port
-	} else if hasConfiguredPort && configuredPort > 0 {
+	if !autoscales && hasConfiguredPort && configuredPort > 0 {
 		listenPort = configuredPort
 	}
 
@@ -245,13 +209,12 @@ func (m *ServerManager) registerPoolLaunch(launch serverLaunch) (*serverRecord, 
 	defer m.mu.Unlock()
 
 	pool := &serverPool{
-		PoolID:            m.nextPoolID,
-		Line:              launch.Line,
-		TemplateLaunch:    cloneServerLaunch(launch),
-		UsesDynamicPort:   usesDynamic,
-		ListenPort:        listenPort,
-		ListenReserveConn: reserveConn,
-		backendState:      make(map[int]*poolBackendState),
+		PoolID:          m.nextPoolID,
+		Line:            launch.Line,
+		TemplateLaunch:  cloneServerLaunch(launch),
+		Autoscales: autoscales,
+		ListenPort:      listenPort,
+		backendState:    make(map[int]*poolBackendState),
 	}
 	m.nextPoolID++
 	m.poolsByID[pool.PoolID] = pool
@@ -261,14 +224,14 @@ func (m *ServerManager) registerPoolLaunch(launch serverLaunch) (*serverRecord, 
 
 	rec := m.appendPoolBackendRecordLocked(pool, launch, poolBackendLifecycleWarming)
 
-	if pool.UsesDynamicPort {
-		m.infof("Pool %d enabled for line %d via proxy port %d", pool.PoolID, pool.Line+1, pool.ListenPort)
+	if pool.Autoscales {
+		m.infof("Pool %d enabled for line %d (autoscaling)", pool.PoolID, pool.Line+1)
 	}
 	return rec, nil
 }
 
 func (m *ServerManager) updatePoolListenPortLocked(pool *serverPool, listenPort int) {
-	if pool == nil || pool.UsesDynamicPort || listenPort < 1 || listenPort > 65535 {
+	if pool == nil || pool.Autoscales || listenPort < 1 || listenPort > 65535 {
 		return
 	}
 	if pool.ListenPort == listenPort {

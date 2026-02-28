@@ -277,9 +277,6 @@ func (m *ServerManager) RemoveServer(target int) error {
 		m.removeServerRecordLocked(rec.id)
 	}
 
-	if pool.ListenReserveConn != nil {
-		_ = pool.ListenReserveConn.Close()
-	}
 	if pool.ListenPort > 0 {
 		delete(m.poolByListenPort, pool.ListenPort)
 	}

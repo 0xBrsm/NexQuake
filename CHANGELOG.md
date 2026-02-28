@@ -4,6 +4,16 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.6.1
+
+### Fixed
+- Nexus autoscaling now avoids premature pool scale-up during warmup demand windows.
+- `POOL_SIZE` now defaults to `1` when unset, and single-instance `slist` rows no longer show an instance-count suffix.
+
+### Changed
+- Nexus pool routing now selects a backend listen port at `slist` request time instead of maintaining proxy-port session affinity.
+- Removed pool proxy listener/routing paths and simplified Nexus pool orchestration around direct backend ports.
+
 ## 1.6.0
 
 ### Added

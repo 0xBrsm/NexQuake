@@ -13,7 +13,7 @@ NexQuake is designed to be drop-in compatible with any protocol 15 (NetQuake) de
 | `LOG_LEVEL` | `info` | Logging verbosity. Accepts: `error`, `warn`, `info`, `debug`. |
 | `CONSOLE_TIMESTAMPS` | `1` | Timestamps on operator console log lines. Accepts: `0`, `1`. |
 | `DEBUG_RELAY` | `0` | Logs UDP relay traffic with source/destination, length, and byte preview. Accepts: `0`, `1`. |
-| `POOL_SIZE` | `10` | Per-line scaling cap for `-port 0` startup entries (minimum `1`). Controls the maximum backend servers in that entry's backend pool. `1` disables scale-out while keeping proxy routing and reconcile safety guards. |
+| `POOL_SIZE` | `1` | Per-line scaling cap for `-port 0` startup entries (minimum `1`). Controls the maximum backend servers in that entry's backend pool. `1` (the default) disables scale-out: connections and RCON pass through to the single backend with no replica overhead. Set higher (e.g. `10`) to enable demand-driven scale-out. |
 
 ## Authentication
 

@@ -96,28 +96,16 @@ func poolCandidatesWithFreeSlots(candidates []poolBackendCandidate) []poolBacken
 
 func (m *ServerManager) pickPoolBackendLocked(pool *serverPool) (int, bool) {
 	candidates := m.poolRoutableCandidatesLocked(pool, false)
-	if len(candidates) == 0 {
-		candidates = m.poolRoutableCandidatesLocked(pool, true)
-		if len(candidates) == 0 {
-			return 0, false
-		}
-		if free := poolCandidatesWithFreeSlots(candidates); len(free) > 0 {
-			candidates = free
-		}
+	if free := poolCandidatesWithFreeSlots(candidates); len(free) > 0 {
+		candidates = free
 	} else {
-		if free := poolCandidatesWithFreeSlots(candidates); len(free) > 0 {
-			candidates = free
-		} else {
-			// If every non-draining backend is full, route to a draining backend
-			// with free slots rather than black-holing joins.
-			fallback := m.poolRoutableCandidatesLocked(pool, true)
-			if len(fallback) > 0 {
-				if freeFallback := poolCandidatesWithFreeSlots(fallback); len(freeFallback) > 0 {
-					candidates = freeFallback
-				} else {
-					candidates = fallback
-				}
-			}
+		// If every non-draining backend is full (or there are none), also
+		// consider draining backends — prefer those with free slots.
+		all := m.poolRoutableCandidatesLocked(pool, true)
+		if freeAll := poolCandidatesWithFreeSlots(all); len(freeAll) > 0 {
+			candidates = freeAll
+		} else if len(all) > 0 {
+			candidates = all
 		}
 	}
 
@@ -228,7 +216,7 @@ func (m *ServerManager) decidePoolActionsLocked(pool *serverPool, now time.Time)
 	if pool == nil {
 		return scaleUpPoolID, despawnServerID
 	}
-	if !pool.UsesDynamicPort {
+	if !pool.Autoscales {
 		m.refreshPoolSnapshotLocked(pool)
 		return scaleUpPoolID, despawnServerID
 	}
@@ -306,7 +294,8 @@ func (m *ServerManager) decidePoolActionsLocked(pool *serverPool, now time.Time)
 		}
 	}
 
-	if freeSlots < neededHeadroom &&
+	if pool.AggregateMaxUsers > 0 &&
+		freeSlots < neededHeadroom &&
 		!pool.ScaleUpInFlight &&
 		runningCount < max(1, m.poolMaxSize) &&
 		(pool.LastScaleUpAt.IsZero() || now.Sub(pool.LastScaleUpAt) >= scaleUpCooldown) {
@@ -372,7 +361,7 @@ func (m *ServerManager) reconcileAllPools() {
 }
 
 func (m *ServerManager) launchPoolReplica(poolID int) {
-	rec, listenPort, err := m.registerPoolReplicaRecord(poolID)
+	rec, err := m.registerPoolReplicaRecord(poolID)
 	if err != nil {
 		m.warnf("Pool %d scale-up failed: %v", poolID, err)
 		return
@@ -407,26 +396,26 @@ func (m *ServerManager) launchPoolReplica(poolID int) {
 	}
 	m.mu.RUnlock()
 	if line >= 0 {
-		m.infof("Pool %d line %d listen %d launched replica", poolID, line+1, listenPort)
+		m.infof("Pool %d line %d launched replica", poolID, line+1)
 		return
 	}
-	m.infof("Pool %d listen %d launched replica", poolID, listenPort)
+	m.infof("Pool %d launched replica", poolID)
 }
 
-func (m *ServerManager) registerPoolReplicaRecord(poolID int) (*serverRecord, int, error) {
+func (m *ServerManager) registerPoolReplicaRecord(poolID int) (*serverRecord, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	pool := m.poolsByID[poolID]
 	if pool == nil {
-		return nil, 0, fmt.Errorf("unknown pool")
+		return nil, fmt.Errorf("unknown pool")
 	}
 	if !pool.ScaleUpInFlight {
-		return nil, 0, nil
+		return nil, nil
 	}
-	if !pool.UsesDynamicPort {
+	if !pool.Autoscales {
 		pool.ScaleUpInFlight = false
-		return nil, 0, nil
+		return nil, nil
 	}
 
 	replicaID := m.nextServerID
@@ -437,7 +426,7 @@ func (m *ServerManager) registerPoolReplicaRecord(poolID int) (*serverRecord, in
 
 	rec := m.appendPoolBackendRecordLocked(pool, launch, poolBackendLifecycleWarming)
 
-	return rec, pool.ListenPort, nil
+	return rec, nil
 }
 
 func (m *ServerManager) despawnPoolBackend(serverID int) {
@@ -464,14 +453,13 @@ func (m *ServerManager) despawnPoolBackend(serverID int) {
 	}
 	srv := rec.Running
 	poolID := pool.PoolID
-	listenPort := pool.ListenPort
 	m.mu.RUnlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	err := m.stopServer(ctx, rec, srv, 2*time.Second, true)
 	cancel()
 	if err != nil {
-		m.warnf("Pool %d listen %d despawn failed: %v", poolID, listenPort, err)
+		m.warnf("Pool %d despawn failed: %v", poolID, err)
 	}
 
 	m.mu.Lock()

@@ -71,12 +71,7 @@ func parseSearchPathConsoleLine(line string) (entry string, isPathLine bool) {
 		return "", false
 	}
 
-	fields := strings.Fields(trimmed)
-	if len(fields) == 0 {
-		return "", false
-	}
-
-	pathToken := fields[0]
+	pathToken := strings.Fields(trimmed)[0]
 	if !strings.Contains(pathToken, "/") {
 		return "", false
 	}
@@ -164,18 +159,7 @@ func (c *serverConsole) queueSuppressedRelayEchoLine(line string) {
 }
 
 func (c *serverConsole) unqueueSuppressedRelayEchoLine(line string) {
-	key := normalizeConsoleRelayLine(line)
-	if key == "" {
-		return
-	}
-	c.suppressedRelayMu.Lock()
-	defer c.suppressedRelayMu.Unlock()
-	count := c.suppressedRelayEcho[key]
-	if count <= 1 {
-		delete(c.suppressedRelayEcho, key)
-		return
-	}
-	c.suppressedRelayEcho[key] = count - 1
+	c.consumeSuppressedRelayEchoLine(line)
 }
 
 func (c *serverConsole) consumeSuppressedRelayEchoLine(line string) bool {

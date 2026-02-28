@@ -230,10 +230,10 @@ func TestRemoveServer_RemovesEveryBackendFromPool(t *testing.T) {
 	}
 
 	var (
-		replicaA   *serverRecord
-		replicaB   *serverRecord
-		listenPort int
-		poolID     int
+		replicaA *serverRecord
+		replicaB *serverRecord
+		poolID   int
+		poolLine int
 	)
 
 	m.mu.Lock()
@@ -244,16 +244,13 @@ func TestRemoveServer_RemovesEveryBackendFromPool(t *testing.T) {
 	}
 	replicaA = m.appendPoolBackendRecordLocked(pool, pool.TemplateLaunch, poolBackendLifecycleWarming)
 	replicaB = m.appendPoolBackendRecordLocked(pool, pool.TemplateLaunch, poolBackendLifecycleWarming)
-	listenPort = pool.ListenPort
 	poolID = pool.PoolID
+	poolLine = pool.Line
 	m.mu.Unlock()
 
-	if listenPort < 1 || listenPort > 65535 {
-		t.Fatalf("expected valid pool listen port, got %d", listenPort)
-	}
-
-	if err := m.RemoveServer(listenPort); err != nil {
-		t.Fatalf("RemoveServer(pool port) error = %v", err)
+	// Dynamic pools have no stable listen port; remove by 1-based line index.
+	if err := m.RemoveServer(poolLine + 1); err != nil {
+		t.Fatalf("RemoveServer(pool line index) error = %v", err)
 	}
 
 	if _, ok := m.serversByID[seed.id]; ok {
@@ -267,9 +264,6 @@ func TestRemoveServer_RemovesEveryBackendFromPool(t *testing.T) {
 	}
 	if _, ok := m.poolsByID[poolID]; ok {
 		t.Fatalf("expected pool id=%d to be removed", poolID)
-	}
-	if _, ok := m.poolByListenPort[listenPort]; ok {
-		t.Fatalf("expected pool listen port %d to be removed", listenPort)
 	}
 	if len(m.poolByServerID) != 0 {
 		t.Fatalf("expected no pool member mapping entries, got %d", len(m.poolByServerID))

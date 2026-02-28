@@ -28,9 +28,6 @@ type ServerManager struct {
 	poolByServerID   map[int]*serverPool
 	nextPoolID       int
 	poolMaxSize      int
-
-	affinityBySession map[uint64]*poolSessionAffinity
-
 	nextServerID   int
 	runtimeBasedir string
 }
@@ -191,7 +188,6 @@ func NewServerManager(
 		poolsByID:         make(map[int]*serverPool),
 		poolByListenPort:  make(map[int]*serverPool),
 		poolByServerID:    make(map[int]*serverPool),
-		affinityBySession: make(map[uint64]*poolSessionAffinity),
 		nextPoolID:        1,
 		poolMaxSize:       defaultPoolSize,
 	}

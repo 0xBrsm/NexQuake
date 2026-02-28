@@ -49,11 +49,8 @@ func (p *serverInfoPoller) Stop() {
 	})
 }
 
-func fillRunningPorts(mgr *ServerManager, dst []int) []int {
+func fillRunningPortsLocked(mgr *ServerManager, dst []int) []int {
 	dst = dst[:0]
-
-	mgr.mu.RLock()
-	defer mgr.mu.RUnlock()
 
 	for port, ids := range mgr.serverIDsByPort {
 		if port < 1 || port > 65535 {
@@ -71,6 +68,12 @@ func fillRunningPorts(mgr *ServerManager, dst []int) []int {
 	return dst
 }
 
+func fillRunningPorts(mgr *ServerManager, dst []int) []int {
+	mgr.mu.RLock()
+	defer mgr.mu.RUnlock()
+	return fillRunningPortsLocked(mgr, dst)
+}
+
 func staleAfterForTargets(targetCount int) time.Duration {
 	pollPeriod := time.Duration(targetCount) * serverInfoPollStep
 	staleAfter := pollPeriod * 10
@@ -81,11 +84,11 @@ func staleAfterForTargets(targetCount int) time.Duration {
 }
 
 func SnapshotForSlist(mgr *ServerManager) []nqnet.ServerListEntry {
-	ports := fillRunningPorts(mgr, nil)
-	staleAfter := staleAfterForTargets(len(ports))
 	now := time.Now()
 
-	mgr.mu.RLock()
+	mgr.mu.Lock()
+	ports := fillRunningPortsLocked(mgr, nil)
+	staleAfter := staleAfterForTargets(len(ports))
 	out := make([]nqnet.ServerListEntry, 0, len(ports)+len(mgr.poolsByID))
 
 	pools := make([]*serverPool, 0, len(mgr.poolsByID))
@@ -95,14 +98,19 @@ func SnapshotForSlist(mgr *ServerManager) []nqnet.ServerListEntry {
 		}
 	}
 	sort.Slice(pools, func(i, j int) bool {
-		return pools[i].ListenPort < pools[j].ListenPort
+		return pools[i].Line < pools[j].Line
 	})
 	for _, pool := range pools {
-		if pool.ListenPort < 1 || pool.ListenPort > 65535 || pool.AggregateInstances == 0 {
+		if pool.AggregateInstances == 0 {
 			continue
 		}
+		backendPort, ok := mgr.pickPoolBackendLocked(pool)
+		if !ok {
+			continue
+		}
+		notePoolDemandLocked(pool, now)
 		out = append(out, nqnet.ServerListEntry{
-			ListenPort: pool.ListenPort,
+			ListenPort: backendPort,
 			Hostname:   pool.DisplayHostname,
 			MapName:    pool.DisplayMap,
 			GameDir:    pool.DisplayGameDir,
@@ -137,7 +145,7 @@ func SnapshotForSlist(mgr *ServerManager) []nqnet.ServerListEntry {
 			Instances:  1,
 		})
 	}
-	mgr.mu.RUnlock()
+	mgr.mu.Unlock()
 
 	sort.Slice(out, func(i, j int) bool {
 		hi := out[i].Hostname

@@ -73,13 +73,6 @@ func (r *Router) udpReadLoop() {
 		if !ok {
 			continue
 		}
-		if r.dispatch.RewriteSourcePort != nil {
-			srcPort = r.dispatch.RewriteSourcePort(r, srcPort)
-			if srcPort < 1 || srcPort > 65535 {
-				continue
-			}
-		}
-
 		if debugRelay {
 			r.debugf("DEBUG_RELAY\tudp<-server\tsrc=%s\tport=%d\tlen=%d\tbytes=% x",
 				remoteSrcAddr.String(), srcPort, len(packet), packet[:min(len(packet), 24)])

@@ -260,11 +260,8 @@ func tailNexusLogLines(n int) []string {
 		return nil
 	}
 
-	if n > len(snapshot) {
-		n = len(snapshot)
-	}
-	start := len(snapshot) - n
-	return append([]string(nil), snapshot[start:]...)
+	n = min(n, len(snapshot))
+	return append([]string(nil), snapshot[len(snapshot)-n:]...)
 }
 
 func resetNexusLogHistoryForTest() {

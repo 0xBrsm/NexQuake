@@ -190,8 +190,7 @@ func listLayerPakFiles(root string) ([]string, error) {
 	}
 
 	slices.SortFunc(paks, func(a, b string) int {
-		ak := pakSortKey(a)
-		bk := pakSortKey(b)
+		ak, bk := pakSortKey(a), pakSortKey(b)
 		if c := cmp.Compare(ak.group, bk.group); c != 0 {
 			return c
 		}

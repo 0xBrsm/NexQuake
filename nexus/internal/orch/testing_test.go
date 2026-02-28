@@ -1,7 +1,6 @@
 package orch
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 )
@@ -124,27 +123,19 @@ func (m *ServerManager) registerPoolSeed(rec *serverRecord) error {
 		return nil
 	}
 
-	conn, listenPort, err := reservePoolProxyPort()
-	if err != nil {
-		return fmt.Errorf("pool proxy reserve for line=%d: %w", rec.Launch.Line+1, err)
-	}
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if _, exists := m.poolByServerID[rec.id]; exists {
-		_ = conn.Close()
 		return nil
 	}
 
 	pool := &serverPool{
-		PoolID:            m.nextPoolID,
-		Line:              rec.Launch.Line,
-		TemplateLaunch:    cloneServerLaunch(rec.Launch),
-		UsesDynamicPort:   true,
-		BackendServerIDs:  []int{rec.id},
-		ListenPort:        listenPort,
-		ListenReserveConn: conn,
+		PoolID:          m.nextPoolID,
+		Line:            rec.Launch.Line,
+		TemplateLaunch:  cloneServerLaunch(rec.Launch),
+		Autoscales: true,
+		BackendServerIDs: []int{rec.id},
 		backendState: map[int]*poolBackendState{
 			rec.id: newPoolBackendState(poolBackendLifecycleWarming),
 		},
@@ -154,7 +145,6 @@ func (m *ServerManager) registerPoolSeed(rec *serverRecord) error {
 	}
 	m.nextPoolID++
 	m.poolsByID[pool.PoolID] = pool
-	m.poolByListenPort[pool.ListenPort] = pool
 	m.poolByServerID[rec.id] = pool
 	m.refreshPoolSnapshotLocked(pool)
 

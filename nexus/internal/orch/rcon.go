@@ -112,12 +112,11 @@ func formatServerTailReply(lines []string) string {
 // ExecServerCmd runs a console command on the server identified by listen port.
 // When actorID is non-empty, an audit echo marker is appended to the command.
 func (m *ServerManager) ExecServerCmd(port int, cmd, actorID string) (string, error) {
-	targetPort, err := m.resolveRCONTargetPort(port)
-	if err != nil {
-		return "", err
+	if port < 1 || port > 65535 {
+		return "", fmt.Errorf("unknown server")
 	}
 
-	srv := m.serverByListenPort(targetPort)
+	srv := m.serverByListenPort(port)
 	if srv == nil {
 		return "", fmt.Errorf("unknown server")
 	}
