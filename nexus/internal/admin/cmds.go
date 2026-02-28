@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/0xBrsm/NexQuake/nexus/internal/nqnet"
 	"github.com/0xBrsm/NexQuake/nexus/internal/orch"
+	"github.com/0xBrsm/NexQuake/nexus/nqrelay"
 	"github.com/google/shlex"
 )
 
@@ -28,8 +28,8 @@ type Env struct {
 	TailNexusLog        func(n int) []string
 	Auditf              func(format string, args ...any)
 
-	SessionSnapshots func() []nqnet.SessionSnapshot
-	SnapshotByVIP    func(vip string) ([]*nqnet.Router, []nqnet.BanTarget)
+	SessionSnapshots func() []nqrelay.SessionSnapshot
+	SnapshotByVIP    func(vip string) ([]Session, []nqrelay.BanTarget)
 	ReserveAndBlock  func(ip [4]byte, sourceKey string)
 }
 

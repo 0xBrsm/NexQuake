@@ -1,4 +1,4 @@
-package nqnet
+package nqrelay
 
 import (
 	"errors"
@@ -9,14 +9,14 @@ import (
 
 const DefaultNQServerIP = "127.0.0.1"
 
-// RelayListenAddr returns an unspecified UDP listen address (any port).
-func RelayListenAddr() *net.UDPAddr {
+// ListenAddr returns an unspecified UDP listen address (any port).
+func ListenAddr() *net.UDPAddr {
 	return &net.UDPAddr{IP: net.IPv4zero, Port: 0}
 }
 
-// relayListenAddrForClient returns a UDP listen address bound to the client's
+// listenAddrForClient returns a UDP listen address bound to the client's
 // virtual IP (any port).
-func relayListenAddrForClient(ip4 [4]byte) *net.UDPAddr {
+func listenAddrForClient(ip4 [4]byte) *net.UDPAddr {
 	return &net.UDPAddr{
 		IP:   net.IPv4(ip4[0], ip4[1], ip4[2], ip4[3]).To4(),
 		Port: 0,
@@ -26,10 +26,7 @@ func relayListenAddrForClient(ip4 [4]byte) *net.UDPAddr {
 // ServerSourcePortFromAddr extracts the source port from a UDP address.
 func ServerSourcePortFromAddr(addr net.Addr) (srcPort int, ok bool) {
 	udpAddr, isUDP := addr.(*net.UDPAddr)
-	if !isUDP {
-		return 0, false
-	}
-	if udpAddr.Port <= 0 || udpAddr.Port > 65535 {
+	if !isUDP || !isValidServerPort(udpAddr.Port) {
 		return 0, false
 	}
 	return udpAddr.Port, true
@@ -45,8 +42,8 @@ func ServerUDPAddr(serverIP net.IP, port int) *net.UDPAddr {
 }
 
 // udpReadLoop reads datagrams from udpConn and forwards them as WS frames
-// through the router's send channel.
-func (r *Router) udpReadLoop() {
+// through the relay's send channel.
+func (r *Relay) udpReadLoop() {
 	debugRelay := os.Getenv("DEBUG_RELAY") == "1"
 
 	buffer := make([]byte, 65536)
@@ -83,7 +80,7 @@ func (r *Router) udpReadLoop() {
 }
 
 // udpWrite sends payload to a server port over UDP.
-func (r *Router) udpWrite(dstPort int, payload []byte) {
+func (r *Relay) udpWrite(dstPort int, payload []byte) {
 	if r.ctx.Err() != nil || len(payload) == 0 {
 		return
 	}

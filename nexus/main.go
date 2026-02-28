@@ -14,8 +14,8 @@ import (
 
 	"github.com/0xBrsm/NexQuake/nexus/internal/admin"
 	"github.com/0xBrsm/NexQuake/nexus/internal/assets"
-	"github.com/0xBrsm/NexQuake/nexus/internal/nqnet"
 	"github.com/0xBrsm/NexQuake/nexus/internal/orch"
+	"github.com/0xBrsm/NexQuake/nexus/nqrelay"
 )
 
 func main() {
@@ -43,9 +43,9 @@ func main() {
 	globalAuth = auth
 
 	// Initialize networking layer.
-	nqServerIP := net.ParseIP(nqnet.DefaultNQServerIP).To4()
-	ipAlloc := nqnet.NewIPAllocator(nqServerIP)
-	sessionReg := nqnet.NewSessionRegistry()
+	nqServerIP := net.ParseIP(nqrelay.DefaultNQServerIP).To4()
+	ipAlloc := nqrelay.NewIPAllocator(nqServerIP)
+	sessionReg := nqrelay.NewSessionRegistry()
 	globalIPAllocator = ipAlloc
 	globalSessionRegistry = sessionReg
 
@@ -241,8 +241,8 @@ func runHealthcheck(httpPort string) error {
 
 // Global singletons, initialized in main() before any goroutines.
 var (
-	globalIPAllocator     *nqnet.IPAllocator
-	globalSessionRegistry *nqnet.SessionRegistry
+	globalIPAllocator     *nqrelay.IPAllocator
+	globalSessionRegistry *nqrelay.SessionRegistry
 	globalAuth            *admin.Auth
 	globalAdminEnv        *admin.Env
 	globalServerManager   *orch.ServerManager
@@ -250,15 +250,15 @@ var (
 
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	isAdmin, userIdentity := globalAuth.IdentifyRequest(r)
-	sourceIP := nqnet.ResolveClientSourceIP(r)
-	sourceKey := nqnet.ResolveClientSourceKey(r)
+	sourceIP := nqrelay.ResolveClientSourceIP(r)
+	sourceKey := nqrelay.ResolveClientSourceKey(r)
 	if globalIPAllocator.IsBlocked(sourceKey) {
 		warnf("Rejected blocked client source=%q remote=%s", sourceKey, r.RemoteAddr)
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
-	conn, err := nqnet.Upgrader.Upgrade(w, r, nil)
+	conn, err := nqrelay.Upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		warnf("WebSocket upgrade failed: %v", err)
 		return
@@ -277,31 +277,27 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		infof("Client connected: %s (%s)", displayAddr, userIdentity)
 	}
 
-	dispatch := nqnet.FrameDispatch{
-		HandleSlistRequest: func(payload []byte) []byte {
-			entries := orch.SnapshotForSlist(globalServerManager)
-			listPayload, _ := nqnet.BuildCCREPServerList(entries)
-			return listPayload
-		},
-		HandleAdminFrame: func(router *nqnet.Router, payload []byte) {
-			admin.HandleAdminFrameWithIdentityAndPromotionHook(router, payload, globalAuth, globalAdminEnv, userIdentity, func(r *nqnet.Router) {
+	dispatch := nqrelay.FrameDispatch{
+		HandleControlFrame: orch.NewControlHandler(globalServerManager, func(relay *nqrelay.Relay, payload []byte) {
+			admin.HandleAdminFrameWithIdentityAndPromotionHook(relay, payload, globalAuth, globalAdminEnv, userIdentity, func(r admin.Session) {
 				source := strings.TrimSpace(r.SourceIP())
 				if source == "" {
 					source = "unknown"
 				}
 				infof("Admin promoted: source=%s key=%s nqip=%s", source, r.SourceKey(), r.VirtualClientIP())
 			})
-		},
+		}),
+		IsAllowedPort: globalServerManager.IsManagedListenPort,
 	}
 
-	router, err := nqnet.NewRouter(conn, sourceKey, sourceIP, userIdentity, isAdmin, globalIPAllocator, globalSessionRegistry, dispatch, warnf, debugf)
+	relay, err := nqrelay.NewRelay(conn, sourceKey, sourceIP, userIdentity, isAdmin, globalIPAllocator, globalSessionRegistry, dispatch, warnf, debugf)
 	if err != nil {
-		errorf("Failed to create router: %v", err)
+		errorf("Failed to create relay: %v", err)
 		_ = conn.Close()
 		return
 	}
 
-	router.Run()
+	relay.Run()
 
 	if isAdmin {
 		infof("Admin disconnected: %s", displayAddr)
@@ -362,7 +358,14 @@ func buildAdminEnv() *admin.Env {
 		TailNexusLog:        tailNexusLogLines,
 		Auditf:              auditf,
 		SessionSnapshots:    globalSessionRegistry.SnapshotAll,
-		SnapshotByVIP:       globalSessionRegistry.SnapshotByVirtualIP,
-		ReserveAndBlock:     globalIPAllocator.ReserveAndBlock,
+		SnapshotByVIP: func(vip string) ([]admin.Session, []nqrelay.BanTarget) {
+			relays, targets := globalSessionRegistry.SnapshotByVirtualIP(vip)
+			sessions := make([]admin.Session, len(relays))
+			for i, r := range relays {
+				sessions[i] = r
+			}
+			return sessions, targets
+		},
+		ReserveAndBlock: globalIPAllocator.ReserveAndBlock,
 	}
 }

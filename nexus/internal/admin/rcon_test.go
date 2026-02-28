@@ -5,26 +5,54 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/0xBrsm/NexQuake/nexus/internal/nqnet"
 	"github.com/0xBrsm/NexQuake/nexus/internal/orch"
+	"github.com/0xBrsm/NexQuake/nexus/nqrelay"
 )
 
-func readAdminReply(t *testing.T, ch chan []byte) string {
-	t.Helper()
-	select {
-	case frame := <-ch:
-		if len(frame) < nqnet.WSPortHeaderSize {
-			t.Fatalf("expected ws frame with %d-byte header, got %d bytes", nqnet.WSPortHeaderSize, len(frame))
-		}
-		if frame[0] != 0 || frame[1] != 0 {
-			t.Fatalf("expected admin reply on control port 0, got header [%d %d]", frame[0], frame[1])
-		}
-		return string(frame[nqnet.WSPortHeaderSize:])
-	default:
-		t.Fatalf("expected admin reply frame")
-	}
-	return ""
+type mockSession struct {
+	admin     bool
+	sourceIP  string
+	sourceKey string
+	vip       string
+	clientIP  [4]byte
+	closed    bool
+	replies   strings.Builder
 }
+
+func newMockSession(isAdmin bool) *mockSession {
+	m := &mockSession{
+		admin:     isAdmin,
+		sourceIP:  "198.51.100.10",
+		sourceKey: "ip:198.51.100.10",
+		vip:       "127.100.10.1",
+		clientIP:  [4]byte{127, 100, 10, 1},
+	}
+	if isAdmin {
+		m.sourceIP = "198.51.100.11"
+		m.sourceKey = "ip:198.51.100.11"
+		m.vip = "127.100.10.2"
+		m.clientIP = [4]byte{127, 100, 10, 2}
+	}
+	return m
+}
+
+func (m *mockSession) IsAdmin() bool { return m.admin }
+
+func (m *mockSession) PromoteAdmin() { m.admin = true }
+
+func (m *mockSession) SendAdminReply(msg string) { m.replies.WriteString(msg) }
+
+func (m *mockSession) SourceIP() string { return m.sourceIP }
+
+func (m *mockSession) VirtualClientIP() string { return m.vip }
+
+func (m *mockSession) ClientIP() [4]byte { return m.clientIP }
+
+func (m *mockSession) SourceKey() string { return m.sourceKey }
+
+func (m *mockSession) Close() { m.closed = true }
+
+func (m *mockSession) reply() string { return m.replies.String() }
 
 func TestSplitAdminPayload_AcceptsPortZero(t *testing.T) {
 	pw, targetPort, args := splitAdminPayload([]byte("pw\x000\x00nexus status"))
@@ -40,17 +68,17 @@ func TestSplitAdminPayload_AcceptsPortZero(t *testing.T) {
 }
 
 func TestHandleAdminFrame_UsageIncludesImplicitTargetForm(t *testing.T) {
-	r, ch := nqnet.NewTestRouter(true)
+	r := newMockSession(true)
 	auth := &Auth{}
 	HandleAdminFrame(r, []byte("\x000\x00"), auth, &Env{})
-	reply := readAdminReply(t, ch)
+	reply := r.reply()
 	if !strings.Contains(reply, "usage: rcon <cmd> | rcon <host|port> <cmd>") {
 		t.Fatalf("expected updated usage text, got %q", reply)
 	}
 }
 
 func TestHandleAdminFrame_PromotesSessionAfterValidPassword(t *testing.T) {
-	r, ch := nqnet.NewTestRouter(false)
+	r := newMockSession(false)
 	auth := &Auth{rconPassword: "pw"}
 
 	if r.IsAdmin() {
@@ -58,7 +86,7 @@ func TestHandleAdminFrame_PromotesSessionAfterValidPassword(t *testing.T) {
 	}
 
 	HandleAdminFrame(r, []byte("pw\x000\x00help"), auth, &Env{})
-	reply := readAdminReply(t, ch)
+	reply := r.reply()
 	if !strings.Contains(reply, "Nexus commands:") {
 		t.Fatalf("expected help reply after auth, got %q", reply)
 	}
@@ -68,15 +96,15 @@ func TestHandleAdminFrame_PromotesSessionAfterValidPassword(t *testing.T) {
 }
 
 func TestHandleAdminFrameWithPromotionHook_FiresOnPromotion(t *testing.T) {
-	r, ch := nqnet.NewTestRouter(false)
+	r := newMockSession(false)
 	auth := &Auth{rconPassword: "pw"}
 
 	hookCalls := 0
-	HandleAdminFrameWithPromotionHook(r, []byte("pw\x000\x00help"), auth, &Env{}, func(*nqnet.Router) {
+	HandleAdminFrameWithPromotionHook(r, []byte("pw\x000\x00help"), auth, &Env{}, func(Session) {
 		hookCalls++
 	})
 
-	reply := readAdminReply(t, ch)
+	reply := r.reply()
 	if !strings.Contains(reply, "Nexus commands:") {
 		t.Fatalf("expected help reply after auth, got %q", reply)
 	}
@@ -86,7 +114,7 @@ func TestHandleAdminFrameWithPromotionHook_FiresOnPromotion(t *testing.T) {
 }
 
 func TestHandleAdminFrameWithIdentityAndPromotionHook_UsesActorAwareExec(t *testing.T) {
-	r, ch := nqnet.NewTestRouter(true)
+	r := newMockSession(true)
 
 	called := false
 	var gotPort int
@@ -107,7 +135,7 @@ func TestHandleAdminFrameWithIdentityAndPromotionHook_UsesActorAwareExec(t *test
 	}
 
 	HandleAdminFrameWithIdentityAndPromotionHook(r, []byte("\x0026000\x00status"), &Auth{}, env, "alice@example.com", nil)
-	reply := readAdminReply(t, ch)
+	reply := r.reply()
 	if reply != "ok\n" {
 		t.Fatalf("expected actor-aware command reply, got %q", reply)
 	}
@@ -135,7 +163,7 @@ func TestHandleAdminFrameWithIdentityAndPromotionHook_UsesActorAwareExec(t *test
 }
 
 func TestHandleAdminFrameWithIdentityAndPromotionHook_AuditsNexusCommand(t *testing.T) {
-	r, ch := nqnet.NewTestRouter(true)
+	r := newMockSession(true)
 
 	var auditLogs []string
 	env := &Env{
@@ -145,7 +173,7 @@ func TestHandleAdminFrameWithIdentityAndPromotionHook_AuditsNexusCommand(t *test
 	}
 
 	HandleAdminFrameWithIdentityAndPromotionHook(r, []byte("\x000\x00help"), &Auth{}, env, "alice@example.com", nil)
-	reply := readAdminReply(t, ch)
+	reply := r.reply()
 	if !strings.Contains(reply, "Nexus commands:") {
 		t.Fatalf("expected help reply, got %q", reply)
 	}
@@ -161,7 +189,7 @@ func TestHandleAdminFrameWithIdentityAndPromotionHook_AuditsNexusCommand(t *test
 }
 
 func TestResolveAdminActorID_FallsBackToSourceIP(t *testing.T) {
-	r, _ := nqnet.NewTestRouter(true)
+	r := newMockSession(true)
 	got := resolveAdminActorID("anonymous", r)
 	if got != "198.51.100.11" {
 		t.Fatalf("expected source IP fallback, got %q", got)
@@ -171,7 +199,7 @@ func TestResolveAdminActorID_FallsBackToSourceIP(t *testing.T) {
 func TestExecNexusCommand_Help(t *testing.T) {
 	env := &Env{
 		ServerSnapshots:  func() []orch.ServerSnapshot { return nil },
-		SessionSnapshots: func() []nqnet.SessionSnapshot { return nil },
+		SessionSnapshots: func() []nqrelay.SessionSnapshot { return nil },
 	}
 	reply, err := execNexusCommand("help", env)
 	if err != nil {
@@ -188,7 +216,7 @@ func TestExecNexusCommand_Help(t *testing.T) {
 func TestExecNexusCommand_EmptyCommandReturnsHelp(t *testing.T) {
 	env := &Env{
 		ServerSnapshots:  func() []orch.ServerSnapshot { return nil },
-		SessionSnapshots: func() []nqnet.SessionSnapshot { return nil },
+		SessionSnapshots: func() []nqrelay.SessionSnapshot { return nil },
 	}
 	reply, err := execNexusCommand("", env)
 	if err != nil {
@@ -202,7 +230,7 @@ func TestExecNexusCommand_EmptyCommandReturnsHelp(t *testing.T) {
 func TestExecNexusCommand_UnknownCommandReturnsHelp(t *testing.T) {
 	env := &Env{
 		ServerSnapshots:  func() []orch.ServerSnapshot { return nil },
-		SessionSnapshots: func() []nqnet.SessionSnapshot { return nil },
+		SessionSnapshots: func() []nqrelay.SessionSnapshot { return nil },
 	}
 	reply, err := execNexusCommand("wat", env)
 	if err != nil {
@@ -220,7 +248,7 @@ func TestExecNexusCommand_Slist(t *testing.T) {
 				{Line: 0, ListenPort: 26000, GameDir: "id1", Hostname: "fragfest", MapName: "dm6", Players: 1, MaxPlayers: 16, State: "stopped"},
 			}
 		},
-		SessionSnapshots: func() []nqnet.SessionSnapshot { return nil },
+		SessionSnapshots: func() []nqrelay.SessionSnapshot { return nil },
 	}
 
 	reply, err := execNexusCommand("slist", env)
@@ -249,7 +277,7 @@ func TestExecNexusCommand_Slist(t *testing.T) {
 func TestExecNexusCommand_SessionListNoClients(t *testing.T) {
 	env := &Env{
 		ServerSnapshots:  func() []orch.ServerSnapshot { return nil },
-		SessionSnapshots: func() []nqnet.SessionSnapshot { return nil },
+		SessionSnapshots: func() []nqrelay.SessionSnapshot { return nil },
 	}
 	reply, err := execNexusCommand("session list", env)
 	if err != nil {
@@ -280,7 +308,7 @@ func TestExecNexusCommand_InvalidTargetShowsCommandUsage(t *testing.T) {
 func TestExecNexusCommand_AllTargetAccepted(t *testing.T) {
 	env := &Env{
 		ServerSnapshots:  func() []orch.ServerSnapshot { return nil },
-		SessionSnapshots: func() []nqnet.SessionSnapshot { return nil },
+		SessionSnapshots: func() []nqrelay.SessionSnapshot { return nil },
 		StartServer:      func(target int) error { return nil },
 		StartServersAll:  func() error { return nil },
 	}
@@ -309,7 +337,7 @@ func TestExecNexusCommand_LaunchMissingBinaryShowsUsage(t *testing.T) {
 func TestExecNexusCommand_SessionBanInvalidIndexShowsUsage(t *testing.T) {
 	env := &Env{
 		ServerSnapshots:  func() []orch.ServerSnapshot { return nil },
-		SessionSnapshots: func() []nqnet.SessionSnapshot { return nil },
+		SessionSnapshots: func() []nqrelay.SessionSnapshot { return nil },
 	}
 	_, err := execNexusCommand("session ban not-a-number", env)
 	if err == nil {
@@ -330,8 +358,8 @@ func TestExecNexusCommand_SessionInfoByIndex(t *testing.T) {
 				{ListenPort: 26000, Hostname: "fragfest"},
 			}
 		},
-		SessionSnapshots: func() []nqnet.SessionSnapshot {
-			return []nqnet.SessionSnapshot{
+		SessionSnapshots: func() []nqrelay.SessionSnapshot {
+			return []nqrelay.SessionSnapshot{
 				{
 					VirtualIP:        "127.100.10.1",
 					SourceIP:         "198.51.100.10",
@@ -375,8 +403,8 @@ func TestExecNexusCommand_SessionInfoUnknownManagedPortTreatedDisconnected(t *te
 				{ListenPort: 26000, Hostname: "fragfest"},
 			}
 		},
-		SessionSnapshots: func() []nqnet.SessionSnapshot {
-			return []nqnet.SessionSnapshot{
+		SessionSnapshots: func() []nqrelay.SessionSnapshot {
+			return []nqrelay.SessionSnapshot{
 				{
 					VirtualIP:        "127.100.10.1",
 					SourceIP:         "198.51.100.10",
@@ -448,7 +476,7 @@ func TestApplyServerKickTargets_UsesKickByResolvedStatusSlot(t *testing.T) {
 		},
 	}
 
-	applied, errs := applyServerKickTargets([]nqnet.BanTarget{
+	applied, errs := applyServerKickTargets([]nqrelay.BanTarget{
 		{Port: 26000, VirtualIP: "127.100.10.1"},
 	}, env)
 

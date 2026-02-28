@@ -2,16 +2,162 @@ package orch
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/0xBrsm/NexQuake/nexus/internal/nqnet"
+	"github.com/0xBrsm/NexQuake/nexus/nqrelay"
 )
+
+// Quake client hostcache field limits (see net.h in the patched client).
+const (
+	hostcacheNameMax  = 23
+	hostcacheFieldMax = 15
+)
+
+// serverListEntry describes a single server for the aggregated slist response.
+type serverListEntry struct {
+	ListenPort int
+	Hostname   string
+	MapName    string
+	GameDir    string
+	Users      uint16
+	MaxUsers   uint16
+	Instances  uint16
+}
+
+// buildCCREPServerList builds an aggregated CCREP_SERVER_INFO response
+// containing multiple server entries. Returns the datagram and entry count.
+func buildCCREPServerList(entries []serverListEntry) ([]byte, int) {
+	const (
+		netFlagLengthMask  uint32 = 0x0000ffff
+		netFlagCtl         uint32 = 0x80000000
+		netProtocolVersion byte   = 3
+		ccrepServerInfo    byte   = 0x83
+		maxNetDatagramSize        = 1024 + 8
+	)
+
+	buf := make([]byte, 0, 512)
+	buf = append(buf, 0, 0, 0, 0) // placeholder header
+	buf = append(buf, ccrepServerInfo)
+	countIndex := len(buf)
+	buf = append(buf, 0) // count placeholder
+
+	count := 0
+	for _, e := range entries {
+		serverPort := e.ListenPort
+		if serverPort <= 0 || serverPort > 65535 {
+			continue
+		}
+		hostname := e.Hostname
+		mapName := e.MapName
+		gameDir := e.GameDir
+		if hostname == "" {
+			hostname = "UNNAMED"
+		}
+		if mapName == "" {
+			mapName = "?"
+		}
+		if gameDir == "" {
+			gameDir = "id1"
+		}
+
+		serverPortText := strconv.Itoa(serverPort)
+		hostname = truncateSlistField(hostname, hostcacheNameMax)
+		mapName = truncateSlistField(mapName, hostcacheFieldMax)
+		gameDir = truncateSlistField(gameDir, hostcacheFieldMax)
+
+		instances := e.Instances
+		if instances == 0 {
+			instances = 1
+		}
+
+		entrySize := len(serverPortText) + 1 + len(hostname) + 1 + len(mapName) + 1 + len(gameDir) + 1 + 7
+		if len(buf)+entrySize > maxNetDatagramSize {
+			break
+		}
+
+		buf = appendSlistCString(buf, serverPortText)
+		buf = appendSlistCString(buf, hostname)
+		buf = appendSlistCString(buf, mapName)
+		buf = appendSlistCString(buf, gameDir)
+		buf = append(buf, byte(e.Users&0xff), byte(e.Users>>8))
+		buf = append(buf, byte(e.MaxUsers&0xff), byte(e.MaxUsers>>8))
+		buf = append(buf, byte(instances&0xff), byte(instances>>8))
+		buf = append(buf, netProtocolVersion)
+		count++
+	}
+
+	buf[countIndex] = byte(count)
+	control := netFlagCtl | uint32(len(buf))
+	binary.BigEndian.PutUint32(buf[0:4], control)
+	return buf, count
+}
+
+func truncateSlistField(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	return s[:maxBytes]
+}
+
+func appendSlistCString(buf []byte, s string) []byte {
+	buf = append(buf, s...)
+	return append(buf, 0)
+}
+
+// isSlistRequest reports whether payload is a valid CCREQ_SERVER_INFO datagram.
+func isSlistRequest(payload []byte) bool {
+	const (
+		netFlagLengthMask  uint32 = 0x0000ffff
+		netFlagCtl         uint32 = 0x80000000
+		ccreqServerInfo    byte   = 0x02
+		netProtocolVersion byte   = 3
+	)
+	if len(payload) < 4+1 {
+		return false
+	}
+	control := binary.BigEndian.Uint32(payload[0:4])
+	if (control&^netFlagLengthMask) != netFlagCtl || int(control&netFlagLengthMask) != len(payload) {
+		return false
+	}
+	if payload[4] != ccreqServerInfo {
+		return false
+	}
+	i := 5
+	end := i
+	for end < len(payload) && payload[end] != 0 {
+		end++
+	}
+	if end >= len(payload) || string(payload[i:end]) != "QUAKE" {
+		return false
+	}
+	proto := end + 1
+	return proto < len(payload) && payload[proto] == netProtocolVersion
+}
+
+// NewControlHandler returns a FrameDispatch HandleControlFrame function that
+// handles CCREQ_SERVER_INFO slist requests via mgr, and delegates all other
+// port-0 traffic to handleAdmin.
+func NewControlHandler(mgr *ServerManager, handleAdmin func(relay *nqrelay.Relay, payload []byte)) func(*nqrelay.Relay, []byte) []byte {
+	return func(relay *nqrelay.Relay, payload []byte) []byte {
+		if isSlistRequest(payload) {
+			entries := snapshotForSlist(mgr)
+			data, _ := buildCCREPServerList(entries)
+			return data
+		}
+		if handleAdmin != nil {
+			handleAdmin(relay, payload)
+		}
+		return nil
+	}
+}
 
 const serverInfoPollStep = 500 * time.Millisecond
 
@@ -28,7 +174,7 @@ func NewServerInfoPoller(mgr *ServerManager, serverIP net.IP) *serverInfoPoller 
 }
 
 func (p *serverInfoPoller) Start(ctx context.Context) error {
-	udpConn, err := net.ListenUDP("udp4", nqnet.RelayListenAddr())
+	udpConn, err := net.ListenUDP("udp4", nqrelay.ListenAddr())
 	if err != nil {
 		return fmt.Errorf("server info poller: listen udp: %w", err)
 	}
@@ -83,13 +229,13 @@ func staleAfterForTargets(targetCount int) time.Duration {
 	return staleAfter
 }
 
-func SnapshotForSlist(mgr *ServerManager) []nqnet.ServerListEntry {
+func snapshotForSlist(mgr *ServerManager) []serverListEntry {
 	now := time.Now()
 
 	mgr.mu.Lock()
 	ports := fillRunningPortsLocked(mgr, nil)
 	staleAfter := staleAfterForTargets(len(ports))
-	out := make([]nqnet.ServerListEntry, 0, len(ports)+len(mgr.poolsByID))
+	out := make([]serverListEntry, 0, len(ports)+len(mgr.poolsByID))
 
 	pools := make([]*serverPool, 0, len(mgr.poolsByID))
 	for _, pool := range mgr.poolsByID {
@@ -109,7 +255,7 @@ func SnapshotForSlist(mgr *ServerManager) []nqnet.ServerListEntry {
 			continue
 		}
 		notePoolDemandLocked(pool, now)
-		out = append(out, nqnet.ServerListEntry{
+		out = append(out, serverListEntry{
 			ListenPort: backendPort,
 			Hostname:   pool.DisplayHostname,
 			MapName:    pool.DisplayMap,
@@ -135,7 +281,7 @@ func SnapshotForSlist(mgr *ServerManager) []nqnet.ServerListEntry {
 			continue
 		}
 
-		out = append(out, nqnet.ServerListEntry{
+		out = append(out, serverListEntry{
 			ListenPort: port,
 			Hostname:   rec.Hostname,
 			MapName:    rec.MapName,
@@ -167,21 +313,21 @@ func SnapshotForSlist(mgr *ServerManager) []nqnet.ServerListEntry {
 }
 
 func (p *serverInfoPoller) pollLoop(ctx context.Context, conn *net.UDPConn) {
-	req := nqnet.BuildCCREQServerInfo()
+	req := nqrelay.BuildCCREQServerInfo()
 
 	var ports []int
 
 	// Prime quickly at startup.
 	ports = fillRunningPorts(p.mgr, ports)
 	for _, port := range ports {
-		dst := nqnet.ServerUDPAddr(p.serverIP, port)
+		dst := nqrelay.ServerUDPAddr(p.serverIP, port)
 		if _, err := conn.WriteToUDP(req, dst); err != nil && errors.Is(err, net.ErrClosed) {
 			return
 		}
 	}
 
 	pollOne := func(port int) bool {
-		dst := nqnet.ServerUDPAddr(p.serverIP, port)
+		dst := nqrelay.ServerUDPAddr(p.serverIP, port)
 		if _, err := conn.WriteToUDP(req, dst); err != nil {
 			return !errors.Is(err, net.ErrClosed)
 		}
@@ -235,12 +381,12 @@ func (p *serverInfoPoller) readLoop(ctx context.Context, conn *net.UDPConn) {
 			continue
 		}
 
-		srcPort, ok := nqnet.ServerSourcePortFromAddr(src)
+		srcPort, ok := nqrelay.ServerSourcePortFromAddr(src)
 		if !ok {
 			continue
 		}
 
-		hostname, mapName, players, maxPlayers, _, ok := nqnet.ParseCCREPServerInfo(buf[:n])
+		hostname, mapName, players, maxPlayers, _, ok := nqrelay.ParseCCREPServerInfo(buf[:n])
 		if !ok {
 			continue
 		}

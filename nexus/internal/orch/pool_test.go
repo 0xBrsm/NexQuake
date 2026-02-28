@@ -277,7 +277,7 @@ func TestPoolRouting_RecordsDemandOnSlist(t *testing.T) {
 	}
 
 	// Slist records one demand event per successful backend pick.
-	entries := SnapshotForSlist(m)
+	entries := snapshotForSlist(m)
 	if len(entries) == 0 {
 		t.Fatalf("expected at least one slist entry")
 	}
@@ -300,7 +300,7 @@ func TestPoolRouting_FailedSlistDoesNotRecordDemand(t *testing.T) {
 		t.Fatalf("register pool seed: %v", err)
 	}
 
-	entries := SnapshotForSlist(m)
+	entries := snapshotForSlist(m)
 	if len(entries) != 0 {
 		t.Fatalf("expected no slist entries with no running backends, got %d", len(entries))
 	}

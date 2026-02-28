@@ -1,4 +1,4 @@
-package nqnet
+package nqrelay
 
 import (
 	"net/http"
@@ -23,7 +23,7 @@ var Upgrader = websocket.Upgrader{
 }
 
 // wsReadLoop reads WebSocket messages and dispatches them.
-func (r *Router) wsReadLoop() {
+func (r *Relay) wsReadLoop() {
 	for {
 		messageType, data, err := r.ws.ReadMessage()
 		if err != nil {
@@ -44,7 +44,7 @@ func (r *Router) wsReadLoop() {
 }
 
 // wsWriteLoop writes queued frames to the WebSocket.
-func (r *Router) wsWriteLoop() {
+func (r *Relay) wsWriteLoop() {
 	pingTicker := time.NewTicker(wsKeepalivePingInterval)
 	defer pingTicker.Stop()
 

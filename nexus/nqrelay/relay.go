@@ -1,4 +1,4 @@
-package nqnet
+package nqrelay
 
 import (
 	"context"
@@ -16,21 +16,23 @@ type logf func(format string, args ...any)
 
 func noopLogf(string, ...any) {}
 
-// FrameDispatch provides callbacks for frames the Router cannot handle itself.
+// FrameDispatch provides callbacks for frames the Relay cannot handle itself.
 type FrameDispatch struct {
-	// HandleSlistRequest is called for CCREQ_SERVER_INFO frames (port 0).
-	// It should return the CCREP response payload (or nil to skip).
-	HandleSlistRequest func(payload []byte) []byte
+	// HandleControlFrame is called for all ControlPort (control channel) frames.
+	// It should return a response payload to send back, or nil to send nothing.
+	HandleControlFrame func(relay *Relay, payload []byte) []byte
 
-	// HandleAdminFrame is called for non-slist port-0 frames (rcon).
-	HandleAdminFrame func(router *Router, payload []byte)
+	// HandleClose is invoked once during relay close.
+	HandleClose func(relay *Relay)
 
-	// HandleRouterClose is invoked once during router close.
-	HandleRouterClose func(router *Router)
+	// IsAllowedPort, if non-nil, gates which UDP destination ports a client
+	// may target. Frames addressed to ports that return false are silently
+	// dropped. When nil, all ports are allowed.
+	IsAllowedPort func(port int) bool
 }
 
-// Router relays WebSocket frames to/from UDP servers for a single client.
-type Router struct {
+// Relay relays WebSocket frames to/from UDP servers for a single client.
+type Relay struct {
 	ws        *websocket.Conn
 	udpConn   *net.UDPConn
 	wsTx      chan []byte
@@ -56,10 +58,10 @@ type Router struct {
 	closeOnce sync.Once
 }
 
-var nextRouterSessionID atomic.Uint64
+var nextSessionID atomic.Uint64
 
-// NewRouter creates a new WebSocket↔UDP relay router.
-func NewRouter(
+// NewRelay creates a new WebSocket↔UDP relay.
+func NewRelay(
 	ws *websocket.Conn,
 	sourceKey string,
 	sourceIP string,
@@ -70,7 +72,7 @@ func NewRouter(
 	dispatch FrameDispatch,
 	warnf logf,
 	debugf logf,
-) (*Router, error) {
+) (*Relay, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	clientIP, err := alloc.alloc(sourceKey)
@@ -79,7 +81,7 @@ func NewRouter(
 		return nil, err
 	}
 
-	udpConn, err := net.ListenUDP("udp4", relayListenAddrForClient(clientIP))
+	udpConn, err := net.ListenUDP("udp4", listenAddrForClient(clientIP))
 	if err != nil {
 		alloc.release(clientIP)
 		cancel()
@@ -93,11 +95,11 @@ func NewRouter(
 		debugf = noopLogf
 	}
 
-	router := &Router{
+	relay := &Relay{
 		ws:        ws,
 		udpConn:   udpConn,
 		wsTx:      make(chan []byte, 1024),
-		sessionID: nextRouterSessionID.Add(1),
+		sessionID: nextSessionID.Add(1),
 		clientIP:  clientIP,
 		sourceKey: strings.TrimSpace(sourceKey),
 		sourceIP:  strings.TrimSpace(sourceIP),
@@ -110,16 +112,16 @@ func NewRouter(
 		ctx:       ctx,
 		cancel:    cancel,
 	}
-	router.isAdmin.Store(isAdmin)
-	sessions.track(router)
-	return router, nil
+	relay.isAdmin.Store(isAdmin)
+	sessions.track(relay)
+	return relay, nil
 }
 
-// Close tears down the router, releasing all resources.
-func (r *Router) Close() {
+// Close tears down the relay, releasing all resources.
+func (r *Relay) Close() {
 	r.closeOnce.Do(func() {
-		if r.dispatch.HandleRouterClose != nil {
-			r.dispatch.HandleRouterClose(r)
+		if r.dispatch.HandleClose != nil {
+			r.dispatch.HandleClose(r)
 		}
 		r.sessions.untrack(r)
 		r.cancel()
@@ -134,8 +136,8 @@ func (r *Router) Close() {
 	})
 }
 
-// VirtualClientIP returns the router's virtual relay IP as a dotted string.
-func (r *Router) VirtualClientIP() string {
+// VirtualClientIP returns the relay's virtual relay IP as a dotted string.
+func (r *Relay) VirtualClientIP() string {
 	if r.clientIP[0] == 0 {
 		return ""
 	}
@@ -143,43 +145,43 @@ func (r *Router) VirtualClientIP() string {
 }
 
 // ClientIP returns the raw 4-byte client IP.
-func (r *Router) ClientIP() [4]byte {
+func (r *Relay) ClientIP() [4]byte {
 	return r.clientIP
 }
 
-// SourceKey returns the router's identity source key.
-func (r *Router) SourceKey() string {
+// SourceKey returns the relay's identity source key.
+func (r *Relay) SourceKey() string {
 	return r.sourceKey
 }
 
-// SourceIP returns the router's best-effort source client IP.
-func (r *Router) SourceIP() string {
+// SourceIP returns the relay's best-effort source client IP.
+func (r *Relay) SourceIP() string {
 	return r.sourceIP
 }
 
 // UserID returns the best-effort authenticated user identity for this session.
-func (r *Router) UserID() string {
+func (r *Relay) UserID() string {
 	return r.userID
 }
 
-// SessionID returns the router's unique per-websocket session identifier.
-func (r *Router) SessionID() uint64 {
+// SessionID returns the relay's unique per-websocket session identifier.
+func (r *Relay) SessionID() uint64 {
 	return r.sessionID
 }
 
-// IsAdmin reports whether this router has admin privileges.
-func (r *Router) IsAdmin() bool {
+// IsAdmin reports whether this relay has admin privileges.
+func (r *Relay) IsAdmin() bool {
 	return r.isAdmin.Load()
 }
 
-// PromoteAdmin marks this router as an admin session.
-func (r *Router) PromoteAdmin() {
+// PromoteAdmin marks this relay as an admin session.
+func (r *Relay) PromoteAdmin() {
 	r.isAdmin.Store(true)
 }
 
 // NoteServerRoutePort records the last server port this client sent to.
-func (r *Router) NoteServerRoutePort(port int) {
-	if port < 1 || port > 65535 {
+func (r *Relay) NoteServerRoutePort(port int) {
+	if !isValidServerPort(port) {
 		return
 	}
 	r.routeMu.Lock()
@@ -188,15 +190,14 @@ func (r *Router) NoteServerRoutePort(port int) {
 }
 
 // activeServerPort returns the last-routed server port.
-func (r *Router) activeServerPort() int {
+func (r *Relay) activeServerPort() int {
 	r.routeMu.RLock()
-	port := r.lastServerPort
-	r.routeMu.RUnlock()
-	return port
+	defer r.routeMu.RUnlock()
+	return r.lastServerPort
 }
 
 // Run starts the relay loops; blocks until the connection closes.
-func (r *Router) Run() {
+func (r *Relay) Run() {
 	if frame := buildWSClientIdentityFrame(r.clientIP); len(frame) > 0 {
 		r.sendWS(frame, true)
 	}
@@ -209,17 +210,15 @@ func (r *Router) Run() {
 
 // sendWS enqueues a frame for the WebSocket write loop.
 // If drop is true, the frame is silently dropped when the channel is full.
-func (r *Router) sendWS(frame []byte, drop bool) {
+func (r *Relay) sendWS(frame []byte, drop bool) {
 	if len(frame) == 0 || r.ctx.Err() != nil {
 		return
 	}
 
-	if drop {
+	if !drop {
 		select {
 		case <-r.ctx.Done():
 		case r.wsTx <- frame:
-		default:
-			r.warnf("ws tx channel full, dropping packet")
 		}
 		return
 	}
@@ -227,42 +226,48 @@ func (r *Router) sendWS(frame []byte, drop bool) {
 	select {
 	case <-r.ctx.Done():
 	case r.wsTx <- frame:
+	default:
+		r.warnf("ws tx channel full, dropping packet")
 	}
 }
 
-// SendAdminReply sends a text message on port 0 (admin channel) to the client.
-func (r *Router) SendAdminReply(msg string) {
+// SendControlReply sends a control-channel payload (port 0) to the client.
+func (r *Relay) SendControlReply(payload []byte) {
+	if len(payload) == 0 {
+		return
+	}
+	r.sendWS(buildWSFrame(ControlPort, payload), true)
+}
+
+// SendAdminReply is a compatibility wrapper for admin text replies.
+func (r *Relay) SendAdminReply(msg string) {
 	if msg == "" {
 		return
 	}
-
-	frame := make([]byte, WSPortHeaderSize+len(msg))
-	frame[0] = 0
-	frame[1] = 0
-	copy(frame[WSPortHeaderSize:], msg)
-	r.sendWS(frame, true)
+	r.SendControlReply([]byte(msg))
 }
 
-func (r *Router) handleWSFrame(packet []byte) {
-	if len(packet) < WSPortHeaderSize {
+func (r *Relay) handleWSFrame(packet []byte) {
+	dstPort, payload, ok := decodeWSFrame(packet)
+	if !ok {
 		return
 	}
 
-	dstPort := int(packet[0])<<8 | int(packet[1])
-	payload := packet[WSPortHeaderSize:]
-
-	if dstPort == 0 {
-		if _, ok := parseCCREQServerInfo(payload); r.dispatch.HandleSlistRequest != nil && ok {
-			if resp := r.dispatch.HandleSlistRequest(payload); len(resp) > 0 {
-				r.sendWS(buildWSFrame(0, resp), false)
+	if dstPort == ControlPort {
+		// Control-channel payload ownership stays outside nqrelay.
+		if r.dispatch.HandleControlFrame != nil {
+			if resp := r.dispatch.HandleControlFrame(r, payload); len(resp) > 0 {
+				r.sendWS(buildWSFrame(ControlPort, resp), false)
 			}
-		} else if r.dispatch.HandleAdminFrame != nil {
-			r.dispatch.HandleAdminFrame(r, payload)
 		}
 		return
 	}
 
-	if dstPort < 1 || dstPort > 65535 {
+	if !isValidServerPort(dstPort) {
+		return
+	}
+	if r.dispatch.IsAllowedPort != nil && !r.dispatch.IsAllowedPort(dstPort) {
+		r.debugf("dropping frame to unmanaged port %d", dstPort)
 		return
 	}
 

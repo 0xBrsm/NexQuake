@@ -4,6 +4,16 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.6.2
+
+### Fixed
+- Client `slist` row formatting now uses bounded writes for user-count and row rendering, preventing hostcache line buffer overflows.
+
+### Changed
+- Refactored Nexus relay internals into public package `nqrelay` as a pure WebSocket<->UDP relay API for import/vendoring use.
+- Consolidated Nexus control-frame handling through a single orchestrator control handler for relay port `0` traffic.
+- Moved `slist` response codec helpers into orchestration and removed duplicated relay-side server-list codec paths from the relay package.
+
 ## 1.6.1
 
 ### Fixed

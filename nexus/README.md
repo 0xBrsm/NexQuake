@@ -13,7 +13,7 @@ Go orchestration server that ties everything together: serves the WASM client, s
 
 | Dir | Purpose |
 |-----|---------|
-| `internal/nqnet/` | **Networking.** WebSocket upgrader, WebSocket<->UDP router, session registry, virtual IP allocator, tunnel frame helpers. |
+| `nqrelay/` | **Networking.** WebSocket upgrader, WebSocket<->UDP relay, session registry, virtual IP allocator, tunnel frame helpers. |
 | `internal/orch/` | **Orchestration.** Dedicated server launch planning, process lifecycle, server console capture/tail, server-info poller for `slist`. |
 | `internal/admin/` | **Admin.** Auth (OIDC JWT + in-game `rcon_password`), admin frame handler for commands, Nexus command dispatcher. |
 | `internal/assets/` | **Game data.** Quickstart manifests, VFS manifest builder, PAK indexing, BGM audio handling, and hash-addressed asset gateway. |

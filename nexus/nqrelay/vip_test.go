@@ -1,4 +1,4 @@
-package nqnet
+package nqrelay
 
 import (
 	"net/http/httptest"

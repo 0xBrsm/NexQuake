@@ -6,25 +6,36 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-
-	"github.com/0xBrsm/NexQuake/nexus/internal/nqnet"
 )
+
+// Session is the relay connection interface used by the admin subsystem.
+// nqrelay.Relay satisfies this interface.
+type Session interface {
+	IsAdmin() bool
+	PromoteAdmin()
+	SendAdminReply(msg string)
+	SourceIP() string
+	VirtualClientIP() string
+	ClientIP() [4]byte
+	SourceKey() string
+	Close()
+}
 
 const defaultServerTailLines = 10
 
 // HandleAdminFrame processes an incoming admin (port 0) frame from a WebSocket client.
-func HandleAdminFrame(r *nqnet.Router, payload []byte, auth *Auth, env *Env) {
+func HandleAdminFrame(r Session, payload []byte, auth *Auth, env *Env) {
 	HandleAdminFrameWithIdentityAndPromotionHook(r, payload, auth, env, "", nil)
 }
 
 // HandleAdminFrameWithPromotionHook is HandleAdminFrame plus an optional
 // callback fired when a non-admin session is promoted via valid rcon_password.
 func HandleAdminFrameWithPromotionHook(
-	r *nqnet.Router,
+	r Session,
 	payload []byte,
 	auth *Auth,
 	env *Env,
-	onPromoted func(*nqnet.Router),
+	onPromoted func(Session),
 ) {
 	HandleAdminFrameWithIdentityAndPromotionHook(r, payload, auth, env, "", onPromoted)
 }
@@ -32,12 +43,12 @@ func HandleAdminFrameWithPromotionHook(
 // HandleAdminFrameWithIdentityAndPromotionHook is HandleAdminFrameWithPromotionHook
 // plus an explicit connection identity label used for command audit echoes.
 func HandleAdminFrameWithIdentityAndPromotionHook(
-	r *nqnet.Router,
+	r Session,
 	payload []byte,
 	auth *Auth,
 	env *Env,
 	identity string,
-	onPromoted func(*nqnet.Router),
+	onPromoted func(Session),
 ) {
 	pw, targetPort, args := splitAdminPayload(payload)
 
@@ -87,7 +98,7 @@ func HandleAdminFrameWithIdentityAndPromotionHook(
 	r.SendAdminReply(reply)
 }
 
-func resolveAdminActorID(identity string, r *nqnet.Router) string {
+func resolveAdminActorID(identity string, r Session) string {
 	identity = strings.TrimSpace(identity)
 	if identity != "" && !strings.EqualFold(identity, "anonymous") {
 		return identity

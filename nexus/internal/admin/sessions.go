@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/0xBrsm/NexQuake/nexus/internal/nqnet"
 	"github.com/0xBrsm/NexQuake/nexus/internal/orch"
+	"github.com/0xBrsm/NexQuake/nexus/nqrelay"
 )
 
 type nexusClientRow struct {
@@ -39,8 +39,8 @@ func hostnameByListenPort(snapshots []orch.ServerSnapshot) map[int]string {
 }
 
 func compareClientIPText(a, b string) int {
-	ipa, oka := nqnet.ParseClientIP(a)
-	ipb, okb := nqnet.ParseClientIP(b)
+	ipa, oka := nqrelay.ParseClientIP(a)
+	ipb, okb := nqrelay.ParseClientIP(b)
 	if oka && okb {
 		return ipa.Compare(ipb)
 	}
@@ -148,7 +148,7 @@ func formatNexusClientList(rows []nexusClientRow) string {
 	return b.String()
 }
 
-func applyServerKickTargets(targets []nqnet.BanTarget, env *Env) (applied int, errs []error) {
+func applyServerKickTargets(targets []nqrelay.BanTarget, env *Env) (applied int, errs []error) {
 	for _, target := range targets {
 		if target.Port < 1 || target.Port > 65535 || strings.TrimSpace(target.VirtualIP) == "" {
 			continue
@@ -162,7 +162,7 @@ func applyServerKickTargets(targets []nqnet.BanTarget, env *Env) (applied int, e
 	return applied, errs
 }
 
-func kickServerTargetByVirtualIP(target nqnet.BanTarget, env *Env) error {
+func kickServerTargetByVirtualIP(target nqrelay.BanTarget, env *Env) error {
 	statusReply, err := env.ExecServerCmd(target.Port, "status", "")
 	if err != nil {
 		return fmt.Errorf("status lookup failed: %w", err)
@@ -180,13 +180,13 @@ func kickServerTargetByVirtualIP(target nqnet.BanTarget, env *Env) error {
 	return nil
 }
 
-func uniqueSortedSourceIPs(routers []*nqnet.Router) []string {
-	if len(routers) == 0 {
+func uniqueSortedSourceIPs(sessions []Session) []string {
+	if len(sessions) == 0 {
 		return nil
 	}
-	seen := make(map[string]struct{}, len(routers))
-	for _, router := range routers {
-		sourceIP := strings.TrimSpace(router.SourceIP())
+	seen := make(map[string]struct{}, len(sessions))
+	for _, s := range sessions {
+		sourceIP := strings.TrimSpace(s.SourceIP())
 		if sourceIP == "" {
 			continue
 		}
@@ -276,28 +276,28 @@ func executeBanByVirtualIP(virtualIP string, env *Env) (string, error) {
 		return "", fmt.Errorf("missing session nqip")
 	}
 
-	routers, targets := env.SnapshotByVIP(virtualIP)
-	if len(routers) == 0 {
+	sessions, targets := env.SnapshotByVIP(virtualIP)
+	if len(sessions) == 0 {
 		return "", fmt.Errorf("unknown active client ip %q", virtualIP)
 	}
-	for _, router := range routers {
-		if router.IsAdmin() {
+	for _, s := range sessions {
+		if s.IsAdmin() {
 			return "", fmt.Errorf("cannot ban admin sessions")
 		}
 	}
 	applied, applyErrs := applyServerKickTargets(targets, env)
-	for _, router := range routers {
-		env.ReserveAndBlock(router.ClientIP(), router.SourceKey())
-		router.Close()
+	for _, s := range sessions {
+		env.ReserveAndBlock(s.ClientIP(), s.SourceKey())
+		s.Close()
 	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "banned %s\n", virtualIP)
-	if sourceIPs := uniqueSortedSourceIPs(routers); len(sourceIPs) > 0 {
+	if sourceIPs := uniqueSortedSourceIPs(sessions); len(sourceIPs) > 0 {
 		fmt.Fprintf(&b, "source ip(s): %s\n", strings.Join(sourceIPs, ", "))
 	}
-	fmt.Fprintf(&b, "disconnected %d session(s)\n", len(routers))
-	fmt.Fprintf(&b, "reserved route identity for %d session(s)\n", len(routers))
+	fmt.Fprintf(&b, "disconnected %d session(s)\n", len(sessions))
+	fmt.Fprintf(&b, "reserved route identity for %d session(s)\n", len(sessions))
 	fmt.Fprintf(&b, "issued server kick to %d target(s)\n", applied)
 	if len(applyErrs) > 0 {
 		msg := applyErrs[0].Error()

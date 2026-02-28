@@ -1,4 +1,4 @@
-package nqnet
+package nqrelay
 
 import (
 	"bytes"
@@ -38,12 +38,12 @@ func TestSessionRegistryStressSimultaneousClients(t *testing.T) {
 			alloc := NewIPAllocator(net.ParseIP(DefaultNQServerIP).To4())
 			sessions := NewSessionRegistry()
 
-			routers, err := spawnStressRouters(tier.clients, alloc, sessions)
+			relays, err := spawnStressRelays(tier.clients, alloc, sessions)
 			if err != nil {
-				t.Fatalf("spawnStressRouters(%d): %v", tier.clients, err)
+				t.Fatalf("spawnStressRelays(%d): %v", tier.clients, err)
 			}
 			t.Cleanup(func() {
-				closeRoutersConcurrently(routers)
+				closeRelaysConcurrently(relays)
 			})
 
 			snapshots := sessions.SnapshotAll()
@@ -66,9 +66,9 @@ func TestSessionRegistryStressSimultaneousClients(t *testing.T) {
 			}
 
 			sample := snapshots[len(snapshots)/2]
-			routersByVIP, targets := sessions.SnapshotByVirtualIP(sample.VirtualIP)
-			if got := len(routersByVIP); got != 1 {
-				t.Fatalf("SnapshotByVirtualIP(%q) routers = %d, want 1", sample.VirtualIP, got)
+			relaysByVIP, targets := sessions.SnapshotByVirtualIP(sample.VirtualIP)
+			if got := len(relaysByVIP); got != 1 {
+				t.Fatalf("SnapshotByVirtualIP(%q) relays = %d, want 1", sample.VirtualIP, got)
 			}
 			if got := len(targets); got != 1 {
 				t.Fatalf("SnapshotByVirtualIP(%q) targets = %d, want 1", sample.VirtualIP, got)
@@ -77,7 +77,7 @@ func TestSessionRegistryStressSimultaneousClients(t *testing.T) {
 				t.Fatalf("target port = %d, want range [26000,26007]", targets[0].Port)
 			}
 
-			closeRoutersConcurrently(routers)
+			closeRelaysConcurrently(relays)
 			if got := len(sessions.SnapshotAll()); got != 0 {
 				t.Fatalf("SnapshotAll() after Close = %d, want 0", got)
 			}
@@ -114,10 +114,10 @@ type udpProbeClientMetrics struct {
 	latencyNanos []int64
 }
 
-func spawnStressRouters(clientCount int, alloc *IPAllocator, sessions *SessionRegistry) ([]*Router, error) {
-	routers := make([]*Router, clientCount)
+func spawnStressRelays(clientCount int, alloc *IPAllocator, sessions *SessionRegistry) ([]*Relay, error) {
+	relays := make([]*Relay, clientCount)
 	if clientCount == 0 {
-		return routers, nil
+		return relays, nil
 	}
 
 	jobs := make(chan int, clientCount)
@@ -144,7 +144,7 @@ func spawnStressRouters(clientCount int, alloc *IPAllocator, sessions *SessionRe
 				}
 
 				ctx, cancel := context.WithCancel(context.Background())
-				router := &Router{
+				relay := &Relay{
 					clientIP:  clientIP,
 					sourceKey: sourceKey,
 					sourceIP:  sourceIP,
@@ -155,9 +155,9 @@ func spawnStressRouters(clientCount int, alloc *IPAllocator, sessions *SessionRe
 					ctx:       ctx,
 					cancel:    cancel,
 				}
-				router.NoteServerRoutePort(26000 + (idx % 8))
-				sessions.track(router)
-				routers[idx] = router
+				relay.NoteServerRoutePort(26000 + (idx % 8))
+				sessions.track(relay)
+				relays[idx] = relay
 			}
 		}()
 	}
@@ -172,20 +172,20 @@ func spawnStressRouters(clientCount int, alloc *IPAllocator, sessions *SessionRe
 
 	for err := range errCh {
 		if err != nil {
-			closeRoutersConcurrently(routers)
+			closeRelaysConcurrently(relays)
 			return nil, err
 		}
 	}
-	return routers, nil
+	return relays, nil
 }
 
-func closeRoutersConcurrently(routers []*Router) {
-	if len(routers) == 0 {
+func closeRelaysConcurrently(relays []*Relay) {
+	if len(relays) == 0 {
 		return
 	}
 
-	jobs := make(chan *Router, len(routers))
-	workers := len(routers)
+	jobs := make(chan *Relay, len(relays))
+	workers := len(relays)
 	if workers > 256 {
 		workers = 256
 	}
@@ -195,16 +195,16 @@ func closeRoutersConcurrently(routers []*Router) {
 	for worker := 0; worker < workers; worker++ {
 		go func() {
 			defer wg.Done()
-			for router := range jobs {
-				if router != nil {
-					router.Close()
+			for relay := range jobs {
+				if relay != nil {
+					relay.Close()
 				}
 			}
 		}()
 	}
 
-	for _, router := range routers {
-		jobs <- router
+	for _, relay := range relays {
+		jobs <- relay
 	}
 	close(jobs)
 	wg.Wait()
@@ -244,7 +244,7 @@ func runFullStackStressTier(t *testing.T, clientCount int) {
 		// Rough estimate:
 		// - one client WS fd
 		// - one server-side accepted WS fd
-		// - one Router UDP fd
+		// - one Relay UDP fd
 		// Plus overhead room for Go runtime/http listener and test process itself.
 		const safetyOverhead = 1024
 		required := uint64(clientCount*3 + safetyOverhead)
@@ -351,10 +351,10 @@ func runFullStackStressTier(t *testing.T, clientCount int) {
 		sourceKey := "stress-fullstack:" + clientID
 		sourceIP := fmt.Sprintf("198.51.100.%d", 1+(len(clientID)%250))
 
-		router, err := NewRouter(conn, sourceKey, sourceIP, "", false, alloc, sessions, FrameDispatch{}, noopLogf, noopLogf)
+		relay, err := NewRelay(conn, sourceKey, sourceIP, "", false, alloc, sessions, FrameDispatch{}, noopLogf, noopLogf)
 		if err != nil {
 			serverErrMu.Lock()
-			serverErrs = append(serverErrs, fmt.Errorf("new router: %w", err))
+			serverErrs = append(serverErrs, fmt.Errorf("new relay: %w", err))
 			serverErrMu.Unlock()
 			_ = conn.Close()
 			return
@@ -369,7 +369,7 @@ func runFullStackStressTier(t *testing.T, clientCount int) {
 		}
 		defer currentSessions.Add(-1)
 
-		router.Run()
+		relay.Run()
 	})
 
 	wsServer := httptest.NewServer(mux)

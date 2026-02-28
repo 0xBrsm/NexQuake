@@ -2,13 +2,12 @@ package admin
 
 import (
 	"context"
-	"net"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/0xBrsm/NexQuake/nexus/internal/nqnet"
 	"github.com/0xBrsm/NexQuake/nexus/internal/orch"
+	"github.com/0xBrsm/NexQuake/nexus/nqrelay"
 )
 
 func integrationEnv() *Env {
@@ -25,8 +24,8 @@ func integrationEnv() *Env {
 		ExecServerCmd:     func(int, string, string) (string, error) { return "", nil },
 		TailNexusLog:      func(int) []string { return nil },
 		Auditf:            func(string, ...any) {},
-		SessionSnapshots:  func() []nqnet.SessionSnapshot { return nil },
-		SnapshotByVIP:     func(string) ([]*nqnet.Router, []nqnet.BanTarget) { return nil, nil },
+		SessionSnapshots:  func() []nqrelay.SessionSnapshot { return nil },
+		SnapshotByVIP:     func(string) ([]Session, []nqrelay.BanTarget) { return nil, nil },
 		ReserveAndBlock:   func([4]byte, string) {},
 	}
 }
@@ -34,9 +33,9 @@ func integrationEnv() *Env {
 func execNexusCommandThroughFrame(t *testing.T, env *Env, cmd string) string {
 	t.Helper()
 
-	r, ch := nqnet.NewTestRouter(true)
+	r := newMockSession(true)
 	HandleAdminFrame(r, []byte("\x000\x00"+cmd), nil, env)
-	return readAdminReply(t, ch)
+	return r.reply()
 }
 
 func TestAdminIntegration_HandleAdminFrame_ServerCommandReturnsOutput(t *testing.T) {
@@ -48,9 +47,9 @@ func TestAdminIntegration_HandleAdminFrame_ServerCommandReturnsOutput(t *testing
 		return "hostname is \"fragfest\"\n", nil
 	}
 
-	r, ch := nqnet.NewTestRouter(true)
+	r := newMockSession(true)
 	HandleAdminFrame(r, []byte("\x0026000\x00hostname"), &Auth{}, env)
-	reply := readAdminReply(t, ch)
+	reply := r.reply()
 	if !strings.Contains(reply, "hostname is \"fragfest\"") {
 		t.Fatalf("expected server console output reply, got %q", reply)
 	}
@@ -62,29 +61,25 @@ func TestAdminIntegration_HandleAdminFrame_ServerCommandReturnsOutput(t *testing
 func TestAdminIntegration_HandleAdminFrame_TargetPortZeroRunsNexusCommand(t *testing.T) {
 	env := integrationEnv()
 
-	r, ch := nqnet.NewTestRouter(true)
+	r := newMockSession(true)
 	HandleAdminFrame(r, []byte("\x000\x00slist"), &Auth{}, env)
-	reply := readAdminReply(t, ch)
+	reply := r.reply()
 	if !strings.HasPrefix(reply, "\n") || !strings.Contains(reply, "No Quake servers found.") {
 		t.Fatalf("expected nexus slist reply, got %q", reply)
 	}
 }
 
 func TestAdminIntegration_HandleAdminFrame_SessionListClientSessions(t *testing.T) {
-	serverIP := parseDefaultServerIP(t)
-	alloc := nqnet.NewIPAllocator(serverIP)
-	sessions := nqnet.NewSessionRegistry()
 	env := integrationEnv()
 	env.ServerSnapshots = func() []orch.ServerSnapshot {
 		return []orch.ServerSnapshot{{ListenPort: 26000, Hostname: "fragfest"}}
 	}
-	env.SessionSnapshots = sessions.SnapshotAll
-	env.SnapshotByVIP = sessions.SnapshotByVirtualIP
-	env.ReserveAndBlock = alloc.ReserveAndBlock
-
-	clientRouter, _ := nqnet.NewTestRouterWith(false, alloc, sessions)
-	clientRouter.NoteServerRoutePort(26000)
-	_, _ = nqnet.NewTestRouterWith(true, alloc, sessions)
+	env.SessionSnapshots = func() []nqrelay.SessionSnapshot {
+		return []nqrelay.SessionSnapshot{
+			{VirtualIP: "127.100.10.1", SourceIP: "198.51.100.10", IsAdmin: false, ActiveServerPort: 26000},
+			{VirtualIP: "127.100.10.2", SourceIP: "198.51.100.11", IsAdmin: true},
+		}
+	}
 
 	reply := execNexusCommandThroughFrame(t, env, "session list")
 	if !strings.Contains(reply, "#   Role") || !strings.Contains(reply, "User") || !strings.Contains(reply, "Server") || !strings.Contains(reply, "Port") {
@@ -121,39 +116,50 @@ func TestAdminIntegration_HandleAdminFrame_RemoveDispatchesForStoppedServer(t *t
 }
 
 func TestAdminIntegration_HandleAdminFrame_SessionBanDisconnectsAndBlocksIdentity(t *testing.T) {
-	serverIP := parseDefaultServerIP(t)
-	alloc := nqnet.NewIPAllocator(serverIP)
-	sessions := nqnet.NewSessionRegistry()
-	env := integrationEnv()
-	env.SessionSnapshots = sessions.SnapshotAll
-	env.SnapshotByVIP = sessions.SnapshotByVirtualIP
-	env.ReserveAndBlock = alloc.ReserveAndBlock
+	clientMock := newMockSession(false)
+	vip := clientMock.vip
 
-	clientRouter, _ := nqnet.NewTestRouterWith(false, alloc, sessions)
-	vip := clientRouter.VirtualClientIP()
+	env := integrationEnv()
+	env.SessionSnapshots = func() []nqrelay.SessionSnapshot {
+		return []nqrelay.SessionSnapshot{
+			{VirtualIP: vip, SourceIP: clientMock.sourceIP, IsAdmin: false},
+		}
+	}
+	env.SnapshotByVIP = func(lookupVIP string) ([]Session, []nqrelay.BanTarget) {
+		if lookupVIP == vip {
+			return []Session{clientMock}, nil
+		}
+		return nil, nil
+	}
 
 	reply := execNexusCommandThroughFrame(t, env, "session ban 1")
 	if !strings.Contains(reply, "banned "+vip) {
 		t.Fatalf("expected ban confirmation, got %q", reply)
 	}
-	if !strings.Contains(reply, "source ip(s): 198.51.100.10") {
+	if !strings.Contains(reply, "source ip(s): "+clientMock.sourceIP) {
 		t.Fatalf("expected ban output to include source ip, got %q", reply)
 	}
-	if routers, _ := sessions.SnapshotByVirtualIP(vip); len(routers) != 0 {
-		t.Fatalf("expected session to be disconnected after ban")
+	if !clientMock.closed {
+		t.Fatalf("expected session to be closed after ban")
 	}
 }
 
 func TestAdminIntegration_HandleAdminFrame_SessionBanAdminRejected(t *testing.T) {
-	alloc := nqnet.NewIPAllocator(parseDefaultServerIP(t))
-	sessions := nqnet.NewSessionRegistry()
-	env := integrationEnv()
-	env.SessionSnapshots = sessions.SnapshotAll
-	env.SnapshotByVIP = sessions.SnapshotByVirtualIP
-	env.ReserveAndBlock = alloc.ReserveAndBlock
+	adminMock := newMockSession(true)
+	vip := adminMock.vip
 
-	adminRouter, _ := nqnet.NewTestRouterWith(true, alloc, sessions)
-	vip := adminRouter.VirtualClientIP()
+	env := integrationEnv()
+	env.SessionSnapshots = func() []nqrelay.SessionSnapshot {
+		return []nqrelay.SessionSnapshot{
+			{VirtualIP: vip, SourceIP: adminMock.sourceIP, IsAdmin: true},
+		}
+	}
+	env.SnapshotByVIP = func(lookupVIP string) ([]Session, []nqrelay.BanTarget) {
+		if lookupVIP == vip {
+			return []Session{adminMock}, nil
+		}
+		return nil, nil
+	}
 
 	reply := execNexusCommandThroughFrame(t, env, "session ban 1")
 	if !strings.Contains(reply, "cannot ban admin sessions") {
@@ -162,16 +168,7 @@ func TestAdminIntegration_HandleAdminFrame_SessionBanAdminRejected(t *testing.T)
 	if !strings.Contains(reply, "\nusage: rcon session ban <idx>") {
 		t.Fatalf("expected ban usage helper text, got %q", reply)
 	}
-	if routers, _ := sessions.SnapshotByVirtualIP(vip); len(routers) != 1 {
+	if adminMock.closed {
 		t.Fatalf("expected admin session to remain connected after rejected ban")
 	}
-}
-
-func parseDefaultServerIP(t *testing.T) net.IP {
-	t.Helper()
-	ip := net.ParseIP(nqnet.DefaultNQServerIP).To4()
-	if ip == nil {
-		t.Fatalf("failed to parse default server ip")
-	}
-	return ip
 }

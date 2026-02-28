@@ -1,4 +1,4 @@
-package nqnet
+package nqrelay
 
 import (
 	"encoding/binary"
@@ -23,20 +23,20 @@ type SessionSnapshot struct {
 	ActiveServerPort int
 }
 
-// SessionRegistry tracks active Router→virtual-IP associations.
+// SessionRegistry tracks active Relay→virtual-IP associations.
 type SessionRegistry struct {
-	mu          sync.Mutex
-	byVirtualIP map[uint32]map[*Router]struct{}
+	mu          sync.RWMutex
+	byVirtualIP map[uint32]map[*Relay]struct{}
 }
 
 // NewSessionRegistry creates an empty session registry.
 func NewSessionRegistry() *SessionRegistry {
-	return &SessionRegistry{byVirtualIP: make(map[uint32]map[*Router]struct{})}
+	return &SessionRegistry{byVirtualIP: make(map[uint32]map[*Relay]struct{})}
 }
 
-// track registers a router in the registry.
-func (r *SessionRegistry) track(router *Router) {
-	virtualIP, ok := virtualIPKeyFromRouter(router)
+// track registers a relay in the registry.
+func (r *SessionRegistry) track(relay *Relay) {
+	virtualIP, ok := virtualIPKeyFromRelay(relay)
 	if !ok {
 		return
 	}
@@ -46,15 +46,15 @@ func (r *SessionRegistry) track(router *Router) {
 
 	set := r.byVirtualIP[virtualIP]
 	if set == nil {
-		set = make(map[*Router]struct{})
+		set = make(map[*Relay]struct{})
 		r.byVirtualIP[virtualIP] = set
 	}
-	set[router] = struct{}{}
+	set[relay] = struct{}{}
 }
 
-// untrack removes a router from the registry.
-func (r *SessionRegistry) untrack(router *Router) {
-	virtualIP, ok := virtualIPKeyFromRouter(router)
+// untrack removes a relay from the registry.
+func (r *SessionRegistry) untrack(relay *Relay) {
+	virtualIP, ok := virtualIPKeyFromRelay(relay)
 	if !ok {
 		return
 	}
@@ -66,87 +66,72 @@ func (r *SessionRegistry) untrack(router *Router) {
 	if len(set) == 0 {
 		return
 	}
-	delete(set, router)
+	delete(set, relay)
 	if len(set) == 0 {
 		delete(r.byVirtualIP, virtualIP)
 	}
 }
 
-// SnapshotByVirtualIP returns all routers and their ban targets for a virtual IP.
-func (r *SessionRegistry) SnapshotByVirtualIP(virtualIP string) (routers []*Router, targets []BanTarget) {
+// SnapshotByVirtualIP returns all relays and their ban targets for a virtual IP.
+func (r *SessionRegistry) SnapshotByVirtualIP(virtualIP string) (relays []*Relay, targets []BanTarget) {
 	virtualIPKey, ok := parseVirtualIPKey(virtualIP)
 	if !ok {
 		return nil, nil
 	}
 
-	r.mu.Lock()
+	vip := virtualIPStringFromKey(virtualIPKey)
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	set := r.byVirtualIP[virtualIPKey]
 	if len(set) == 0 {
-		r.mu.Unlock()
 		return nil, nil
 	}
-	routers = make([]*Router, 0, len(set))
-	for router := range set {
-		routers = append(routers, router)
-	}
-	r.mu.Unlock()
 
-	vip := virtualIPStringFromKey(virtualIPKey)
-	targets = make([]BanTarget, 0, len(routers))
-	for _, router := range routers {
-		port := router.activeServerPort()
-		if port < 1 || port > 65535 {
+	relays = make([]*Relay, 0, len(set))
+	targets = make([]BanTarget, 0, len(set))
+	for relay := range set {
+		relays = append(relays, relay)
+		port := relay.activeServerPort()
+		if !isValidServerPort(port) {
 			continue
 		}
 		targets = append(targets, BanTarget{Port: port, VirtualIP: vip})
 	}
 
-	return routers, sortedUniqueTargets(targets)
+	return relays, sortedUniqueTargets(targets)
 }
 
 // SnapshotAll returns a snapshot of every tracked session.
 func (r *SessionRegistry) SnapshotAll() []SessionSnapshot {
-	type sessionGroup struct {
-		virtualIPKey uint32
-		routers      []*Router
-	}
-
-	r.mu.Lock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	if len(r.byVirtualIP) == 0 {
-		r.mu.Unlock()
 		return nil
 	}
 
-	groups := make([]sessionGroup, 0, len(r.byVirtualIP))
-	routerCount := 0
-	for virtualIPKey, set := range r.byVirtualIP {
-		routers := make([]*Router, 0, len(set))
-		for router := range set {
-			routers = append(routers, router)
-		}
-		routerCount += len(routers)
-		groups = append(groups, sessionGroup{virtualIPKey: virtualIPKey, routers: routers})
+	total := 0
+	for _, set := range r.byVirtualIP {
+		total += len(set)
 	}
-	r.mu.Unlock()
-
-	out := make([]SessionSnapshot, 0, routerCount)
-	for _, group := range groups {
-		virtualIP := virtualIPStringFromKey(group.virtualIPKey)
-		for _, router := range group.routers {
+	out := make([]SessionSnapshot, 0, total)
+	for virtualIPKey, set := range r.byVirtualIP {
+		virtualIP := virtualIPStringFromKey(virtualIPKey)
+		for relay := range set {
 			out = append(out, SessionSnapshot{
 				VirtualIP:        virtualIP,
-				SourceIP:         router.SourceIP(),
-				UserID:           router.UserID(),
-				IsAdmin:          router.IsAdmin(),
-				ActiveServerPort: router.activeServerPort(),
+				SourceIP:         relay.SourceIP(),
+				UserID:           relay.UserID(),
+				IsAdmin:          relay.IsAdmin(),
+				ActiveServerPort: relay.activeServerPort(),
 			})
 		}
 	}
 	return out
 }
 
-func virtualIPKeyFromRouter(router *Router) (uint32, bool) {
-	ip4 := router.ClientIP()
+func virtualIPKeyFromRelay(relay *Relay) (uint32, bool) {
+	ip4 := relay.ClientIP()
 	if ip4[0] == 0 {
 		return 0, false
 	}

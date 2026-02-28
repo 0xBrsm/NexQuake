@@ -1,4 +1,4 @@
-package nqnet
+package nqrelay
 
 import (
 	"encoding/binary"
@@ -20,7 +20,7 @@ const maxClientIPProbeAttempts = 4096
 type IPAllocator struct {
 	serverIP net.IP
 
-	mu            sync.Mutex
+	mu            sync.RWMutex
 	used          map[uint32]struct{}
 	reserved      map[uint32]struct{}
 	blockedSource map[string]struct{}
@@ -38,31 +38,24 @@ func NewIPAllocator(serverIP net.IP) *IPAllocator {
 
 // alloc allocates a unique virtual IP for the given source key.
 func (a *IPAllocator) alloc(sourceKey string) ([4]byte, error) {
-	ip4, ok := a.tryAlloc(sourceKey)
-	if !ok {
-		return [4]byte{}, fmt.Errorf("failed to allocate relay source ip for %q", sourceKey)
+	sourceKey = normalizeSourceKey(sourceKey)
+	if sourceKey == "" {
+		sourceKey = "unknown"
 	}
-	return ip4, nil
-}
 
-func (a *IPAllocator) tryAlloc(sourceKey string) ([4]byte, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	base := normalizeSourceKey(sourceKey)
-	if base == "" {
-		base = "unknown"
-	}
-	if _, blocked := a.blockedSource[base]; blocked {
-		return [4]byte{}, false
+	if _, blocked := a.blockedSource[sourceKey]; blocked {
+		return [4]byte{}, fmt.Errorf("failed to allocate relay source ip for %q", sourceKey)
 	}
 
 	for probe := 0; probe < maxClientIPProbeAttempts; probe++ {
-		seed := "NQ:client-ip:v1|" + base + "|" + strconv.Itoa(probe)
+		seed := "NQ:client-ip:v1|" + sourceKey + "|" + strconv.Itoa(probe)
 		sum := fnv64aSum(seed)
 
 		candidate := [4]byte{127, byte(sum >> 56), byte(sum >> 48), byte(sum >> 40)}
-		if a.serverIP != nil &&
+		if len(a.serverIP) == net.IPv4len &&
 			candidate[0] == a.serverIP[0] &&
 			candidate[1] == a.serverIP[1] &&
 			candidate[2] == a.serverIP[2] &&
@@ -74,15 +67,15 @@ func (a *IPAllocator) tryAlloc(sourceKey string) ([4]byte, bool) {
 		if _, reserved := a.reserved[key]; reserved {
 			continue
 		}
-		if _, exists := a.used[key]; exists {
+		if _, used := a.used[key]; used {
 			continue
 		}
 
 		a.used[key] = struct{}{}
-		return candidate, true
+		return candidate, nil
 	}
 
-	return [4]byte{}, false
+	return [4]byte{}, fmt.Errorf("failed to allocate relay source ip for %q", sourceKey)
 }
 
 func fnv64aSum(text string) uint64 {
@@ -128,9 +121,9 @@ func (a *IPAllocator) IsBlocked(sourceKey string) bool {
 	if sourceKey == "" {
 		return false
 	}
-	a.mu.Lock()
+	a.mu.RLock()
 	_, blocked := a.blockedSource[sourceKey]
-	a.mu.Unlock()
+	a.mu.RUnlock()
 	return blocked
 }
 
@@ -146,20 +139,17 @@ func ParseClientIP(raw string) (netip.Addr, bool) {
 		return netip.Addr{}, false
 	}
 
-	if comma := strings.Index(value, ","); comma >= 0 {
+	if comma := strings.IndexByte(value, ','); comma >= 0 {
 		value = strings.TrimSpace(value[:comma])
 	}
-
 	if k, v, ok := strings.Cut(value, "="); ok && strings.EqualFold(strings.TrimSpace(k), "for") {
 		value = strings.TrimSpace(v)
 	}
-
-	value = strings.Trim(value, "\"")
+	value = strings.Trim(strings.TrimSpace(value), "\"")
 	if host, _, err := net.SplitHostPort(value); err == nil {
 		value = host
 	}
-
-	ip, err := netip.ParseAddr(value)
+	ip, err := netip.ParseAddr(strings.Trim(value, "[]"))
 	if err != nil {
 		return netip.Addr{}, false
 	}

@@ -130,11 +130,17 @@ func (m *ServerManager) registerPoolSeed(rec *serverRecord) error {
 		return nil
 	}
 
+	listenPort := recordListenPort(rec)
+	if listenPort < 1 || listenPort > 65535 {
+		listenPort = 0
+	}
+
 	pool := &serverPool{
 		PoolID:          m.nextPoolID,
 		Line:            rec.Launch.Line,
 		TemplateLaunch:  cloneServerLaunch(rec.Launch),
-		Autoscales: true,
+		Autoscales:      true,
+		ListenPort:      listenPort,
 		BackendServerIDs: []int{rec.id},
 		backendState: map[int]*poolBackendState{
 			rec.id: newPoolBackendState(poolBackendLifecycleWarming),
@@ -145,6 +151,9 @@ func (m *ServerManager) registerPoolSeed(rec *serverRecord) error {
 	}
 	m.nextPoolID++
 	m.poolsByID[pool.PoolID] = pool
+	if pool.ListenPort > 0 {
+		m.poolByListenPort[pool.ListenPort] = pool
+	}
 	m.poolByServerID[rec.id] = pool
 	m.refreshPoolSnapshotLocked(pool)
 
