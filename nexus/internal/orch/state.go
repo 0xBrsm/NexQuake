@@ -75,18 +75,31 @@ type serverStateUpdate struct {
 	hasObservedInfo    bool
 }
 
-// ServerSnapshot is a point-in-time view of a server, used for display.
+// ServerSnapshot is a point-in-time view of a server pool, used for display
+// and admin API responses.
 type ServerSnapshot struct {
-	Line       int
+	// Line is the 0-based index of the servers.ini entry that owns this pool.
+	Line int
+	// ListenPort is the UDP port the server is (or was last) listening on.
+	// Zero if the port has not yet been resolved.
 	ListenPort int
-	GameDir    string
-	Hostname   string
-	MapName    string
-	Players    byte
+	// GameDir is the active game directory (first entry in the search path).
+	GameDir string
+	// Hostname is the server's self-reported hostname from the last CCREP.
+	Hostname string
+	// MapName is the current map from the last CCREP.
+	MapName string
+	// Players is the current player count from the last CCREP.
+	Players byte
+	// MaxPlayers is the server capacity from the last CCREP.
 	MaxPlayers byte
-	State      string
-	PID        int
-	LastError  string
+	// State is one of "stopped", "starting", "running", or "crashed".
+	State string
+	// PID is the OS process ID of the running server.
+	// Zero when the server is not running, or when the pool has multiple backends.
+	PID int
+	// LastError holds the most recent launch or stop error, if any.
+	LastError string
 }
 
 func cloneServerLaunch(launch serverLaunch) serverLaunch {

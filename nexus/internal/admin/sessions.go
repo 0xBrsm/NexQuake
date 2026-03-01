@@ -3,13 +3,26 @@ package admin
 import (
 	"cmp"
 	"fmt"
+	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
-
-	"github.com/0xBrsm/NexQuake/nexus/internal/orch"
-	"github.com/0xBrsm/NexQuake/nexus/nqrelay"
 )
+
+// SessionInfo is a point-in-time view of a single client session.
+type SessionInfo struct {
+	VirtualIP        string // NQ virtual IP assigned to this session.
+	SourceIP         string // Real client IP (possibly from a trusted proxy header).
+	UserID           string // Authenticated identity string, or empty/anonymous.
+	IsAdmin          bool   // Whether the session holds admin privileges.
+	ActiveServerPort int    // Listen port of the server the client is connected to, or 0.
+}
+
+// BanTarget identifies a client to kick on a specific game server port.
+type BanTarget struct {
+	Port      int    // Listen port of the target game server.
+	VirtualIP string // NQ virtual IP of the player to kick.
+}
 
 type nexusClientRow struct {
 	NQIP    string
@@ -20,7 +33,7 @@ type nexusClientRow struct {
 	Server  string
 }
 
-func hostnameByListenPort(snapshots []orch.ServerSnapshot) map[int]string {
+func hostnameByListenPort(snapshots []ServerInfo) map[int]string {
 	out := make(map[int]string, len(snapshots))
 	for _, snap := range snapshots {
 		if snap.ListenPort < 1 || snap.ListenPort > 65535 {
@@ -39,9 +52,9 @@ func hostnameByListenPort(snapshots []orch.ServerSnapshot) map[int]string {
 }
 
 func compareClientIPText(a, b string) int {
-	ipa, oka := nqrelay.ParseClientIP(a)
-	ipb, okb := nqrelay.ParseClientIP(b)
-	if oka && okb {
+	ipa, oka := netip.ParseAddr(a)
+	ipb, okb := netip.ParseAddr(b)
+	if oka == nil && okb == nil {
 		return ipa.Compare(ipb)
 	}
 	return cmp.Compare(a, b)
@@ -66,10 +79,7 @@ func queryNexusClientRows(env *Env) []nexusClientRow {
 		if session.ActiveServerPort >= 1 && session.ActiveServerPort <= 65535 {
 			if resolvedServer, ok := serverByPort[session.ActiveServerPort]; ok {
 				port = session.ActiveServerPort
-				server = strings.TrimSpace(resolvedServer)
-				if server == "" {
-					server = "UNNAMED"
-				}
+				server = resolvedServer // already normalized to "UNNAMED" by hostnameByListenPort
 			} else if env.IsManagedListenPort != nil && env.IsManagedListenPort(session.ActiveServerPort) {
 				port = session.ActiveServerPort
 			}
@@ -148,7 +158,7 @@ func formatNexusClientList(rows []nexusClientRow) string {
 	return b.String()
 }
 
-func applyServerKickTargets(targets []nqrelay.BanTarget, env *Env) (applied int, errs []error) {
+func applyServerKickTargets(targets []BanTarget, env *Env) (applied int, errs []error) {
 	for _, target := range targets {
 		if target.Port < 1 || target.Port > 65535 || strings.TrimSpace(target.VirtualIP) == "" {
 			continue
@@ -162,7 +172,7 @@ func applyServerKickTargets(targets []nqrelay.BanTarget, env *Env) (applied int,
 	return applied, errs
 }
 
-func kickServerTargetByVirtualIP(target nqrelay.BanTarget, env *Env) error {
+func kickServerTargetByVirtualIP(target BanTarget, env *Env) error {
 	statusReply, err := env.ExecServerCmd(target.Port, "status", "")
 	if err != nil {
 		return fmt.Errorf("status lookup failed: %w", err)
@@ -349,12 +359,17 @@ func execSessionCommand(cmdArgs []string, env *Env) (string, error) {
 	}
 }
 
+// StatusPlayer holds the server-reported slot information for a single player,
+// as extracted from a Quake `status` command reply.
 type StatusPlayer struct {
-	Slot    int
-	Summary string
-	Address string
+	Slot    int    // Player slot number from the status line (e.g. "#1").
+	Summary string // Full "#N ..." status line for the player.
+	Address string // Address line following the slot line, e.g. "127.x.x.x:port".
 }
 
+// StatusPlayerForVirtualIP scans a Quake `status` reply for the player whose
+// address line starts with virtualIP. It returns the matching [StatusPlayer]
+// and true, or the zero value and false if no match is found.
 func StatusPlayerForVirtualIP(statusReply, virtualIP string) (StatusPlayer, bool) {
 	virtualIP = strings.TrimSpace(virtualIP)
 	if virtualIP == "" {

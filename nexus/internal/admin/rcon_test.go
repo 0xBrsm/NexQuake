@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/0xBrsm/NexQuake/nexus/internal/orch"
-	"github.com/0xBrsm/NexQuake/nexus/nqrelay"
 )
 
 type mockSession struct {
@@ -198,8 +196,8 @@ func TestResolveAdminActorID_FallsBackToSourceIP(t *testing.T) {
 
 func TestExecNexusCommand_Help(t *testing.T) {
 	env := &Env{
-		ServerSnapshots:  func() []orch.ServerSnapshot { return nil },
-		SessionSnapshots: func() []nqrelay.SessionSnapshot { return nil },
+		ServerSnapshots:  func() []ServerInfo { return nil },
+		SessionSnapshots: func() []SessionInfo { return nil },
 	}
 	reply, err := execNexusCommand("help", env)
 	if err != nil {
@@ -215,8 +213,8 @@ func TestExecNexusCommand_Help(t *testing.T) {
 
 func TestExecNexusCommand_EmptyCommandReturnsHelp(t *testing.T) {
 	env := &Env{
-		ServerSnapshots:  func() []orch.ServerSnapshot { return nil },
-		SessionSnapshots: func() []nqrelay.SessionSnapshot { return nil },
+		ServerSnapshots:  func() []ServerInfo { return nil },
+		SessionSnapshots: func() []SessionInfo { return nil },
 	}
 	reply, err := execNexusCommand("", env)
 	if err != nil {
@@ -229,8 +227,8 @@ func TestExecNexusCommand_EmptyCommandReturnsHelp(t *testing.T) {
 
 func TestExecNexusCommand_UnknownCommandReturnsHelp(t *testing.T) {
 	env := &Env{
-		ServerSnapshots:  func() []orch.ServerSnapshot { return nil },
-		SessionSnapshots: func() []nqrelay.SessionSnapshot { return nil },
+		ServerSnapshots:  func() []ServerInfo { return nil },
+		SessionSnapshots: func() []SessionInfo { return nil },
 	}
 	reply, err := execNexusCommand("wat", env)
 	if err != nil {
@@ -243,12 +241,12 @@ func TestExecNexusCommand_UnknownCommandReturnsHelp(t *testing.T) {
 
 func TestExecNexusCommand_Slist(t *testing.T) {
 	env := &Env{
-		ServerSnapshots: func() []orch.ServerSnapshot {
-			return []orch.ServerSnapshot{
-				{Line: 0, ListenPort: 26000, GameDir: "id1", Hostname: "fragfest", MapName: "dm6", Players: 1, MaxPlayers: 16, State: "stopped"},
+		ServerSnapshots: func() []ServerInfo {
+			return []ServerInfo{
+				{ListenPort: 26000, GameDir: "id1", Hostname: "fragfest", Players: 1, MaxPlayers: 16, State: "stopped"},
 			}
 		},
-		SessionSnapshots: func() []nqrelay.SessionSnapshot { return nil },
+		SessionSnapshots: func() []SessionInfo { return nil },
 	}
 
 	reply, err := execNexusCommand("slist", env)
@@ -276,8 +274,8 @@ func TestExecNexusCommand_Slist(t *testing.T) {
 
 func TestExecNexusCommand_SessionListNoClients(t *testing.T) {
 	env := &Env{
-		ServerSnapshots:  func() []orch.ServerSnapshot { return nil },
-		SessionSnapshots: func() []nqrelay.SessionSnapshot { return nil },
+		ServerSnapshots:  func() []ServerInfo { return nil },
+		SessionSnapshots: func() []SessionInfo { return nil },
 	}
 	reply, err := execNexusCommand("session list", env)
 	if err != nil {
@@ -290,7 +288,7 @@ func TestExecNexusCommand_SessionListNoClients(t *testing.T) {
 
 func TestExecNexusCommand_InvalidTargetShowsCommandUsage(t *testing.T) {
 	env := &Env{
-		ServerSnapshots: func() []orch.ServerSnapshot { return nil },
+		ServerSnapshots: func() []ServerInfo { return nil },
 		StartServer:     func(target int) error { return nil },
 	}
 	_, err := execNexusCommand("start not-a-number", env)
@@ -307,8 +305,8 @@ func TestExecNexusCommand_InvalidTargetShowsCommandUsage(t *testing.T) {
 
 func TestExecNexusCommand_AllTargetAccepted(t *testing.T) {
 	env := &Env{
-		ServerSnapshots:  func() []orch.ServerSnapshot { return nil },
-		SessionSnapshots: func() []nqrelay.SessionSnapshot { return nil },
+		ServerSnapshots:  func() []ServerInfo { return nil },
+		SessionSnapshots: func() []SessionInfo { return nil },
 		StartServer:      func(target int) error { return nil },
 		StartServersAll:  func() error { return nil },
 	}
@@ -323,7 +321,7 @@ func TestExecNexusCommand_AllTargetAccepted(t *testing.T) {
 
 func TestExecNexusCommand_LaunchMissingBinaryShowsUsage(t *testing.T) {
 	env := &Env{
-		ServerSnapshots: func() []orch.ServerSnapshot { return nil },
+		ServerSnapshots: func() []ServerInfo { return nil },
 	}
 	_, err := execNexusCommand("launch", env)
 	if err == nil {
@@ -336,8 +334,8 @@ func TestExecNexusCommand_LaunchMissingBinaryShowsUsage(t *testing.T) {
 
 func TestExecNexusCommand_SessionBanInvalidIndexShowsUsage(t *testing.T) {
 	env := &Env{
-		ServerSnapshots:  func() []orch.ServerSnapshot { return nil },
-		SessionSnapshots: func() []nqrelay.SessionSnapshot { return nil },
+		ServerSnapshots:  func() []ServerInfo { return nil },
+		SessionSnapshots: func() []SessionInfo { return nil },
 	}
 	_, err := execNexusCommand("session ban not-a-number", env)
 	if err == nil {
@@ -353,13 +351,13 @@ func TestExecNexusCommand_SessionBanInvalidIndexShowsUsage(t *testing.T) {
 
 func TestExecNexusCommand_SessionInfoByIndex(t *testing.T) {
 	env := &Env{
-		ServerSnapshots: func() []orch.ServerSnapshot {
-			return []orch.ServerSnapshot{
+		ServerSnapshots: func() []ServerInfo {
+			return []ServerInfo{
 				{ListenPort: 26000, Hostname: "fragfest"},
 			}
 		},
-		SessionSnapshots: func() []nqrelay.SessionSnapshot {
-			return []nqrelay.SessionSnapshot{
+		SessionSnapshots: func() []SessionInfo {
+			return []SessionInfo{
 				{
 					VirtualIP:        "127.100.10.1",
 					SourceIP:         "198.51.100.10",
@@ -398,13 +396,13 @@ func TestExecNexusCommand_SessionInfoByIndex(t *testing.T) {
 func TestExecNexusCommand_SessionInfoUnknownManagedPortTreatedDisconnected(t *testing.T) {
 	statusLookups := 0
 	env := &Env{
-		ServerSnapshots: func() []orch.ServerSnapshot {
-			return []orch.ServerSnapshot{
+		ServerSnapshots: func() []ServerInfo {
+			return []ServerInfo{
 				{ListenPort: 26000, Hostname: "fragfest"},
 			}
 		},
-		SessionSnapshots: func() []nqrelay.SessionSnapshot {
-			return []nqrelay.SessionSnapshot{
+		SessionSnapshots: func() []SessionInfo {
+			return []SessionInfo{
 				{
 					VirtualIP:        "127.100.10.1",
 					SourceIP:         "198.51.100.10",
@@ -476,7 +474,7 @@ func TestApplyServerKickTargets_UsesKickByResolvedStatusSlot(t *testing.T) {
 		},
 	}
 
-	applied, errs := applyServerKickTargets([]nqrelay.BanTarget{
+	applied, errs := applyServerKickTargets([]BanTarget{
 		{Port: 26000, VirtualIP: "127.100.10.1"},
 	}, env)
 

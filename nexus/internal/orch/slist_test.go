@@ -1,19 +1,69 @@
 package orch
 
 import (
-	"bytes"
+	"encoding/binary"
 	"testing"
 )
 
-func readSlistCString(buf []byte, start int) (string, int, bool) {
-	if start < 0 || start >= len(buf) {
-		return "", 0, false
+func TestBuildCCREQServerInfo(t *testing.T) {
+	req := buildCCREQServerInfo()
+	if len(req) < 12 {
+		t.Fatalf("buildCCREQServerInfo() produced short packet: %d", len(req))
 	}
-	n := bytes.IndexByte(buf[start:], 0)
-	if n < 0 {
-		return "", 0, false
+
+	control := binary.BigEndian.Uint32(req[:4])
+	wantControl := netFlagCtl | uint32(len(req))
+	if control != wantControl {
+		t.Fatalf("control header = %#x, want %#x", control, wantControl)
 	}
-	return string(buf[start : start+n]), start + n + 1, true
+	if req[4] != ccreqServerInfo {
+		t.Fatalf("request type = %#x, want %#x", req[4], ccreqServerInfo)
+	}
+
+	wantTail := []byte{'Q', 'U', 'A', 'K', 'E', 0, netProtocolVersion}
+	for i := range wantTail {
+		if req[5+i] != wantTail[i] {
+			t.Fatalf("tail[%d] = %#x, want %#x", i, req[5+i], wantTail[i])
+		}
+	}
+}
+
+func TestParseCCREPServerInfo(t *testing.T) {
+	packet := make([]byte, 0, 64)
+	packet = append(packet, 0, 0, 0, 0) // header placeholder
+	packet = append(packet, ccrepServerInfo)
+	packet = appendCString(packet, "127.0.0.1:26000")
+	packet = appendCString(packet, "fragfest")
+	packet = appendCString(packet, "dm6")
+	packet = append(packet, 12, 16, netProtocolVersion)
+	binary.BigEndian.PutUint32(packet[:4], netFlagCtl|uint32(len(packet)))
+
+	hostname, mapName, players, maxPlayers, proto, ok := parseCCREPServerInfo(packet)
+	if !ok {
+		t.Fatalf("parseCCREPServerInfo() returned ok=false for valid packet")
+	}
+	if hostname != "fragfest" || mapName != "dm6" {
+		t.Fatalf("unexpected host/map: got %q/%q", hostname, mapName)
+	}
+	if players != 12 || maxPlayers != 16 || proto != netProtocolVersion {
+		t.Fatalf("unexpected counters/proto: got players=%d max=%d proto=%d", players, maxPlayers, proto)
+	}
+}
+
+func TestParseCCREPServerInfo_ProtocolMismatch(t *testing.T) {
+	packet := make([]byte, 0, 64)
+	packet = append(packet, 0, 0, 0, 0)
+	packet = append(packet, ccrepServerInfo)
+	packet = appendCString(packet, "127.0.0.1:26000")
+	packet = appendCString(packet, "fragfest")
+	packet = appendCString(packet, "dm6")
+	packet = append(packet, 1, 16, netProtocolVersion+1)
+	binary.BigEndian.PutUint32(packet[:4], netFlagCtl|uint32(len(packet)))
+
+	_, _, _, _, _, ok := parseCCREPServerInfo(packet)
+	if ok {
+		t.Fatalf("parseCCREPServerInfo() returned ok=true for mismatched protocol")
+	}
 }
 
 func TestBuildCCREPServerListEncodesU16Fields(t *testing.T) {
@@ -37,22 +87,22 @@ func TestBuildCCREPServerListEncodesU16Fields(t *testing.T) {
 	}
 
 	i := 6
-	portText, next, ok := readSlistCString(packet, i)
+	portText, next, ok := readCString(packet, i)
 	if !ok || portText != "26000" {
 		t.Fatalf("port text = %q, want 26000", portText)
 	}
 	i = next
-	hostname, next, ok := readSlistCString(packet, i)
+	hostname, next, ok := readCString(packet, i)
 	if !ok || hostname != "fragfest" {
 		t.Fatalf("hostname = %q, want fragfest", hostname)
 	}
 	i = next
-	mapName, next, ok := readSlistCString(packet, i)
+	mapName, next, ok := readCString(packet, i)
 	if !ok || mapName != "dm6" {
 		t.Fatalf("map = %q, want dm6", mapName)
 	}
 	i = next
-	gameDir, next, ok := readSlistCString(packet, i)
+	gameDir, next, ok := readCString(packet, i)
 	if !ok || gameDir != "id1" {
 		t.Fatalf("gamedir = %q, want id1", gameDir)
 	}
@@ -91,7 +141,7 @@ func TestBuildCCREPServerListDefaultsInstancesToOne(t *testing.T) {
 	}
 	i := 6
 	for step := 0; step < 4; step++ {
-		_, next, ok := readSlistCString(packet, i)
+		_, next, ok := readCString(packet, i)
 		if !ok {
 			t.Fatalf("missing cstring %d", step)
 		}

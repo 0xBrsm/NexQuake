@@ -1,99 +1,64 @@
-// Package nqrelay implements the network/routing layer for NexQuake Nexus.
+// Package nqrelay implements a WebSocket-to-UDP relay for NQ (NetQuake)
+// dedicated game servers.
 //
-// It provides the WebSocket-to-UDP relay (Relay), the Quake wire-protocol
-// codec (CCREQ/CCREP), virtual-IP allocation, and the client session registry.
+// Each connected WebSocket client gets one [Relay]. The relay binds a UDP
+// socket to a unique loopback virtual IP (allocated by [IPAllocator]) and
+// forwards binary frames in both directions between the browser and the server.
+//
+// # Wire format
+//
+// Every WebSocket message is a binary frame with a two-byte big-endian port
+// header followed by the payload:
+//
+//	byte 0    byte 1    byte 2 …
+//	+---------+---------+----------+
+//	| port (uint16, BE) | payload  |
+//	+---------+---------+----------+
+//
+// Port 0 is the control channel; non-zero values are UDP game-server ports.
+// Control frames are handed to [FrameDispatch.HandleControlFrame] instead of
+// being forwarded over UDP. On connect, the relay sends an identity frame on
+// the control channel containing the magic "NQIP" followed by the 4-byte
+// virtual IPv4 address assigned to the client.
+//
+// # Usage
+//
+//	alloc := nqrelay.NewIPAllocator(net.ParseIP(nqrelay.DefaultNQServerIP))
+//	sessions := nqrelay.NewSessionRegistry()
+//
+//	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+//		ws, err := nqrelay.Upgrader.Upgrade(w, r, nil)
+//		if err != nil {
+//			return
+//		}
+//		relay, err := nqrelay.NewRelay(ws, sourceKey, sourceIP, userID, false,
+//			alloc, sessions, nqrelay.FrameDispatch{
+//				IsAllowedPort: func(port int) bool { return port == 26000 },
+//			}, nil, nil)
+//		if err != nil {
+//			_ = ws.Close()
+//			return
+//		}
+//		relay.Run() // blocks until the connection closes
+//	})
 package nqrelay
 
-import (
-	"bytes"
-	"encoding/binary"
-)
+import "encoding/binary"
 
-// Quake network constants (see quakedef.h / net.h).
-const (
-	netFlagLengthMask uint32 = 0x0000ffff
-	netFlagCtl        uint32 = 0x80000000
-
-	netProtocolVersion byte = 3
-
-	ccreqServerInfo byte = 0x02
-	ccrepServerInfo byte = 0x83
-)
-
-const (
-	// ControlPort is the reserved WS tunnel port for control-channel frames.
-	ControlPort = 0
-
-	// MinServerPort/MaxServerPort bound valid UDP server ports.
-	MinServerPort = 1
-	MaxServerPort = 65535
-
-	// WSPortHeaderSize is the two-byte port prefix on every Nexus WS frame.
-	WSPortHeaderSize = 2
-)
+// controlPort is the reserved WS tunnel port for control-channel frames.
+const controlPort = 0
 
 // wsClientIdentityMagic is the 4-byte magic in a client-identity announcement frame.
 const wsClientIdentityMagic = "NQIP"
 
-// BuildCCREQServerInfo constructs a CCREQ_SERVER_INFO datagram.
-func BuildCCREQServerInfo() []byte {
-	buf := make([]byte, 0, 64)
-	buf = append(buf, 0, 0, 0, 0) // placeholder header
-	buf = append(buf, ccreqServerInfo)
-	buf = appendCString(buf, "QUAKE")
-	buf = append(buf, netProtocolVersion)
-
-	control := netFlagCtl | uint32(len(buf))
-	binary.BigEndian.PutUint32(buf[0:4], control)
-	return buf
-}
-
-// ParseCCREPServerInfo extracts server info from a CCREP_SERVER_INFO response.
-func ParseCCREPServerInfo(payload []byte) (hostname, mapName string, players, maxPlayers, protocol byte, ok bool) {
-	if len(payload) < 5 {
-		return "", "", 0, 0, 0, false
-	}
-	control := binary.BigEndian.Uint32(payload[:4])
-	if (control&^netFlagLengthMask) != netFlagCtl || int(control&netFlagLengthMask) != len(payload) || payload[4] != ccrepServerInfo {
-		return "", "", 0, 0, 0, false
-	}
-	i := 5
-
-	// server_address (ignored)
-	_, next, ok := readCString(payload, i)
-	if !ok {
-		return "", "", 0, 0, 0, false
-	}
-	i = next
-
-	hostname, next, ok = readCString(payload, i)
-	if !ok {
-		return "", "", 0, 0, 0, false
-	}
-	i = next
-	mapName, next, ok = readCString(payload, i)
-	if !ok {
-		return "", "", 0, 0, 0, false
-	}
-	i = next
-
-	if i+3 > len(payload) {
-		return "", "", 0, 0, 0, false
-	}
-	players = payload[i]
-	maxPlayers = payload[i+1]
-	protocol = payload[i+2]
-	return hostname, mapName, players, maxPlayers, protocol, protocol == netProtocolVersion
-}
-
 // buildWSFrame builds a Nexus WS frame: 2-byte port header + payload.
 func buildWSFrame(port int, payload []byte) []byte {
-	if port < ControlPort || port > MaxServerPort {
+	if port < controlPort || port > 65535 {
 		return nil
 	}
-	frame := make([]byte, WSPortHeaderSize+len(payload))
-	binary.BigEndian.PutUint16(frame[:WSPortHeaderSize], uint16(port))
-	copy(frame[WSPortHeaderSize:], payload)
+	frame := make([]byte, 2+len(payload))
+	binary.BigEndian.PutUint16(frame[:2], uint16(port))
+	copy(frame[2:], payload)
 	return frame
 }
 
@@ -106,37 +71,17 @@ func buildWSClientIdentityFrame(clientIP [4]byte) []byte {
 	payload := make([]byte, len(wsClientIdentityMagic)+len(clientIP))
 	copy(payload, wsClientIdentityMagic)
 	copy(payload[len(wsClientIdentityMagic):], clientIP[:])
-	return buildWSFrame(ControlPort, payload)
+	return buildWSFrame(controlPort, payload)
 }
 
 func decodeWSFrame(packet []byte) (dstPort int, payload []byte, ok bool) {
-	if len(packet) < WSPortHeaderSize {
+	if len(packet) < 2 {
 		return 0, nil, false
 	}
-	dstPort = int(binary.BigEndian.Uint16(packet[:WSPortHeaderSize]))
-	return dstPort, packet[WSPortHeaderSize:], true
+	dstPort = int(binary.BigEndian.Uint16(packet[:2]))
+	return dstPort, packet[2:], true
 }
 
 func isValidServerPort(port int) bool {
-	return port >= MinServerPort && port <= MaxServerPort
-}
-
-// appendCString appends a NUL-terminated C string to buf.
-func appendCString(buf []byte, s string) []byte {
-	buf = append(buf, []byte(s)...)
-	buf = append(buf, 0)
-	return buf
-}
-
-// readCString reads a NUL-terminated string from buf starting at offset.
-func readCString(buf []byte, start int) (string, int, bool) {
-	if start < 0 || start >= len(buf) {
-		return "", 0, false
-	}
-	rest := buf[start:]
-	n := bytes.IndexByte(rest, 0)
-	if n < 0 {
-		return "", 0, false
-	}
-	return string(rest[:n]), start + n + 1, true
+	return port >= 1 && port <= 65535
 }

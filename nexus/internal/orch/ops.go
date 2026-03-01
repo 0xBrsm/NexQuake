@@ -81,6 +81,9 @@ func (m *ServerManager) poolBackendsLocked(pool *serverPool) []*serverRecord {
 	return out
 }
 
+// LaunchServer registers a new pool and starts a server with the given binary
+// and args. The runtime basedir must already be initialized (i.e. [ServerManager.StartAll]
+// must have run). Returns an error if the binary fails to start.
 func (m *ServerManager) LaunchServer(binary string, args []string) error {
 	binary = strings.TrimSpace(binary)
 	if binary == "" {
@@ -116,6 +119,9 @@ func (m *ServerManager) LaunchServer(binary string, args []string) error {
 	return m.startRecord(rec)
 }
 
+// StartServer starts the server pool identified by target, which may be either
+// a listen port or a 1-based line index. Returns [errAlreadyRunning] if the
+// server is already up.
 func (m *ServerManager) StartServer(target int) error {
 	if target <= 0 {
 		return fmt.Errorf("invalid target %d", target)
@@ -178,6 +184,8 @@ func (m *ServerManager) runServersAll(runOne func(target int) error, ignoreErr f
 	return errors.Join(errs...)
 }
 
+// StartServersAll calls [ServerManager.StartServer] on every registered pool,
+// ignoring pools that are already running.
 func (m *ServerManager) StartServersAll() error {
 	return m.runServersAll(
 		m.StartServer,
@@ -185,6 +193,9 @@ func (m *ServerManager) StartServersAll() error {
 	)
 }
 
+// StopServer stops all backends in the pool identified by target (port or
+// 1-based index), removes their records, and returns [errAlreadyStopped] if
+// no backend was running. killAfter is the grace period before SIGKILL.
 func (m *ServerManager) StopServer(ctx context.Context, target int, killAfter time.Duration) error {
 	if target <= 0 {
 		return fmt.Errorf("invalid target %d", target)
@@ -224,6 +235,8 @@ func (m *ServerManager) StopServer(ctx context.Context, target int, killAfter ti
 	return nil
 }
 
+// StopServersAll calls [ServerManager.StopServer] on every registered pool,
+// ignoring pools that are already stopped.
 func (m *ServerManager) StopServersAll(ctx context.Context, killAfter time.Duration) error {
 	return m.runServersAll(
 		func(target int) error { return m.StopServer(ctx, target, killAfter) },
@@ -231,6 +244,9 @@ func (m *ServerManager) StopServersAll(ctx context.Context, killAfter time.Durat
 	)
 }
 
+// RestartServer stops then starts the pool identified by target. A pool that
+// is not running is started directly without treating the missing stop as an
+// error.
 func (m *ServerManager) RestartServer(ctx context.Context, target int, killAfter time.Duration) error {
 	if target <= 0 {
 		return fmt.Errorf("invalid target %d", target)
@@ -241,6 +257,7 @@ func (m *ServerManager) RestartServer(ctx context.Context, target int, killAfter
 	return m.StartServer(target)
 }
 
+// RestartServersAll calls [ServerManager.RestartServer] on every registered pool.
 func (m *ServerManager) RestartServersAll(ctx context.Context, killAfter time.Duration) error {
 	return m.runServersAll(
 		func(target int) error { return m.RestartServer(ctx, target, killAfter) },
@@ -248,6 +265,9 @@ func (m *ServerManager) RestartServersAll(ctx context.Context, killAfter time.Du
 	)
 }
 
+// RemoveServer unregisters the pool identified by target and deletes all its
+// backend records. Returns an error if any backend process is still alive;
+// call [ServerManager.StopServer] first.
 func (m *ServerManager) RemoveServer(target int) error {
 	if target <= 0 {
 		return fmt.Errorf("invalid target %d", target)

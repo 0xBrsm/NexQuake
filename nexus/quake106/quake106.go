@@ -26,6 +26,24 @@
  * THE SOFTWARE.
  */
 
+// Package quake106 extracts game data from the Quake 1.06 shareware distribution.
+//
+// The Quake 1.06 shareware archive (quake106.zip) uses a multi-part LHA-compressed
+// installer format from 1996. This package implements LZH (LH5) decompression in
+// pure Go — no cgo, no external binaries — to extract pak0.pak and the license text
+// directly from the resource.1 segment embedded in the zip.
+//
+// Every extraction step is SHA256-verified: the zip itself ([ZipSHA256]), the
+// resource.1 entry ([Resource1SHA256]), pak0.pak ([Pak0SHA256]), and the license
+// file ([SlicnseSHA256]). Any hash mismatch causes an immediate error, ensuring
+// both correctness and compliance with id Software's shareware redistribution terms.
+//
+// Typical usage:
+//
+//	zr, err := zip.OpenReader("quake106.zip")
+//	if err != nil { ... }
+//	defer zr.Close()
+//	if err := quake106.ExtractPak0(&zr.Reader, "/game/id1"); err != nil { ... }
 package quake106
 
 import (
@@ -39,12 +57,17 @@ import (
 	"strings"
 )
 
-// SHA256 of the canonical quake106.zip files.
+// SHA256 hex digests for the canonical Quake 1.06 shareware files.
+// These are used to verify the zip archive and each extracted output before writing.
 const (
+	// ZipSHA256 is the expected SHA256 of the quake106.zip archive itself.
 	ZipSHA256 = "ec6c9d34b1ae0252ac0066045b6611a7919c2a0d78a3a66d9387a8f597553239"
+	// Resource1SHA256 is the expected SHA256 of the resource.1 entry inside quake106.zip.
 	Resource1SHA256 = "c192c9c71bee41750dd7d14c99378766d61e077977b9d13d1a457b8d9eabe34a"
-	Pak0SHA256      = "35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af"
-	SlicnseSHA256   = "070cdf6a6410adef8fb5f83a4e5ccdb9e2301d2e48d460bb3a67a0f5ba9d70a8"
+	// Pak0SHA256 is the expected SHA256 of the extracted pak0.pak game data file.
+	Pak0SHA256 = "35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af"
+	// SlicnseSHA256 is the expected SHA256 of the extracted SLICNSE.TXT license file.
+	SlicnseSHA256 = "070cdf6a6410adef8fb5f83a4e5ccdb9e2301d2e48d460bb3a67a0f5ba9d70a8"
 )
 
 const (
@@ -56,6 +79,18 @@ const (
 	segLicOut  = 10036
 )
 
+// ExtractPak0 extracts pak0.pak and SLICNSE.TXT from the Quake 1.06 shareware zip.
+//
+// zr must be an opened zip.Reader for quake106.zip. destRoot is the directory
+// where the files are written; it is created with mode 0755 if it does not exist.
+//
+// The resource.1 segment is read from the zip, verified against [Resource1SHA256],
+// LZH-decompressed, and written as two files:
+//
+//   - <destRoot>/pak0.pak   — game data, verified against [Pak0SHA256]
+//   - <destRoot>/SLICNSE.TXT — shareware license, verified against [SlicnseSHA256]
+//
+// Any SHA256 mismatch or I/O error causes an immediate non-nil error return.
 func ExtractPak0(zr *zip.Reader, destRoot string) error {
 	var zf *zip.File
 	for _, f := range zr.File {
@@ -193,7 +228,7 @@ func (h huff) dec(r *br) uint16 {
 	}
 	code := uint16(0)
 	for l := uint8(1); l <= h.max; l++ {
-		code = (code << 1) | huffBit(r)
+		code = (code << 1) | r.bits(1)
 		if code < h.first[l] {
 			continue
 		}
@@ -204,8 +239,6 @@ func (h huff) dec(r *br) uint16 {
 	}
 	return 0
 }
-
-func huffBit(r *br) uint16 { return r.bits(1) }
 
 func pTree(r *br, bits uint, special, n int) huff {
 	n0 := int(r.bits(bits))

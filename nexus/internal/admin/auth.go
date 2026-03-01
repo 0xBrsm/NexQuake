@@ -1,3 +1,17 @@
+// Package admin implements the Nexus admin subsystem: authentication,
+// WebSocket admin-frame dispatch, rcon command routing, and session management.
+//
+// The entry points for callers are:
+//   - [InitAuth] — construct an [Auth] from environment variables once at startup.
+//   - [HandleAdminFrame] / [HandleAdminFrameWithIdentityAndPromotionHook] — process
+//     an incoming admin (port-0) WebSocket frame.
+//   - [Env] — dependency-injection struct wiring the admin layer to the server
+//     manager and session registry.
+//
+// Authentication supports two modes, which can be combined:
+//
+//	AUTH_ISSUER + AUTH_AUDIENCE   OIDC/JWT via an external identity provider.
+//	AUTH_RCON_PASSWORD            Shared-secret rcon password (classic Quake style).
 package admin
 
 import (
@@ -12,6 +26,7 @@ import (
 const adminMatchEmail = "email"
 
 // Auth holds authentication state for admin access control.
+// Construct with [InitAuth]; a nil *Auth disables all admin access.
 type Auth struct {
 	rconPassword string
 	validator    *oidcValidator
@@ -25,8 +40,20 @@ type oidcValidator struct {
 	allowAnyJWT   bool
 }
 
-// InitAuth initializes admin authentication from environment variables and
-// returns the Auth configuration. infof and debugf are used for log output.
+// InitAuth reads auth configuration from environment variables and returns a
+// ready-to-use [Auth]. It contacts the OIDC provider (if configured) during
+// construction so that JWT verification is fast at request time.
+//
+// Relevant environment variables:
+//
+//	AUTH_RCON_PASSWORD   shared rcon secret; empty disables rcon auth
+//	AUTH_ISSUER          OIDC issuer URL; both ISSUER and AUDIENCE must be set
+//	AUTH_AUDIENCE        OIDC client ID / audience claim
+//	AUTH_JWT_HEADER      HTTP header carrying the token (default: Authorization)
+//	AUTH_ADMIN_ID        comma-separated claim matchers, e.g. "email:x@example.com,group:admin"
+//	                     empty means any valid JWT grants admin
+//
+// infof and debugf receive human-readable startup messages; nil is accepted for either.
 func InitAuth(ctx context.Context, infof, debugf func(string, ...any)) (*Auth, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -90,13 +117,13 @@ func InitAuth(ctx context.Context, infof, debugf func(string, ...any)) (*Auth, e
 }
 
 func (a *Auth) rconPasswordValue() string {
-	if a == nil {
-		return ""
-	}
 	return a.rconPassword
 }
 
-// IdentifyRequest checks the request for credentials and returns (isAdmin, identityString).
+// IdentifyRequest inspects the request for credentials and returns
+// (isAdmin, identity) where identity is an email, username, or "anonymous".
+// Only OIDC JWTs are checked here; rcon_password authentication happens
+// per-frame in [HandleAdminFrameWithIdentityAndPromotionHook].
 func (a *Auth) IdentifyRequest(r *http.Request) (bool, string) {
 	if a == nil {
 		return false, "anonymous"
@@ -150,9 +177,6 @@ func (v *oidcValidator) validate(r *http.Request, debugf func(string, ...any)) (
 }
 
 func (v *oidcValidator) isAdminClaims(claims map[string]any) bool {
-	if v == nil {
-		return false
-	}
 	if v.allowAnyJWT {
 		return true
 	}

@@ -17,11 +17,12 @@ import (
 	"github.com/google/shlex"
 )
 
+// serverLaunch is the parsed launch spec for a single server entry.
 type serverLaunch struct {
-	Line   int
-	LogDir string
-	Binary string
-	Args   []string
+	Line   int      // 0-based servers.ini line index; -1 for replicas
+	LogDir string   // subdirectory name under logsDir for this server's log file
+	Binary string   // path or name of the server binary
+	Args   []string // command-line arguments passed to the binary
 }
 
 var unsupportedLaunchArgs = map[string]struct{}{

@@ -18,6 +18,20 @@ import (
 	"github.com/0xBrsm/NexQuake/nexus/nqrelay"
 )
 
+// nexusApp is the central application object. It wires together the
+// networking layer (IP allocator, session registry), game server orchestration
+// (server manager, info poller), and the admin subsystem into a single
+// coherent unit that drives the HTTP server lifecycle.
+type nexusApp struct {
+	cfg        runtimeConfig
+	auth       *admin.Auth
+	ipAlloc    *nqrelay.IPAllocator
+	sessionReg *nqrelay.SessionRegistry
+	serverMgr  *orch.ServerManager
+	adminEnv   *admin.Env
+	pakCache   *assets.PakIndexCache
+}
+
 func main() {
 	initLogging()
 
@@ -40,14 +54,11 @@ func main() {
 	if err != nil {
 		fatalf("Failed to initialize auth: %v", err)
 	}
-	globalAuth = auth
 
 	// Initialize networking layer.
 	nqServerIP := net.ParseIP(nqrelay.DefaultNQServerIP).To4()
 	ipAlloc := nqrelay.NewIPAllocator(nqServerIP)
 	sessionReg := nqrelay.NewSessionRegistry()
-	globalIPAllocator = ipAlloc
-	globalSessionRegistry = sessionReg
 
 	runCtx, runCancel := context.WithCancel(context.Background())
 	defer runCancel()
@@ -86,27 +97,28 @@ func main() {
 	if err := serverMgr.StartAll(); err != nil {
 		fatalf("Failed to start servers: %v", err)
 	}
-	globalServerManager = serverMgr
-	globalAdminEnv = buildAdminEnv()
 
-	// Start Nexus-managed server info poller (used for Quake's `slist`).
-	serverInfoPoller := orch.NewServerInfoPoller(serverMgr, nqServerIP)
-	if err := serverInfoPoller.Start(runCtx); err != nil {
-		warnf("Server info poller disabled: %v", err)
-		serverInfoPoller = nil
+	app := &nexusApp{
+		cfg:        cfg,
+		auth:       auth,
+		ipAlloc:    ipAlloc,
+		sessionReg: sessionReg,
+		serverMgr:  serverMgr,
+		adminEnv:   buildAdminEnv(serverMgr, sessionReg, ipAlloc),
+		pakCache:   assets.NewPakIndexCache(),
 	}
 
-	pakCache := assets.NewPakIndexCache()
-	mux := newMux(cfg, pakCache)
+	// Start Nexus-managed server info poller (used for Quake's `slist`).
+	stopInfoPoller := serverMgr.StartInfoPoller(runCtx, nqServerIP)
 
 	server := &http.Server{
 		Addr:              ":" + cfg.httpPort,
-		Handler:           mux,
+		Handler:           app.newMux(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 
-	// Start server in goroutine
+	// Start server in goroutine.
 	go func() {
 		infof("Nexus listening on port %s", cfg.httpPort)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -114,16 +126,14 @@ func main() {
 		}
 	}()
 
-	// Wait for interrupt signal
+	// Wait for interrupt signal.
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	<-sigChan
 
 	infof("Shutting down gracefully...")
 	runCancel()
-	if serverInfoPoller != nil {
-		serverInfoPoller.Stop()
-	}
+	stopInfoPoller()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -136,6 +146,9 @@ func main() {
 	infof("Nexus stopped")
 }
 
+// runtimeConfig holds all values derived from environment variables at startup.
+// Reading env vars here (once) instead of on every request avoids syscall overhead
+// in hot paths such as WebSocket upgrade and IP resolution.
 type runtimeConfig struct {
 	httpPort               string
 	gameDir                string
@@ -145,6 +158,7 @@ type runtimeConfig struct {
 	binDir                 string
 	serverBinDir           string
 	clientDir              string
+	clientIPHeader         string // AUTH_CLIENT_IP_HEADER: header to read real client IP from
 	vfsPrefetchConcurrency int
 	clientAutoSMenu        bool
 	clientSendArgs         []string
@@ -152,6 +166,8 @@ type runtimeConfig struct {
 	poolSize               int
 }
 
+// loadRuntimeConfig reads all environment variables once and returns the
+// resolved configuration. Callers must not call os.Getenv for these keys again.
 func loadRuntimeConfig() runtimeConfig {
 	binDir := getEnv("BIN_DIR", "/app/bin")
 	serverBinDir := getEnv("SERVER_DIR", "/app/server")
@@ -165,6 +181,7 @@ func loadRuntimeConfig() runtimeConfig {
 		binDir:                 binDir,
 		serverBinDir:           serverBinDir,
 		clientDir:              getEnv("CLIENT_DIR", "/app/bin/nqwasm"),
+		clientIPHeader:         strings.TrimSpace(os.Getenv("AUTH_CLIENT_IP_HEADER")),
 		vfsPrefetchConcurrency: getEnvIntMin("CL_CONCURRENCY", 16, 0),
 		clientAutoSMenu:        getEnvBool01("CL_SMENU", false),
 		clientSendArgs:         getEnvArgs("CL_ARGS", nil),
@@ -173,6 +190,8 @@ func loadRuntimeConfig() runtimeConfig {
 	}
 }
 
+// prependPath adds dir to the front of PATH if it is not already present.
+// It is a no-op for empty strings.
 func prependPath(binDir string) error {
 	dir := strings.TrimSpace(binDir)
 	if dir == "" {
@@ -192,6 +211,9 @@ func prependPath(binDir string) error {
 	return os.Setenv("PATH", dir+string(os.PathListSeparator)+existing)
 }
 
+// handleCLI processes CLI-only sub-commands (--version, --healthcheck).
+// It returns (true, exitCode) when a sub-command was matched and the process
+// should exit; (false, 0) means normal server startup should proceed.
 func handleCLI(args []string) (handled bool, exitCode int) {
 	if len(args) == 0 {
 		return false, 0
@@ -199,7 +221,7 @@ func handleCLI(args []string) (handled bool, exitCode int) {
 
 	switch args[0] {
 	case "--version", "version":
-		// Keep this simple so it’s usable inside minimal runtime images.
+		// Keep this simple so it's usable inside minimal runtime images.
 		v := currentVersionInfo()
 		fmt.Printf("nexquake-nexus git_sha=%s build_time=%s go=%s %s/%s\n",
 			v.GitSHA,
@@ -222,6 +244,8 @@ func handleCLI(args []string) (handled bool, exitCode int) {
 	}
 }
 
+// runHealthcheck performs an HTTP GET against the local /health endpoint.
+// Designed for Docker/compose healthchecks — avoids needing curl or bash.
 func runHealthcheck(httpPort string) error {
 	url := fmt.Sprintf("http://127.0.0.1:%s/health", httpPort)
 
@@ -237,135 +261,4 @@ func runHealthcheck(httpPort string) error {
 	}
 
 	return nil
-}
-
-// Global singletons, initialized in main() before any goroutines.
-var (
-	globalIPAllocator     *nqrelay.IPAllocator
-	globalSessionRegistry *nqrelay.SessionRegistry
-	globalAuth            *admin.Auth
-	globalAdminEnv        *admin.Env
-	globalServerManager   *orch.ServerManager
-)
-
-func handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	isAdmin, userIdentity := globalAuth.IdentifyRequest(r)
-	sourceIP := nqrelay.ResolveClientSourceIP(r)
-	sourceKey := nqrelay.ResolveClientSourceKey(r)
-	if globalIPAllocator.IsBlocked(sourceKey) {
-		warnf("Rejected blocked client source=%q remote=%s", sourceKey, r.RemoteAddr)
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
-
-	conn, err := nqrelay.Upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		warnf("WebSocket upgrade failed: %v", err)
-		return
-	}
-
-	displayAddr := sourceIP
-	if displayAddr == "" {
-		displayAddr = conn.RemoteAddr().String()
-	} else if _, port, err := net.SplitHostPort(conn.RemoteAddr().String()); err == nil {
-		displayAddr = net.JoinHostPort(displayAddr, port)
-	}
-
-	if isAdmin {
-		infof("Admin connected: %s (%s)", displayAddr, userIdentity)
-	} else {
-		infof("Client connected: %s (%s)", displayAddr, userIdentity)
-	}
-
-	dispatch := nqrelay.FrameDispatch{
-		HandleControlFrame: orch.NewControlHandler(globalServerManager, func(relay *nqrelay.Relay, payload []byte) {
-			admin.HandleAdminFrameWithIdentityAndPromotionHook(relay, payload, globalAuth, globalAdminEnv, userIdentity, func(r admin.Session) {
-				source := strings.TrimSpace(r.SourceIP())
-				if source == "" {
-					source = "unknown"
-				}
-				infof("Admin promoted: source=%s key=%s nqip=%s", source, r.SourceKey(), r.VirtualClientIP())
-			})
-		}),
-		IsAllowedPort: globalServerManager.IsManagedListenPort,
-	}
-
-	relay, err := nqrelay.NewRelay(conn, sourceKey, sourceIP, userIdentity, isAdmin, globalIPAllocator, globalSessionRegistry, dispatch, warnf, debugf)
-	if err != nil {
-		errorf("Failed to create relay: %v", err)
-		_ = conn.Close()
-		return
-	}
-
-	relay.Run()
-
-	if isAdmin {
-		infof("Admin disconnected: %s", displayAddr)
-	} else {
-		infof("Client disconnected: %s", displayAddr)
-	}
-
-}
-
-func newMux(cfg runtimeConfig, pakCache *assets.PakIndexCache) *http.ServeMux {
-	mux := http.NewServeMux()
-	assetGateway := assets.NewHashedAssetGateway(
-		cfg.gameDir,
-		cfg.cdDir,
-		pakCache,
-		cfg.vfsPrefetchConcurrency,
-		cfg.clientAutoSMenu,
-		cfg.clientSendArgs,
-		cfg.clientURLArgs,
-	)
-	assetGateway.SetErrorf(errorf)
-
-	// Health check endpoint (Go 1.22+ method-based routing)
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		v := currentVersionInfo()
-		w.Header().Set("X-NexQuake-Nexus-GitSHA", v.GitSHA)
-		w.Header().Set("X-NexQuake-Nexus-BuildTime", v.BuildTime)
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, "OK")
-	})
-
-	mux.HandleFunc("GET /ws", handleWebSocket)
-
-	// Bootstrap + hash-addressed asset delivery for browser runtime.
-	mux.Handle("/start", addIsolationHeaders(http.HandlerFunc(assetGateway.StartHandler())))
-	mux.Handle("/nq/", addIsolationHeaders(http.HandlerFunc(assetGateway.AssetHandler())))
-
-	// Serve client files (WASM, HTML, JS, CSS)
-	clientFS := http.FileServerFS(os.DirFS(cfg.clientDir))
-	mux.Handle("/", addIsolationHeaders(contentTypeOverride(cacheControlClient(clientFS))))
-
-	return mux
-}
-
-func buildAdminEnv() *admin.Env {
-	return &admin.Env{
-		ServerSnapshots:     globalServerManager.Snapshots,
-		StartServer:         globalServerManager.StartServer,
-		StartServersAll:     globalServerManager.StartServersAll,
-		StopServer:          globalServerManager.StopServer,
-		StopServersAll:      globalServerManager.StopServersAll,
-		RestartServer:       globalServerManager.RestartServer,
-		RestartServersAll:   globalServerManager.RestartServersAll,
-		RemoveServer:        globalServerManager.RemoveServer,
-		LaunchServer:        globalServerManager.LaunchServer,
-		ExecServerCmd:       globalServerManager.ExecServerCmd,
-		IsManagedListenPort: globalServerManager.IsManagedListenPort,
-		TailNexusLog:        tailNexusLogLines,
-		Auditf:              auditf,
-		SessionSnapshots:    globalSessionRegistry.SnapshotAll,
-		SnapshotByVIP: func(vip string) ([]admin.Session, []nqrelay.BanTarget) {
-			relays, targets := globalSessionRegistry.SnapshotByVirtualIP(vip)
-			sessions := make([]admin.Session, len(relays))
-			for i, r := range relays {
-				sessions[i] = r
-			}
-			return sessions, targets
-		},
-		ReserveAndBlock: globalIPAllocator.ReserveAndBlock,
-	}
 }

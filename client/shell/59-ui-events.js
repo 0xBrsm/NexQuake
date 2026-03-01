@@ -3,8 +3,8 @@
   if (!Module || !Module.nqOverlayInstall) return;
 
   Module.nqOverlayInstall(function(ctx) {
-    var OVERLAY_WIDTH_MAX = 400;
-    var OVERLAY_WIDTH_MIN = 320;
+    var OVERLAY_WIDTH_MAX = 340;
+    var OVERLAY_WIDTH_MIN = 280;
     var OPTIONS_MENU_BASE_WIDTH = 320;
     var OPTIONS_MENU_RIGHT_EDGE = 308;
     var OPTIONS_MENU_CLEARANCE = 8;

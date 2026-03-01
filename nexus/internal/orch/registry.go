@@ -18,37 +18,62 @@ const (
 	demandSafetyFactor = 1.5
 )
 
+// poolBackendLifecycle is the autoscaling state of a single backend within a pool.
 type poolBackendLifecycle uint8
 
 const (
+	// poolBackendLifecycleWarming: backend is running but has not yet received a CCREP.
 	poolBackendLifecycleWarming poolBackendLifecycle = iota
+	// poolBackendLifecycleActive: backend accepts new player sessions.
 	poolBackendLifecycleActive
+	// poolBackendLifecycleDraining: backend is not accepting new sessions; waiting to become idle.
 	poolBackendLifecycleDraining
+	// poolBackendLifecycleTerminating: backend is scheduled for shutdown.
 	poolBackendLifecycleTerminating
 )
 
+// poolBackendState tracks autoscaling state for a single backend within a pool.
 type poolBackendState struct {
-	Lifecycle      poolBackendLifecycle
+	// Lifecycle is the current autoscaling state of the backend.
+	Lifecycle poolBackendLifecycle
+	// ZeroPollStreak counts consecutive CCREP polls with zero players while draining.
 	ZeroPollStreak int
 }
 
+// serverPool groups one or more backend server processes behind a single
+// virtual listen port (or autoscaling identity). Fixed-port pools have exactly
+// one backend; "-port 0" pools may have multiple dynamically spawned replicas.
 type serverPool struct {
-	PoolID           int
-	Line             int
-	TemplateLaunch   serverLaunch
-	Autoscales  bool
+	// PoolID is the unique identifier assigned at registration.
+	PoolID int
+	// Line is the 0-based servers.ini line index; -1 for synthetic pools.
+	Line int
+	// TemplateLaunch is the launch spec used to spawn new replicas.
+	TemplateLaunch serverLaunch
+	// Autoscales reports whether the pool may spawn and despawn replicas.
+	Autoscales bool
+	// BackendServerIDs lists the IDs of all backend records in this pool.
 	BackendServerIDs []int
 
+	// ListenPort is the stable UDP port for fixed-port pools; 0 for autoscaling pools.
 	ListenPort int
 
+	// RoundRobinCursor advances each time a backend is selected for routing.
 	RoundRobinCursor int
-	LastScaleUpAt    time.Time
-	ScaleUpInFlight  bool
+	// LastScaleUpAt records when the most recent replica was launched.
+	LastScaleUpAt time.Time
+	// ScaleUpInFlight is true while a replica launch is in progress.
+	ScaleUpInFlight bool
 
-	AggregateUsers     uint16
-	AggregateMaxUsers  uint16
+	// AggregateUsers is the total player count across all running backends.
+	AggregateUsers uint16
+	// AggregateMaxUsers is the total capacity across all running backends.
+	AggregateMaxUsers uint16
+	// AggregateInstances is the number of currently running backends.
 	AggregateInstances uint16
 
+	// DisplayHostname, DisplayMap, DisplayGameDir are cached from the most
+	// recently observed CCREP and shown in slist responses and snapshots.
 	DisplayHostname string
 	DisplayMap      string
 	DisplayGameDir  string

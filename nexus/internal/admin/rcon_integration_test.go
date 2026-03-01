@@ -5,14 +5,11 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/0xBrsm/NexQuake/nexus/internal/orch"
-	"github.com/0xBrsm/NexQuake/nexus/nqrelay"
 )
 
 func integrationEnv() *Env {
 	return &Env{
-		ServerSnapshots:   func() []orch.ServerSnapshot { return nil },
+		ServerSnapshots:   func() []ServerInfo { return nil },
 		StartServer:       func(int) error { return nil },
 		StartServersAll:   func() error { return nil },
 		StopServer:        func(context.Context, int, time.Duration) error { return nil },
@@ -24,8 +21,8 @@ func integrationEnv() *Env {
 		ExecServerCmd:     func(int, string, string) (string, error) { return "", nil },
 		TailNexusLog:      func(int) []string { return nil },
 		Auditf:            func(string, ...any) {},
-		SessionSnapshots:  func() []nqrelay.SessionSnapshot { return nil },
-		SnapshotByVIP:     func(string) ([]Session, []nqrelay.BanTarget) { return nil, nil },
+		SessionSnapshots:  func() []SessionInfo { return nil },
+		SnapshotByVIP:     func(string) ([]Session, []BanTarget) { return nil, nil },
 		ReserveAndBlock:   func([4]byte, string) {},
 	}
 }
@@ -71,11 +68,11 @@ func TestAdminIntegration_HandleAdminFrame_TargetPortZeroRunsNexusCommand(t *tes
 
 func TestAdminIntegration_HandleAdminFrame_SessionListClientSessions(t *testing.T) {
 	env := integrationEnv()
-	env.ServerSnapshots = func() []orch.ServerSnapshot {
-		return []orch.ServerSnapshot{{ListenPort: 26000, Hostname: "fragfest"}}
+	env.ServerSnapshots = func() []ServerInfo {
+		return []ServerInfo{{ListenPort: 26000, Hostname: "fragfest"}}
 	}
-	env.SessionSnapshots = func() []nqrelay.SessionSnapshot {
-		return []nqrelay.SessionSnapshot{
+	env.SessionSnapshots = func() []SessionInfo {
+		return []SessionInfo{
 			{VirtualIP: "127.100.10.1", SourceIP: "198.51.100.10", IsAdmin: false, ActiveServerPort: 26000},
 			{VirtualIP: "127.100.10.2", SourceIP: "198.51.100.11", IsAdmin: true},
 		}
@@ -94,10 +91,10 @@ func TestAdminIntegration_HandleAdminFrame_SessionListClientSessions(t *testing.
 }
 
 func TestAdminIntegration_HandleAdminFrame_RemoveDispatchesForStoppedServer(t *testing.T) {
-	servers := []orch.ServerSnapshot{{Line: 0, ListenPort: 26000, GameDir: "id1", State: "stopped"}}
+	servers := []ServerInfo{{ListenPort: 26000, GameDir: "id1", State: "stopped"}}
 	env := integrationEnv()
-	env.ServerSnapshots = func() []orch.ServerSnapshot {
-		return append([]orch.ServerSnapshot(nil), servers...)
+	env.ServerSnapshots = func() []ServerInfo {
+		return append([]ServerInfo(nil), servers...)
 	}
 	env.RemoveServer = func(target int) error {
 		if target == 1 || target == 26000 {
@@ -120,12 +117,12 @@ func TestAdminIntegration_HandleAdminFrame_SessionBanDisconnectsAndBlocksIdentit
 	vip := clientMock.vip
 
 	env := integrationEnv()
-	env.SessionSnapshots = func() []nqrelay.SessionSnapshot {
-		return []nqrelay.SessionSnapshot{
+	env.SessionSnapshots = func() []SessionInfo {
+		return []SessionInfo{
 			{VirtualIP: vip, SourceIP: clientMock.sourceIP, IsAdmin: false},
 		}
 	}
-	env.SnapshotByVIP = func(lookupVIP string) ([]Session, []nqrelay.BanTarget) {
+	env.SnapshotByVIP = func(lookupVIP string) ([]Session, []BanTarget) {
 		if lookupVIP == vip {
 			return []Session{clientMock}, nil
 		}
@@ -149,12 +146,12 @@ func TestAdminIntegration_HandleAdminFrame_SessionBanAdminRejected(t *testing.T)
 	vip := adminMock.vip
 
 	env := integrationEnv()
-	env.SessionSnapshots = func() []nqrelay.SessionSnapshot {
-		return []nqrelay.SessionSnapshot{
+	env.SessionSnapshots = func() []SessionInfo {
+		return []SessionInfo{
 			{VirtualIP: vip, SourceIP: adminMock.sourceIP, IsAdmin: true},
 		}
 	}
-	env.SnapshotByVIP = func(lookupVIP string) ([]Session, []nqrelay.BanTarget) {
+	env.SnapshotByVIP = func(lookupVIP string) ([]Session, []BanTarget) {
 		if lookupVIP == vip {
 			return []Session{adminMock}, nil
 		}

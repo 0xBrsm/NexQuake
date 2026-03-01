@@ -189,27 +189,6 @@ func poolNeededHeadroomLocked(pool *serverPool, now time.Time) int {
 	return max(demandMinFreeSlots, dynamicHeadroom)
 }
 
-func (m *ServerManager) poolHasBackendPortLocked(pool *serverPool, backendPort int, allowDraining bool) bool {
-	if pool == nil || backendPort < 1 || backendPort > 65535 {
-		return false
-	}
-	for _, serverID := range m.serverIDsByPort[backendPort] {
-		if m.poolByServerID[serverID] != pool {
-			continue
-		}
-		rec := m.serversByID[serverID]
-		if !m.serverRecordRunningLocked(rec) {
-			continue
-		}
-		state := pool.backendState[serverID]
-		if !backendAllowsPoolRouting(state, allowDraining) {
-			continue
-		}
-		return true
-	}
-	return false
-}
-
 func (m *ServerManager) decidePoolActionsLocked(pool *serverPool, now time.Time) (scaleUpPoolID int, despawnServerID int) {
 	scaleUpPoolID = -1
 	despawnServerID = -1

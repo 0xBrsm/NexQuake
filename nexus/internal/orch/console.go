@@ -139,7 +139,7 @@ func (c *serverConsole) writeCommandWithOptions(cmd string, opts serverConsoleWr
 
 	_, err := io.WriteString(c.pty, line)
 	if err != nil && opts.SuppressRelayEcho {
-		c.unqueueSuppressedRelayEchoLine(line)
+		c.consumeSuppressedRelayEchoLine(line)
 	}
 	return err
 }
@@ -156,10 +156,6 @@ func (c *serverConsole) queueSuppressedRelayEchoLine(line string) {
 	c.suppressedRelayMu.Lock()
 	c.suppressedRelayEcho[key]++
 	c.suppressedRelayMu.Unlock()
-}
-
-func (c *serverConsole) unqueueSuppressedRelayEchoLine(line string) {
-	c.consumeSuppressedRelayEchoLine(line)
 }
 
 func (c *serverConsole) consumeSuppressedRelayEchoLine(line string) bool {

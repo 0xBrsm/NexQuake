@@ -7,30 +7,60 @@ import (
 	"strings"
 	"time"
 
-	"github.com/0xBrsm/NexQuake/nexus/internal/orch"
-	"github.com/0xBrsm/NexQuake/nexus/nqrelay"
 	"github.com/google/shlex"
 )
 
-// Env provides all external dependencies for admin command execution.
-type Env struct {
-	ServerSnapshots     func() []orch.ServerSnapshot
-	StartServer         func(target int) error
-	StartServersAll     func() error
-	StopServer          func(ctx context.Context, target int, killAfter time.Duration) error
-	StopServersAll      func(ctx context.Context, killAfter time.Duration) error
-	RestartServer       func(ctx context.Context, target int, killAfter time.Duration) error
-	RestartServersAll   func(ctx context.Context, killAfter time.Duration) error
-	RemoveServer        func(target int) error
-	LaunchServer        func(binary string, args []string) error
-	ExecServerCmd       func(port int, cmd, actorID string) (string, error)
-	IsManagedListenPort func(port int) bool
-	TailNexusLog        func(n int) []string
-	Auditf              func(format string, args ...any)
+// ServerInfo is a point-in-time view of a managed server for admin display.
+type ServerInfo struct {
+	Hostname   string // Server hostname reported by the game server.
+	ListenPort int    // UDP/TCP listen port.
+	GameDir    string // Quake game directory (e.g. "id1", "ctf").
+	Players    int    // Current player count.
+	MaxPlayers int    // Maximum allowed players; 0 means unknown.
+	State      string // Lifecycle state string (e.g. "running", "stopped").
+}
 
-	SessionSnapshots func() []nqrelay.SessionSnapshot
-	SnapshotByVIP    func(vip string) ([]Session, []nqrelay.BanTarget)
-	ReserveAndBlock  func(ip [4]byte, sourceKey string)
+// Env provides all external dependencies for admin command execution.
+// Callers construct an Env at startup and pass it to [HandleAdminFrame];
+// all fields are optional unless the corresponding admin command is used.
+type Env struct {
+	// ServerSnapshots returns a current point-in-time list of managed servers.
+	ServerSnapshots func() []ServerInfo
+	// StartServer starts the server identified by idx or port.
+	StartServer func(target int) error
+	// StartServersAll starts all managed servers; may be nil if unavailable.
+	StartServersAll func() error
+	// StopServer stops one server; killAfter is the grace period before SIGKILL.
+	StopServer func(ctx context.Context, target int, killAfter time.Duration) error
+	// StopServersAll stops all servers; may be nil if unavailable.
+	StopServersAll func(ctx context.Context, killAfter time.Duration) error
+	// RestartServer restarts one server.
+	RestartServer func(ctx context.Context, target int, killAfter time.Duration) error
+	// RestartServersAll restarts all servers; may be nil if unavailable.
+	RestartServersAll func(ctx context.Context, killAfter time.Duration) error
+	// RemoveServer removes a stopped server from the registry.
+	RemoveServer func(target int) error
+	// LaunchServer starts a new server process and registers it.
+	LaunchServer func(binary string, args []string) error
+	// ExecServerCmd sends a console command to a game server and returns its reply.
+	// actorID is included in server-side audit logs.
+	ExecServerCmd func(port int, cmd, actorID string) (string, error)
+	// IsManagedListenPort reports whether a port belongs to a managed server that
+	// is not yet reflected in ServerSnapshots (e.g. still starting up).
+	IsManagedListenPort func(port int) bool
+	// TailNexusLog returns the last n buffered Nexus log lines.
+	TailNexusLog func(n int) []string
+	// Auditf writes a structured audit log entry; may be nil to disable auditing.
+	Auditf func(format string, args ...any)
+
+	// SessionSnapshots returns a point-in-time list of all active client sessions.
+	SessionSnapshots func() []SessionInfo
+	// SnapshotByVIP returns the live [Session] handles and active [BanTarget] list
+	// for every connection that holds the given virtual IP.
+	SnapshotByVIP func(vip string) ([]Session, []BanTarget)
+	// ReserveAndBlock permanently reserves the virtual IP slot and blocks the
+	// source key so the banned client cannot reconnect.
+	ReserveAndBlock func(ip [4]byte, sourceKey string)
 }
 
 type adminCommandSpec struct {
@@ -52,7 +82,7 @@ var adminCommandSpecs = []adminCommandSpec{
 	{Form: "launch <binary> [args...]", Description: "launch and register a new server"},
 }
 
-func formatNexusServerList(servers []orch.ServerSnapshot) string {
+func formatNexusServerList(servers []ServerInfo) string {
 	if len(servers) == 0 {
 		return "\nNo Quake servers found.\n\n"
 	}

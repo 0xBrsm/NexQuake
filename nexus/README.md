@@ -1,36 +1,55 @@
 # Nexus
 
-Go orchestration server that ties everything together: serves the WASM client, serves game data, tunnels multiplayer traffic over WebSocket, and manages dedicated server processes.
+Go orchestration service that serves the WASM client, serves game data, tunnels multiplayer traffic over WebSocket, and manages dedicated server processes.
 
-## Entry
+## Entry Files
 
 | File | Purpose |
 |------|---------|
-| `main.go` | HTTP server setup, route registration, WebSocket handler, CLI subcommands (`--version`, `--healthcheck`), auth init, server manager startup, signal handling, graceful shutdown. |
-| `util.go` | Leveled logging (stderr + file + ring buffer for `rcon tail`), path hashing, version info (`-ldflags`), env helpers, HTTP middleware (browser isolation headers, cache-control, content-type override). |
+| `main.go` | Process lifecycle only: init, runtime wiring, HTTP server start, signal handling, graceful shutdown, and CLI subcommands (`--version`, `--healthcheck`). |
+| `connect.go` | HTTP mux and connection boundary: route registration, middleware wiring, WebSocket upgrade, source identity parsing, and pre-upgrade ban checks. |
+| `control.go` | Relay control wiring: builds `nqrelay.FrameDispatch`, routes control frames to `slist` or admin handlers, and composes `admin.Env` from orchestration/session dependencies. |
+| `util.go` | Shared runtime utilities: leveled logging (stderr + file + ring buffer), version/build metadata, env helpers, and HTTP response helpers. |
+
+## Dependency Boundaries
+
+```text
+nqrelay        (leaf: stdlib + gorilla/websocket)
+internal/orch  (leaf: stdlib + internal/assets)
+internal/admin (leaf: stdlib + github.com/google/shlex)
+
+package main   (sole integration point)
+  -> nqrelay + internal/orch + internal/admin + internal/assets
+```
+
+Rules:
+
+- `nqrelay`, `internal/orch`, and `internal/admin` do not import each other.
+- `nqrelay` has no imports from `internal/*` and no app policy logic.
+- All cross-subsystem wiring is done in package `main` (`connect.go` and `control.go`).
 
 ## Packages
 
 | Dir | Purpose |
 |-----|---------|
-| `nqrelay/` | **Networking.** WebSocket upgrader, WebSocket<->UDP relay, session registry, virtual IP allocator, tunnel frame helpers. |
-| `internal/orch/` | **Orchestration.** Dedicated server launch planning, process lifecycle, server console capture/tail, server-info poller for `slist`. |
-| `internal/admin/` | **Admin.** Auth (OIDC JWT + in-game `rcon_password`), admin frame handler for commands, Nexus command dispatcher. |
-| `internal/assets/` | **Game data.** Quickstart manifests, VFS manifest builder, PAK indexing, BGM audio handling, and hash-addressed asset gateway. |
+| `nqrelay/` | **Networking relay.** Standalone WebSocket<->UDP relay with session lifecycle, deterministic virtual IP allocation, and control-frame callback hooks. No HTTP/auth/application imports. |
+| `internal/orch/` | **Orchestration.** Dedicated server launch/lifecycle, pool autoscaling/reconcile, server console capture, and `slist` polling/aggregation. No `nqrelay` or `admin` imports. |
+| `internal/admin/` | **Admin control plane.** Auth + admin command parsing/dispatch via callback-driven `Env`; no direct imports from `orch` or `nqrelay`. |
+| `internal/assets/` | **Game data gateway.** Quickstart manifests, VFS manifest construction, PAK indexing/streaming, CD index, and hash-addressed asset serving (`/start`, `/nq/<hash>`). |
 
 ### `internal/assets/` — Game Data
 
 | File | Purpose |
 |------|---------|
-| `internal/assets/vfs.go` | **Manifest builder.** Scans `${GAME_DIR}/<mod>/common` + `${GAME_DIR}/<mod>/client`, builds JSON manifests with Quake-like precedence (loose > PAK, higher PAK number wins). |
+| `internal/assets/vfs.go` | **Manifest builder.** Scans `${GAME_DIR}/<mod>/common` + `${GAME_DIR}/<mod>/client` and builds JSON manifests with Quake precedence (loose > PAK, higher PAK number wins). |
 | `internal/assets/cd.go` | **CD index.** Scans `${CD_DIR}` for `.ogg`/`.mp3` BGM tracks. |
-| `internal/assets/pak.go` | **PAK parser.** Indexes PAK headers and exposes file offsets/sizes for real-time extraction. |
-| `internal/assets/manifest.go` | **Runtime gateway.** Serves `/start` quickstart + `/nq/<hash>` asset requests for VFS and CD audio. |
-| `internal/assets/game.go` | **Quickstart + installers.** Seeds `servers.ini` and installs missing mod layers from `CFG_DIR/game.json` based on `QUICKSTART` and `servers.ini -game` entries. Also contains archive/download install helpers. |
+| `internal/assets/pak.go` | **PAK parser.** Indexes PAK headers and exposes file offsets/sizes for stream extraction. |
+| `internal/assets/manifest.go` | **Runtime gateway.** Serves quickstart metadata and hash-addressed asset reads. |
+| `internal/assets/game.go` | **Quickstart + installers.** Seeds `servers.ini` and installs missing mod layers from `CFG_DIR/game.json` based on `QUICKSTART` and `servers.ini -game` entries. |
 
 ### Quake 1.06 Extraction (`quake106/`)
 
-A standalone Go library that extracts `pak0.pak` directly from the original Quake 1.06 shareware distribution (`quake106.zip`). See the [quake106 README](./quake106/README.md) for details.
+A standalone Go package that extracts `pak0.pak` directly from the original Quake 1.06 shareware distribution (`quake106.zip`). See the [quake106 README](./quake106/README.md).
 
 | File | Purpose |
 |------|---------|
@@ -38,31 +57,30 @@ A standalone Go library that extracts `pak0.pak` directly from the original Quak
 
 ### `internal/orch/` — Orchestration
 
-Manages dedicated server processes and scaled-backend lifecycle. Parses old-school, `.bat`-style `servers.ini` into a launch plan, starts processes under PTY for console capture, runs backend-pool reconcile/autoscale policy, polls server-info for the `slist` cache, and exposes operations for the admin rcon interface.
+Manages dedicated server processes and scaled backend pools. Parses `.bat`-style `servers.ini`, starts processes under PTY for console capture, polls server info for `slist`, and runs pool reconcile/autoscale policy.
 
 | File | Purpose |
 |------|---------|
-| `launcher.go` | `servers.ini` parser (with `@macro` + `%arg` expansion), launch plan builder, and process start/stop wiring under PTY. |
-| `manager.go` | `ServerManager` construction, shared logging hooks, and operator console relay formatting. |
-| `registry.go` | Pool/server registry model, backend lifecycle state (`warming/active/draining/terminating`), proxy-port reservation, and aggregate pool snapshot refresh. |
-| `state.go` | In-memory server state updates (resolved port/search-path + observed server-info), startup-online transitions, and per-update pool reconcile trigger. |
-| `proxy.go` | Scaled-entry proxy routing: destination backend selection, source-port rewrite, per-session affinity TTL, demand accounting, and scaled-target RCON resolution. |
-| `policy.go` | Pool policy engine: headroom calculation, autoscale scale-up/drain/despawn decisions, and reconcile loops (`observed` + heartbeat all-pools). |
-| `ops.go` | High-level server operations (start/stop/restart/remove/launch by port or index). Resolves targets and coordinates pool/member transitions. |
-| `console.go` | PTY-based server console I/O. Captures output lines, detects listen port from console, supports filtered reads for rcon command capture. |
-| `rcon.go` | Server command execution: writes a command to the PTY, captures output with idle/max timeouts, formats the reply. |
-| `slist.go` | Server-info poller. Sends `CCREQ_SERVER_INFO` in round-robin, updates cache for WebSocket `slist`, and drives periodic all-pool reconcile heartbeat. |
+| `launcher.go` | `servers.ini` parser (`@macro` + `%arg` expansion), launch plan builder, and process start/stop wiring under PTY. |
+| `manager.go` | `ServerManager` construction, logging hooks, and operator console relay formatting. |
+| `registry.go` | Pool/server registry model, backend lifecycle state (`warming/active/draining/terminating`), and aggregate pool snapshot refresh. |
+| `state.go` | In-memory state updates (resolved port/search-path + observed server-info), startup-online transitions, and per-update reconcile trigger. |
+| `pool.go` | Pool policy + proxy routing internals: destination backend selection, affinity TTL tracking, demand accounting, and scale-up/drain/despawn decisions. |
+| `ops.go` | High-level operations (`start`, `stop`, `restart`, `remove`, `launch`) by port/index. |
+| `console.go` | PTY console I/O capture, listen-port detection, and filtered reads for command capture. |
+| `rcon.go` | Server command execution with idle/max capture windows and formatted reply output. |
+| `slist.go` | Server-info poller + aggregated `CCREP_SERVER_INFO` builder used for WebSocket `slist` responses. |
 
 ### `internal/admin/` — Admin
 
-Authenticates admin sessions and handles rcon commands dispatched from the WebSocket layer.
+Authenticates admin sessions and handles rcon commands dispatched from the WebSocket control channel. Package dependencies are injected via `Env` callbacks so admin code remains isolated from orchestration and relay internals.
 
 | File | Purpose |
 |------|---------|
-| `auth.go` | Authentication. OIDC JWT verification (`AUTH_ISSUER`, `AUTH_AUDIENCE`, `AUTH_JWT_HEADER`) for connection-level admin identity with optional matcher list `AUTH_ADMIN_ID` (empty means any valid JWT is admin), plus optional `AUTH_RCON_PASSWORD` for in-game shared-secret auth. |
-| `rcon.go` | Admin frame handler. Parses the rcon payload (password, optional target port, command), authorizes the frame, and dispatches to either a Nexus-level command or a server-level command. |
-| `cmds.go` | Nexus-level command dispatch and non-session admin helpers (`help`, `tail`, `slist`, `start`, `stop`, `restart`, `remove`, `launch`). |
-| `sessions.go` | Session-oriented admin commands and formatting/parsing helpers (`session list`, `session info`, `session ban`, status slot/address matching for targeted kick). |
+| `auth.go` | OIDC JWT verification (`AUTH_ISSUER`, `AUTH_AUDIENCE`, `AUTH_JWT_HEADER`) plus optional matcher allowlist (`AUTH_ADMIN_ID`) and `AUTH_RCON_PASSWORD` support. |
+| `rcon.go` | Admin frame parser/dispatcher for Nexus-level and server-level command execution. |
+| `cmds.go` | Nexus-level command handlers (`help`, `tail`, `slist`, `start`, `stop`, `restart`, `remove`, `launch`). |
+| `sessions.go` | Session-focused commands and helpers (`session list`, `session info`, `session ban`, status slot/address matching for targeted kick). |
 
 ## Building
 
@@ -79,4 +97,9 @@ CGO_ENABLED=0 go build -o nexus .
 
 ## Dependencies
 
-Go 1.24+. Primary deps: `github.com/gorilla/websocket` (WebSocket), `github.com/coreos/go-oidc/v3` (OIDC JWT), `github.com/creack/pty` (server console PTY), `github.com/google/shlex` (arg splitting).
+Go 1.24+. Primary dependencies:
+
+- `github.com/gorilla/websocket` (WebSocket tunnel)
+- `github.com/coreos/go-oidc/v3` (OIDC JWT verification)
+- `github.com/creack/pty` (server console PTY)
+- `github.com/google/shlex` (command argument splitting)

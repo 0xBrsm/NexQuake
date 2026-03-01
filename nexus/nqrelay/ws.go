@@ -12,7 +12,9 @@ const (
 	wsKeepaliveWriteTimeout = 5 * time.Second
 )
 
-// Upgrader is the WebSocket upgrader shared by all connections.
+// Upgrader is the default WebSocket upgrader. It negotiates the "binary"
+// subprotocol and disables per-message compression. CheckOrigin is set to
+// allow all origins — callers should override it for production deployments.
 var Upgrader = websocket.Upgrader{
 	HandshakeTimeout:  10 * time.Second,
 	ReadBufferSize:    4096,

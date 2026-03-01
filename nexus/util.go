@@ -46,6 +46,8 @@ var (
 	nexusLogFile   *os.File
 )
 
+// initLogging configures the log level from LOG_LEVEL and applies the
+// CONSOLE_TIMESTAMPS preference. Must be called once before any logf calls.
 func initLogging() {
 	operatorConsoleTimestamp.Store(true)
 	applyOperatorConsoleTimestampEnv()
@@ -66,6 +68,8 @@ func initLogging() {
 	}
 }
 
+// applyOperatorConsoleTimestampEnv reads CONSOLE_TIMESTAMPS (0|1) and updates
+// the operatorConsoleTimestamp flag. Called at startup and exposed for testing.
 func applyOperatorConsoleTimestampEnv() {
 	raw := strings.TrimSpace(os.Getenv("CONSOLE_TIMESTAMPS"))
 	if raw == "" {
@@ -82,6 +86,9 @@ func applyOperatorConsoleTimestampEnv() {
 	}
 }
 
+// configureNexusLogFile opens (or creates) nexus.log inside logsDir and sets
+// it as the active log destination. It is safe to call more than once; the
+// previous file is closed atomically.
 func configureNexusLogFile(logsDir string) error {
 	logsDir = strings.TrimSpace(logsDir)
 	if logsDir == "" {
@@ -107,6 +114,7 @@ func configureNexusLogFile(logsDir string) error {
 	return nil
 }
 
+// closeNexusLogFile closes the active nexus log file. Called via defer at shutdown.
 func closeNexusLogFile() {
 	nexusLogFileMu.Lock()
 	f := nexusLogFile
@@ -125,6 +133,8 @@ func operatorConsoleTimestampsEnabled() bool {
 	return operatorConsoleTimestamp.Load()
 }
 
+// formatTimestampedLogText prefixes every line of msg with a timestamp.
+// The result is always newline-terminated; empty input returns "".
 func formatTimestampedLogText(msg string, now time.Time) string {
 	lines := splitLogLines(msg)
 	if len(lines) == 0 {
@@ -140,6 +150,8 @@ func formatTimestampedLogText(msg string, now time.Time) string {
 	return b.String()
 }
 
+// formatPlainLogText normalises msg to a newline-terminated string without
+// timestamps. Used for the no-timestamp operator console variant.
 func formatPlainLogText(msg string) string {
 	lines := splitLogLines(msg)
 	if len(lines) == 0 {
@@ -148,6 +160,8 @@ func formatPlainLogText(msg string) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
+// splitLogLines normalises line endings and splits msg into individual lines,
+// stripping trailing newlines. Returns nil for blank input.
 func splitLogLines(msg string) []string {
 	msg = strings.ReplaceAll(msg, "\r\n", "\n")
 	msg = strings.ReplaceAll(msg, "\r", "\n")
@@ -158,6 +172,9 @@ func splitLogLines(msg string) []string {
 	return strings.Split(msg, "\n")
 }
 
+// writeOperatorConsoleText writes to stderr. If timestamp mode is enabled,
+// the timestamped form is used; otherwise the plain form. Both arguments
+// must refer to the same logical message.
 func writeOperatorConsoleText(timestamped, plain string) {
 	operatorConsoleMu.Lock()
 	defer operatorConsoleMu.Unlock()
@@ -172,6 +189,7 @@ func writeOperatorConsoleText(timestamped, plain string) {
 	_, _ = io.WriteString(os.Stderr, text)
 }
 
+// writeNexusLogFile appends text to the open nexus log file, if any.
 func writeNexusLogFile(text string) {
 	if text == "" {
 		return
@@ -184,6 +202,9 @@ func writeNexusLogFile(text string) {
 	_, _ = io.WriteString(nexusLogFile, text)
 }
 
+// logf formats and emits a log message at the given level. Messages are written
+// to the in-memory tail buffer, the log file, and the operator console.
+// Suppressed when level exceeds currentLogLevel.
 func logf(level logLevel, format string, args ...any) {
 	if level > currentLogLevel {
 		return
@@ -197,6 +218,9 @@ func logf(level logLevel, format string, args ...any) {
 	writeOperatorConsoleText(timestamped, plain)
 }
 
+// logfNoTail is like logf but skips the tail buffer and file — used for
+// server console relay lines that should appear on-screen but not pollute the
+// admin tail history.
 func logfNoTail(level logLevel, format string, args ...any) {
 	if level > currentLogLevel {
 		return
@@ -210,6 +234,9 @@ func errorf(format string, args ...any) { logf(logError, format, args...) }
 func warnf(format string, args ...any)  { logf(logWarn, format, args...) }
 func infof(format string, args ...any)  { logf(logInfo, format, args...) }
 func debugf(format string, args ...any) { logf(logDebug, format, args...) }
+// auditf always records the message to the tail buffer and log file regardless
+// of the current log level. It also writes to the operator console when debug
+// level is active. Use for security-sensitive events (bans, promotions, etc.).
 func auditf(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	now := time.Now()
@@ -229,6 +256,8 @@ func fatalf(format string, args ...any) {
 	os.Exit(1)
 }
 
+// recordNexusLogLine appends each line of text to the in-memory ring buffer.
+// When the buffer is full (nexusLogHistoryCap) the oldest line is evicted.
 func recordNexusLogLine(text string) {
 	if text == "" {
 		return
@@ -248,6 +277,8 @@ func recordNexusLogLine(text string) {
 	}
 }
 
+// tailNexusLogLines returns the last n lines from the in-memory log buffer.
+// Returns nil when n <= 0 or the buffer is empty.
 func tailNexusLogLines(n int) []string {
 	if n <= 0 {
 		return nil
@@ -264,12 +295,6 @@ func tailNexusLogLines(n int) []string {
 	return append([]string(nil), snapshot[len(snapshot)-n:]...)
 }
 
-func resetNexusLogHistoryForTest() {
-	nexusLogHistoryMu.Lock()
-	defer nexusLogHistoryMu.Unlock()
-	nexusLogHistory = nil
-}
-
 // ---- Version ----
 
 // These are set at build time via -ldflags.
@@ -281,6 +306,8 @@ var (
 	buildTime = ""
 )
 
+// versionInfo carries build-time metadata returned by the /health endpoint
+// and the --version CLI command.
 type versionInfo struct {
 	GitSHA    string `json:"git_sha"`
 	BuildTime string `json:"build_time,omitempty"`
@@ -289,6 +316,8 @@ type versionInfo struct {
 	GOARCH    string `json:"goarch"`
 }
 
+// currentVersionInfo returns build metadata. When buildTime is not set via
+// -ldflags it defaults to the current UTC time (dev builds only).
 func currentVersionInfo() versionInfo {
 	bt := buildTime
 	if bt == "" {
@@ -305,16 +334,19 @@ func currentVersionInfo() versionInfo {
 
 // ---- Misc runtime helpers ----
 
-func FNV64aSum(text string) uint64 {
+// fnv64aSum returns the FNV-1a 64-bit hash of text.
+func fnv64aSum(text string) uint64 {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(text))
 	return h.Sum64()
 }
 
-func FNV64aHex(text string) string {
-	return fmt.Sprintf("%016x", FNV64aSum(text))
+// fnv64aHex returns fnv64aSum(text) formatted as a 16-char lowercase hex string.
+func fnv64aHex(text string) string {
+	return fmt.Sprintf("%016x", fnv64aSum(text))
 }
 
+// getEnv returns the value of key, or defaultValue when the variable is unset or empty.
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
@@ -322,6 +354,8 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
+// getEnvIntMin parses key as an integer. Returns defaultValue when the variable
+// is unset, non-integer, or below minValue, and warns in those last two cases.
 func getEnvIntMin(key string, defaultValue, minValue int) int {
 	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {
@@ -335,6 +369,8 @@ func getEnvIntMin(key string, defaultValue, minValue int) int {
 	return value
 }
 
+// getEnvBool01 parses key as "0" or "1". Returns defaultValue when the variable
+// is unset or not a recognised value, and warns in the latter case.
 func getEnvBool01(key string, defaultValue bool) bool {
 	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {
@@ -351,6 +387,8 @@ func getEnvBool01(key string, defaultValue bool) bool {
 	}
 }
 
+// getEnvArgs parses key as shell-style arguments using shlex. Returns a copy of
+// defaultValue when the variable is unset, empty, or contains a parse error.
 func getEnvArgs(key string, defaultValue []string) []string {
 	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {
@@ -374,11 +412,14 @@ func getEnvArgs(key string, defaultValue []string) []string {
 	return out
 }
 
+// fileExists reports whether path exists and is a regular file (not a directory).
 func fileExists(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && !st.IsDir()
 }
 
+// contentTypeOverride forces correct Content-Type for .wasm, .data, and .pak
+// files, which net/http's built-in sniffing may misclassify.
 func contentTypeOverride(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -392,6 +433,10 @@ func contentTypeOverride(h http.Handler) http.Handler {
 	})
 }
 
+// cacheControlClient sets Cache-Control headers for the WASM client static
+// files. HTML, JS, WASM, and CSS are served with no-store to prevent stale
+// client/server version mismatches. Skips setting headers if a reverse proxy
+// has already set Cache-Control.
 func cacheControlClient(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// If another layer already set Cache-Control (e.g. reverse proxy), keep it.
@@ -415,14 +460,13 @@ func cacheControlClient(h http.Handler) http.Handler {
 	})
 }
 
-// addIsolationHeaders wraps a handler to add browser isolation headers for SharedArrayBuffer support.
+// addIsolationHeaders sets the COOP/COEP/CORP headers required for
+// SharedArrayBuffer (used by WASM threading) on all responses from h.
 func addIsolationHeaders(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Required headers for SharedArrayBuffer (WASM threading)
 		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 		w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
 		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
-
 		h.ServeHTTP(w, r)
 	})
 }

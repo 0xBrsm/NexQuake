@@ -11,25 +11,35 @@ import (
 // Session is the relay connection interface used by the admin subsystem.
 // nqrelay.Relay satisfies this interface.
 type Session interface {
+	// IsAdmin reports whether this session has admin privileges.
 	IsAdmin() bool
+	// PromoteAdmin grants admin privileges to this session.
 	PromoteAdmin()
+	// SendAdminReply delivers a text reply to the client's admin frame.
 	SendAdminReply(msg string)
+	// SourceIP returns the real client IP (possibly from a trusted header).
 	SourceIP() string
+	// VirtualClientIP returns the NQ virtual IP assigned to this session.
 	VirtualClientIP() string
+	// ClientIP returns the virtual IP as a raw 4-byte value, used for blocking.
 	ClientIP() [4]byte
+	// SourceKey is a stable identity key derived from SourceIP, used for ban tracking.
 	SourceKey() string
+	// Close terminates the WebSocket connection.
 	Close()
 }
 
 const defaultServerTailLines = 10
 
 // HandleAdminFrame processes an incoming admin (port 0) frame from a WebSocket client.
+// It is a convenience wrapper around [HandleAdminFrameWithIdentityAndPromotionHook]
+// with no identity label and no promotion callback.
 func HandleAdminFrame(r Session, payload []byte, auth *Auth, env *Env) {
 	HandleAdminFrameWithIdentityAndPromotionHook(r, payload, auth, env, "", nil)
 }
 
-// HandleAdminFrameWithPromotionHook is HandleAdminFrame plus an optional
-// callback fired when a non-admin session is promoted via valid rcon_password.
+// HandleAdminFrameWithPromotionHook is [HandleAdminFrame] plus an optional callback
+// fired when a non-admin session is first promoted via a valid rcon_password.
 func HandleAdminFrameWithPromotionHook(
 	r Session,
 	payload []byte,
@@ -40,8 +50,9 @@ func HandleAdminFrameWithPromotionHook(
 	HandleAdminFrameWithIdentityAndPromotionHook(r, payload, auth, env, "", onPromoted)
 }
 
-// HandleAdminFrameWithIdentityAndPromotionHook is HandleAdminFrameWithPromotionHook
-// plus an explicit connection identity label used for command audit echoes.
+// HandleAdminFrameWithIdentityAndPromotionHook is the primary admin-frame handler.
+// identity is an optional actor label (e.g. email from OIDC) used in audit logs;
+// onPromoted is called once when a session is promoted to admin via rcon_password.
 func HandleAdminFrameWithIdentityAndPromotionHook(
 	r Session,
 	payload []byte,
@@ -77,18 +88,14 @@ func HandleAdminFrameWithIdentityAndPromotionHook(
 	actorID := resolveAdminActorID(identity, r)
 	targetLabel := adminTargetLabel(targetPort)
 	adminAuditf(env, "admin-rcon request actor=%q target=%s command=%q", actorID, targetLabel, sanitizeAdminAuditText(args))
+
+	var reply string
+	var err error
 	if targetPort == 0 {
-		reply, err := execNexusCommand(args, env)
-		if err != nil {
-			adminAuditf(env, "admin-rcon response actor=%q target=%s error=%q", actorID, targetLabel, sanitizeAdminAuditText(err.Error()))
-			r.SendAdminReply(fmt.Sprintf("error: %v\n", err))
-			return
-		}
-		adminAuditf(env, "admin-rcon response actor=%q target=%s reply=%q", actorID, targetLabel, sanitizeAdminAuditText(reply))
-		r.SendAdminReply(reply)
-		return
+		reply, err = execNexusCommand(args, env)
+	} else {
+		reply, err = env.ExecServerCmd(targetPort, args, actorID)
 	}
-	reply, err := env.ExecServerCmd(targetPort, args, actorID)
 	if err != nil {
 		adminAuditf(env, "admin-rcon response actor=%q target=%s error=%q", actorID, targetLabel, sanitizeAdminAuditText(err.Error()))
 		r.SendAdminReply(fmt.Sprintf("error: %v\n", err))
@@ -149,7 +156,9 @@ func adminAuditf(env *Env, format string, args ...any) {
 	env.Auditf(format, args...)
 }
 
-// splitAdminPayload parses the binary admin frame into password, target port, and args.
+// splitAdminPayload parses a binary admin frame into its three NUL-delimited
+// fields: password, target port (0 = Nexus, 1-65535 = a game server port), and
+// the command argument string.
 func splitAdminPayload(payload []byte) (password string, targetPort int, args string) {
 	var targetText string
 

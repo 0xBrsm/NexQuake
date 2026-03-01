@@ -71,6 +71,9 @@ type gatewaySession struct {
 
 // HashedAssetGateway serves a bootstrap manifest and hash-addressed asset
 // requests for both VFS game data and CD tracks.
+//
+// Call StartHandler to obtain a per-session manifest, then AssetHandler to
+// serve the individual assets referenced by that manifest.
 type HashedAssetGateway struct {
 	gameDir             string
 	cdDir               string
@@ -87,6 +90,17 @@ type HashedAssetGateway struct {
 	assetsByHash map[string]hashedAsset
 }
 
+// NewHashedAssetGateway creates a HashedAssetGateway for the given directories
+// and client configuration.
+//
+//   - gameDir is the root of the layered mod tree (GAME_DIR).
+//   - cdDir is the directory containing CD-audio track files (may be empty/missing).
+//   - pakCache is an optional shared PakIndexCache; a new one is created if nil.
+//   - prefetchConcurrency is forwarded to the browser client as the max parallel
+//     prefetch request count.
+//   - smenuOnFirstLoad instructs the client to open the server menu on first connect.
+//   - sendArgs is an optional list of extra arguments sent to the Quake client.
+//   - urlArgs enables passing launch arguments via URL query string.
 func NewHashedAssetGateway(gameDir, cdDir string, pakCache *PakIndexCache, prefetchConcurrency int, smenuOnFirstLoad bool, sendArgs []string, urlArgs bool) *HashedAssetGateway {
 	if pakCache == nil {
 		pakCache = NewPakIndexCache()
@@ -106,6 +120,8 @@ func NewHashedAssetGateway(gameDir, cdDir string, pakCache *PakIndexCache, prefe
 	}
 }
 
+// SetErrorf sets the error-logging function used for non-fatal warnings (e.g.
+// unreadable pak files). A nil logf silences all error output.
 func (g *HashedAssetGateway) SetErrorf(logf func(string, ...any)) {
 	if logf == nil {
 		g.errorf = func(string, ...any) {}
@@ -114,6 +130,14 @@ func (g *HashedAssetGateway) SetErrorf(logf func(string, ...any)) {
 	g.errorf = logf
 }
 
+// StartHandler returns an HTTP handler that snapshots the current game/CD asset
+// state, registers a session, and responds with a base64-encoded JSON manifest.
+//
+// The manifest includes per-session hash addresses for each asset; these hashes
+// are only valid until the session expires (default 37 minutes). The response
+// sets the X-NexQuake-Ref header to the session identifier.
+//
+// Returns 404 when no mod directories are found, 500 on internal errors.
 func (g *HashedAssetGateway) StartHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -158,6 +182,11 @@ func (g *HashedAssetGateway) StartHandler() http.HandlerFunc {
 	}
 }
 
+// AssetHandler returns an HTTP handler that serves individual assets by the
+// per-session hash address issued by StartHandler.
+//
+// The URL path must be /nq/<hash> where hash is a 16-character hex string.
+// Supports GET and HEAD. Returns 404 for unknown or expired hashes.
 func (g *HashedAssetGateway) AssetHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {

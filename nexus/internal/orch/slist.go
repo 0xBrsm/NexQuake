@@ -1,6 +1,7 @@
 package orch
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -11,9 +12,85 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/0xBrsm/NexQuake/nexus/nqrelay"
 )
+
+// Quake wire-protocol constants (see quakedef.h / net.h).
+const (
+	netFlagLengthMask  uint32 = 0x0000ffff
+	netFlagCtl         uint32 = 0x80000000
+	netProtocolVersion byte   = 3
+	ccreqServerInfo    byte   = 0x02
+	ccrepServerInfo    byte   = 0x83
+)
+
+// buildCCREQServerInfo constructs a CCREQ_SERVER_INFO datagram.
+func buildCCREQServerInfo() []byte {
+	buf := make([]byte, 0, 64)
+	buf = append(buf, 0, 0, 0, 0) // placeholder header
+	buf = append(buf, ccreqServerInfo)
+	buf = appendCString(buf, "QUAKE")
+	buf = append(buf, netProtocolVersion)
+
+	control := netFlagCtl | uint32(len(buf))
+	binary.BigEndian.PutUint32(buf[0:4], control)
+	return buf
+}
+
+// parseCCREPServerInfo extracts server info from a CCREP_SERVER_INFO response.
+func parseCCREPServerInfo(payload []byte) (hostname, mapName string, players, maxPlayers, protocol byte, ok bool) {
+	if len(payload) < 5 {
+		return "", "", 0, 0, 0, false
+	}
+	control := binary.BigEndian.Uint32(payload[:4])
+	if (control&^netFlagLengthMask) != netFlagCtl || int(control&netFlagLengthMask) != len(payload) || payload[4] != ccrepServerInfo {
+		return "", "", 0, 0, 0, false
+	}
+	i := 5
+
+	// server_address (ignored)
+	_, next, ok := readCString(payload, i)
+	if !ok {
+		return "", "", 0, 0, 0, false
+	}
+	i = next
+
+	hostname, next, ok = readCString(payload, i)
+	if !ok {
+		return "", "", 0, 0, 0, false
+	}
+	i = next
+	mapName, next, ok = readCString(payload, i)
+	if !ok {
+		return "", "", 0, 0, 0, false
+	}
+	i = next
+
+	if i+3 > len(payload) {
+		return "", "", 0, 0, 0, false
+	}
+	players = payload[i]
+	maxPlayers = payload[i+1]
+	protocol = payload[i+2]
+	return hostname, mapName, players, maxPlayers, protocol, protocol == netProtocolVersion
+}
+
+func appendCString(buf []byte, s string) []byte {
+	buf = append(buf, []byte(s)...)
+	buf = append(buf, 0)
+	return buf
+}
+
+func readCString(buf []byte, start int) (string, int, bool) {
+	if start < 0 || start >= len(buf) {
+		return "", 0, false
+	}
+	rest := buf[start:]
+	n := bytes.IndexByte(rest, 0)
+	if n < 0 {
+		return "", 0, false
+	}
+	return string(rest[:n]), start + n + 1, true
+}
 
 // Quake client hostcache field limits (see net.h in the patched client).
 const (
@@ -21,27 +98,21 @@ const (
 	hostcacheFieldMax = 15
 )
 
-// serverListEntry describes a single server for the aggregated slist response.
+// serverListEntry describes a single server entry in the aggregated slist response.
 type serverListEntry struct {
-	ListenPort int
-	Hostname   string
-	MapName    string
-	GameDir    string
-	Users      uint16
-	MaxUsers   uint16
-	Instances  uint16
+	ListenPort int    // UDP port the server is listening on
+	Hostname   string // server hostname (truncated to hostcacheNameMax)
+	MapName    string // current map (truncated to hostcacheFieldMax)
+	GameDir    string // active game directory (truncated to hostcacheFieldMax)
+	Users      uint16 // current player count
+	MaxUsers   uint16 // server capacity
+	Instances  uint16 // backend instance count (≥1)
 }
 
 // buildCCREPServerList builds an aggregated CCREP_SERVER_INFO response
 // containing multiple server entries. Returns the datagram and entry count.
 func buildCCREPServerList(entries []serverListEntry) ([]byte, int) {
-	const (
-		netFlagLengthMask  uint32 = 0x0000ffff
-		netFlagCtl         uint32 = 0x80000000
-		netProtocolVersion byte   = 3
-		ccrepServerInfo    byte   = 0x83
-		maxNetDatagramSize        = 1024 + 8
-	)
+	const maxNetDatagramSize = 1024 + 8
 
 	buf := make([]byte, 0, 512)
 	buf = append(buf, 0, 0, 0, 0) // placeholder header
@@ -112,14 +183,8 @@ func appendSlistCString(buf []byte, s string) []byte {
 	return append(buf, 0)
 }
 
-// isSlistRequest reports whether payload is a valid CCREQ_SERVER_INFO datagram.
-func isSlistRequest(payload []byte) bool {
-	const (
-		netFlagLengthMask  uint32 = 0x0000ffff
-		netFlagCtl         uint32 = 0x80000000
-		ccreqServerInfo    byte   = 0x02
-		netProtocolVersion byte   = 3
-	)
+// IsSlistRequest reports whether payload is a valid CCREQ_SERVER_INFO datagram.
+func IsSlistRequest(payload []byte) bool {
 	if len(payload) < 4+1 {
 		return false
 	}
@@ -142,25 +207,37 @@ func isSlistRequest(payload []byte) bool {
 	return proto < len(payload) && payload[proto] == netProtocolVersion
 }
 
-// NewControlHandler returns a FrameDispatch HandleControlFrame function that
-// handles CCREQ_SERVER_INFO slist requests via mgr, and delegates all other
-// port-0 traffic to handleAdmin.
-func NewControlHandler(mgr *ServerManager, handleAdmin func(relay *nqrelay.Relay, payload []byte)) func(*nqrelay.Relay, []byte) []byte {
-	return func(relay *nqrelay.Relay, payload []byte) []byte {
-		if isSlistRequest(payload) {
-			entries := snapshotForSlist(mgr)
-			data, _ := buildCCREPServerList(entries)
-			return data
-		}
-		if handleAdmin != nil {
-			handleAdmin(relay, payload)
-		}
-		return nil
+// BuildSlistResponse builds an aggregated CCREP_SERVER_INFO response datagram
+// from the current state of all managed servers.
+func (m *ServerManager) BuildSlistResponse() []byte {
+	entries := snapshotForSlist(m)
+	data, _ := buildCCREPServerList(entries)
+	return data
+}
+
+// listenAddr returns an unspecified UDP listen address (any port).
+func listenAddr() *net.UDPAddr {
+	return &net.UDPAddr{IP: net.IPv4zero, Port: 0}
+}
+
+// serverUDPAddr returns the UDP address for a server on the given port.
+func serverUDPAddr(serverIP net.IP, port int) *net.UDPAddr {
+	return &net.UDPAddr{IP: serverIP, Port: port}
+}
+
+// serverSourcePortFromAddr extracts the source port from a UDP address.
+func serverSourcePortFromAddr(addr net.Addr) (int, bool) {
+	udpAddr, ok := addr.(*net.UDPAddr)
+	if !ok || udpAddr.Port < 1 || udpAddr.Port > 65535 {
+		return 0, false
 	}
+	return udpAddr.Port, true
 }
 
 const serverInfoPollStep = 500 * time.Millisecond
 
+// serverInfoPoller polls running backends via CCREQ_SERVER_INFO and forwards
+// replies to the [ServerManager] to keep game-state metadata current.
 type serverInfoPoller struct {
 	mgr      *ServerManager
 	serverIP net.IP
@@ -169,12 +246,27 @@ type serverInfoPoller struct {
 	stopOnce sync.Once
 }
 
-func NewServerInfoPoller(mgr *ServerManager, serverIP net.IP) *serverInfoPoller {
+func newServerInfoPoller(mgr *ServerManager, serverIP net.IP) *serverInfoPoller {
 	return &serverInfoPoller{mgr: mgr, serverIP: serverIP}
 }
 
+// StartInfoPoller starts a server-info poller for mgr and returns a stop
+// function. If the UDP socket cannot be bound, it logs a warning and returns
+// a no-op stop function. The poller also stops when ctx is cancelled.
+func (mgr *ServerManager) StartInfoPoller(ctx context.Context, serverIP net.IP) func() {
+	p := newServerInfoPoller(mgr, serverIP)
+	if err := p.Start(ctx); err != nil {
+		mgr.warnf("Server info poller disabled: %v", err)
+		return func() {}
+	}
+	return p.Stop
+}
+
+// Start opens the UDP socket and launches the poll and read goroutines.
+// It returns an error if the UDP socket cannot be bound.
+// The poller stops when ctx is cancelled or Stop is called.
 func (p *serverInfoPoller) Start(ctx context.Context) error {
-	udpConn, err := net.ListenUDP("udp4", nqrelay.ListenAddr())
+	udpConn, err := net.ListenUDP("udp4", listenAddr())
 	if err != nil {
 		return fmt.Errorf("server info poller: listen udp: %w", err)
 	}
@@ -187,6 +279,8 @@ func (p *serverInfoPoller) Start(ctx context.Context) error {
 	return nil
 }
 
+// Stop closes the UDP socket and terminates both goroutines.
+// Safe to call more than once.
 func (p *serverInfoPoller) Stop() {
 	p.stopOnce.Do(func() {
 		if p.pollConn != nil {
@@ -313,21 +407,21 @@ func snapshotForSlist(mgr *ServerManager) []serverListEntry {
 }
 
 func (p *serverInfoPoller) pollLoop(ctx context.Context, conn *net.UDPConn) {
-	req := nqrelay.BuildCCREQServerInfo()
+	req := buildCCREQServerInfo()
 
 	var ports []int
 
 	// Prime quickly at startup.
 	ports = fillRunningPorts(p.mgr, ports)
 	for _, port := range ports {
-		dst := nqrelay.ServerUDPAddr(p.serverIP, port)
+		dst := serverUDPAddr(p.serverIP, port)
 		if _, err := conn.WriteToUDP(req, dst); err != nil && errors.Is(err, net.ErrClosed) {
 			return
 		}
 	}
 
 	pollOne := func(port int) bool {
-		dst := nqrelay.ServerUDPAddr(p.serverIP, port)
+		dst := serverUDPAddr(p.serverIP, port)
 		if _, err := conn.WriteToUDP(req, dst); err != nil {
 			return !errors.Is(err, net.ErrClosed)
 		}
@@ -381,12 +475,12 @@ func (p *serverInfoPoller) readLoop(ctx context.Context, conn *net.UDPConn) {
 			continue
 		}
 
-		srcPort, ok := nqrelay.ServerSourcePortFromAddr(src)
+		srcPort, ok := serverSourcePortFromAddr(src)
 		if !ok {
 			continue
 		}
 
-		hostname, mapName, players, maxPlayers, _, ok := nqrelay.ParseCCREPServerInfo(buf[:n])
+		hostname, mapName, players, maxPlayers, _, ok := parseCCREPServerInfo(buf[:n])
 		if !ok {
 			continue
 		}

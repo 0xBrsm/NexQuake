@@ -155,7 +155,7 @@ func spawnStressRelays(clientCount int, alloc *IPAllocator, sessions *SessionReg
 					ctx:       ctx,
 					cancel:    cancel,
 				}
-				relay.NoteServerRoutePort(26000 + (idx % 8))
+				relay.noteServerRoutePort(26000 + (idx % 8))
 				sessions.track(relay)
 				relays[idx] = relay
 			}
@@ -675,14 +675,14 @@ func expectWSIdentityFrame(conn *websocket.Conn, idx int) error {
 		return fmt.Errorf("identity message type[%d] = %d, want binary", idx, messageType)
 	}
 
-	minLen := WSPortHeaderSize + len(wsClientIdentityMagic) + 4
+	minLen := 2 + len(wsClientIdentityMagic) + 4
 	if len(frame) < minLen {
 		return fmt.Errorf("identity frame too short[%d]: %d < %d", idx, len(frame), minLen)
 	}
 	if frame[0] != 0 || frame[1] != 0 {
 		return fmt.Errorf("identity frame port[%d] = [%d %d], want [0 0]", idx, frame[0], frame[1])
 	}
-	if !bytes.Equal(frame[WSPortHeaderSize:WSPortHeaderSize+len(wsClientIdentityMagic)], []byte(wsClientIdentityMagic)) {
+	if !bytes.Equal(frame[2:2+len(wsClientIdentityMagic)], []byte(wsClientIdentityMagic)) {
 		return fmt.Errorf("identity frame magic mismatch[%d]", idx)
 	}
 	return nil
@@ -701,7 +701,7 @@ func startUDPEchoResponseReader(conn *websocket.Conn, idx int, echoPort int) (<-
 				readErrs <- fmt.Errorf("read echo[%d]: %w", idx, err)
 				return
 			}
-			if messageType != websocket.BinaryMessage || len(frame) < WSPortHeaderSize {
+			if messageType != websocket.BinaryMessage || len(frame) < 2 {
 				continue
 			}
 
@@ -710,7 +710,7 @@ func startUDPEchoResponseReader(conn *websocket.Conn, idx int, echoPort int) (<-
 				continue
 			}
 
-			payload := append([]byte(nil), frame[WSPortHeaderSize:]...)
+			payload := append([]byte(nil), frame[2:]...)
 			responses <- payload
 		}
 	}()

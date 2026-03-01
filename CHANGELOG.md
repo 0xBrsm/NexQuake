@@ -4,6 +4,11 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.7.2
+
+### Changed
+- Refactored Nexus handler and relay internals (route split, package boundary cleanup, and dead-code removal) while preserving external tunnel protocol semantics.
+
 ## 1.7.1
 
 ### Fixed

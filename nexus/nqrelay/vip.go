@@ -5,9 +5,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net"
-	"net/http"
-	"net/netip"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,8 +12,10 @@ import (
 
 const maxClientIPProbeAttempts = 4096
 
-// IPAllocator deterministically maps client source keys to 127.x.x.x
-// virtual IP addresses used for the Quake relay.
+// IPAllocator deterministically maps client source keys to unique 127.x.x.x
+// virtual IP addresses. The mapping is stable for a given sourceKey within a
+// process lifetime: the same key always hashes to the same candidate, with
+// linear probing on collision. Safe for concurrent use.
 type IPAllocator struct {
 	serverIP net.IP
 
@@ -26,7 +25,9 @@ type IPAllocator struct {
 	blockedSource map[string]struct{}
 }
 
-// NewIPAllocator creates an allocator that avoids collisions with serverIP.
+// NewIPAllocator creates an allocator. serverIP must be a 127.x.x.x address
+// (typically net.ParseIP(DefaultNQServerIP)); that address is excluded from
+// the allocation pool to avoid the relay colliding with the game server itself.
 func NewIPAllocator(serverIP net.IP) *IPAllocator {
 	return &IPAllocator{
 		serverIP:      serverIP.To4(),
@@ -97,8 +98,10 @@ func (a *IPAllocator) release(ip4 [4]byte) {
 	a.mu.Unlock()
 }
 
-// ReserveAndBlock permanently reserves ip4 and blocks sourceKey from future
-// allocations. Used for banning.
+// ReserveAndBlock permanently reserves ip4 so it is never re-allocated, and
+// blocks sourceKey from receiving any future allocation. Intended for banning:
+// call after closing a relay to ensure the banned virtual IP is not recycled
+// and the banned key cannot reconnect with a different IP.
 func (a *IPAllocator) ReserveAndBlock(ip4 [4]byte, sourceKey string) {
 	if ip4[0] != 127 {
 		return
@@ -115,7 +118,9 @@ func (a *IPAllocator) ReserveAndBlock(ip4 [4]byte, sourceKey string) {
 	a.mu.Unlock()
 }
 
-// IsBlocked reports whether sourceKey has been banned.
+// IsBlocked reports whether sourceKey has been permanently blocked via
+// [IPAllocator.ReserveAndBlock]. Callers can use this to reject reconnects
+// before attempting to construct a new relay.
 func (a *IPAllocator) IsBlocked(sourceKey string) bool {
 	sourceKey = normalizeSourceKey(sourceKey)
 	if sourceKey == "" {
@@ -129,63 +134,4 @@ func (a *IPAllocator) IsBlocked(sourceKey string) bool {
 
 func normalizeSourceKey(sourceKey string) string {
 	return strings.TrimSpace(sourceKey)
-}
-
-// ParseClientIP extracts an IP address from a raw header value or remote addr
-// string, handling Forwarded/X-Forwarded-For formats and port stripping.
-func ParseClientIP(raw string) (netip.Addr, bool) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return netip.Addr{}, false
-	}
-
-	if comma := strings.IndexByte(value, ','); comma >= 0 {
-		value = strings.TrimSpace(value[:comma])
-	}
-	if k, v, ok := strings.Cut(value, "="); ok && strings.EqualFold(strings.TrimSpace(k), "for") {
-		value = strings.TrimSpace(v)
-	}
-	value = strings.Trim(strings.TrimSpace(value), "\"")
-	if host, _, err := net.SplitHostPort(value); err == nil {
-		value = host
-	}
-	ip, err := netip.ParseAddr(strings.Trim(value, "[]"))
-	if err != nil {
-		return netip.Addr{}, false
-	}
-	return ip.Unmap(), true
-}
-
-// ResolveClientSourceIP returns the external client IP for a request.
-// Preference order:
-// 1) AUTH_CLIENT_IP_HEADER (if configured and parseable)
-// 2) Remote address IP
-func ResolveClientSourceIP(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-
-	if headerName := strings.TrimSpace(os.Getenv("AUTH_CLIENT_IP_HEADER")); headerName != "" {
-		if ip, ok := ParseClientIP(r.Header.Get(headerName)); ok {
-			return ip.String()
-		}
-	}
-
-	if ip, ok := ParseClientIP(r.RemoteAddr); ok {
-		return ip.String()
-	}
-
-	return ""
-}
-
-// ResolveClientSourceKey derives a stable identity key from an HTTP request.
-func ResolveClientSourceKey(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-
-	if sourceIP := ResolveClientSourceIP(r); sourceIP != "" {
-		return "ip:" + sourceIP
-	}
-	return strings.TrimSpace(r.RemoteAddr)
 }

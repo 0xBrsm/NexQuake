@@ -249,24 +249,17 @@ func selectGamesFromQuickstart(entries []gameDataEntry, logf func(string, ...any
 		order = append(order, name)
 	}
 
-	selected := make([]string, 0, len(order))
-	seen := make(map[string]struct{}, len(order))
-
 	raw := strings.TrimSpace(os.Getenv("QUICKSTART"))
 	if raw == "" {
 		raw = "ffa"
 	}
 	if strings.EqualFold(raw, "all") {
-		for _, name := range order {
-			if _, ok := seen[name]; ok {
-				continue
-			}
-			seen[name] = struct{}{}
-			selected = append(selected, name)
-		}
-		return selected
+		// order is already deduplicated; return a copy directly.
+		return append([]string(nil), order...)
 	}
 
+	selected := make([]string, 0, len(order))
+	seen := make(map[string]struct{}, len(order))
 	for _, part := range strings.Split(raw, ",") {
 		name := strings.TrimSpace(part)
 		if name == "" {

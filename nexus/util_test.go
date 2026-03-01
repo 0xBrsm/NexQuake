@@ -20,9 +20,9 @@ func TestFNV64aHex_KnownVectors(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := FNV64aHex(tt.in)
+		got := fnv64aHex(tt.in)
 		if got != tt.want {
-			t.Fatalf("FNV64aHex(%q) = %q, want %q", tt.in, got, tt.want)
+			t.Fatalf("fnv64aHex(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }
@@ -258,4 +258,10 @@ func TestAuditf_WritesToNexusLogAndTailRegardlessLogLevel(t *testing.T) {
 	if !strings.Contains(string(data), "admin-rcon request") {
 		t.Fatalf("expected audit line written to nexus.log, got %q", string(data))
 	}
+}
+
+func resetNexusLogHistoryForTest() {
+	nexusLogHistoryMu.Lock()
+	defer nexusLogHistoryMu.Unlock()
+	nexusLogHistory = nil
 }

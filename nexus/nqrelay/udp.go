@@ -3,16 +3,13 @@ package nqrelay
 import (
 	"errors"
 	"net"
-	"os"
 	"syscall"
 )
 
+// DefaultNQServerIP is the loopback address of the NQ dedicated server that
+// the relay forwards UDP traffic to. Override by passing a different IP to
+// [NewIPAllocator].
 const DefaultNQServerIP = "127.0.0.1"
-
-// ListenAddr returns an unspecified UDP listen address (any port).
-func ListenAddr() *net.UDPAddr {
-	return &net.UDPAddr{IP: net.IPv4zero, Port: 0}
-}
 
 // listenAddrForClient returns a UDP listen address bound to the client's
 // virtual IP (any port).
@@ -23,7 +20,8 @@ func listenAddrForClient(ip4 [4]byte) *net.UDPAddr {
 	}
 }
 
-// ServerSourcePortFromAddr extracts the source port from a UDP address.
+// ServerSourcePortFromAddr extracts the source port from a UDP address
+// returned by ReadFrom. Returns ok=false for non-UDP addresses and port 0.
 func ServerSourcePortFromAddr(addr net.Addr) (srcPort int, ok bool) {
 	udpAddr, isUDP := addr.(*net.UDPAddr)
 	if !isUDP || !isValidServerPort(udpAddr.Port) {
@@ -32,20 +30,13 @@ func ServerSourcePortFromAddr(addr net.Addr) (srcPort int, ok bool) {
 	return udpAddr.Port, true
 }
 
-// ServerUDPAddr returns the UDP address for a server on the given port,
-// using the provided server IP.
+// ServerUDPAddr returns the UDP address for a game server at the given port.
 func ServerUDPAddr(serverIP net.IP, port int) *net.UDPAddr {
-	return &net.UDPAddr{
-		IP:   serverIP,
-		Port: port,
-	}
+	return &net.UDPAddr{IP: serverIP, Port: port}
 }
 
-// udpReadLoop reads datagrams from udpConn and forwards them as WS frames
-// through the relay's send channel.
+// udpReadLoop reads datagrams from udpConn and forwards them as WS frames.
 func (r *Relay) udpReadLoop() {
-	debugRelay := os.Getenv("DEBUG_RELAY") == "1"
-
 	buffer := make([]byte, 65536)
 	for {
 		if r.ctx.Err() != nil {
@@ -70,12 +61,11 @@ func (r *Relay) udpReadLoop() {
 		if !ok {
 			continue
 		}
-		if debugRelay {
+		if r.debugRelay {
 			r.debugf("DEBUG_RELAY\tudp<-server\tsrc=%s\tport=%d\tlen=%d\tbytes=% x",
 				remoteSrcAddr.String(), srcPort, len(packet), packet[:min(len(packet), 24)])
 		}
 
-		r.rememberRoutePort(srcPort)
 		r.sendWS(buildWSFrame(srcPort, packet), true)
 	}
 }
@@ -86,10 +76,8 @@ func (r *Relay) udpWrite(dstPort int, payload []byte) {
 		return
 	}
 
-	debugRelay := os.Getenv("DEBUG_RELAY") == "1"
-
 	dst := ServerUDPAddr(r.alloc.serverIP, dstPort)
-	if debugRelay {
+	if r.debugRelay {
 		r.debugf("DEBUG_RELAY\tudp->server\tdst=%s\tlen=%d\tbytes=% x",
 			dst.String(), len(payload), payload[:min(len(payload), 24)])
 	}

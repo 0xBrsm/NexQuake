@@ -8,22 +8,24 @@ import (
 	"sync"
 )
 
-// BanTarget identifies a client to ban on a specific server port.
+// BanTarget pairs a virtual IP with the server port the client was last routed
+// to, giving callers the information needed to issue a game-server ban command.
 type BanTarget struct {
-	Port      int
-	VirtualIP string
+	Port      int    // UDP port of the game server the client was routing to.
+	VirtualIP string // 127.x.x.x address the game server sees as the client.
 }
 
-// SessionSnapshot is a point-in-time view of a single client session.
+// SessionSnapshot is a point-in-time view of a single active session.
 type SessionSnapshot struct {
-	VirtualIP        string
-	SourceIP         string
-	UserID           string
-	IsAdmin          bool
-	ActiveServerPort int
+	VirtualIP        string // 127.x.x.x virtual IP allocated for this client.
+	SourceIP         string // Best-effort real client address (from NewRelay).
+	UserID           string // Application-layer user identifier (from NewRelay).
+	IsAdmin          bool   // Whether the relay has admin privileges.
+	ActiveServerPort int    // Last UDP server port the client sent a frame to.
 }
 
-// SessionRegistry tracks active Relay→virtual-IP associations.
+// SessionRegistry tracks active relays indexed by their virtual IP.
+// It is safe for concurrent use.
 type SessionRegistry struct {
 	mu          sync.RWMutex
 	byVirtualIP map[uint32]map[*Relay]struct{}
@@ -72,7 +74,11 @@ func (r *SessionRegistry) untrack(relay *Relay) {
 	}
 }
 
-// SnapshotByVirtualIP returns all relays and their ban targets for a virtual IP.
+// SnapshotByVirtualIP returns all active relays for the given virtual IP and
+// the deduplicated, sorted set of ban targets derived from their last-routed
+// server ports. Returns (nil, nil) for an unknown or invalid IP.
+// Callers typically close each returned relay and then issue game-server ban
+// commands for each target.
 func (r *SessionRegistry) SnapshotByVirtualIP(virtualIP string) (relays []*Relay, targets []BanTarget) {
 	virtualIPKey, ok := parseVirtualIPKey(virtualIP)
 	if !ok {
@@ -102,7 +108,8 @@ func (r *SessionRegistry) SnapshotByVirtualIP(virtualIP string) (relays []*Relay
 	return relays, sortedUniqueTargets(targets)
 }
 
-// SnapshotAll returns a snapshot of every tracked session.
+// SnapshotAll returns a point-in-time snapshot of every tracked session.
+// Returns nil when there are no active sessions.
 func (r *SessionRegistry) SnapshotAll() []SessionSnapshot {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
