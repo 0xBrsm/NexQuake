@@ -10,52 +10,45 @@ static int snd_inited;
 static int16_t dma_buffer[DMA_SAMPLES];
 static int audio_read_cursor;
 static uint32_t audio_submit_seq;
+static int snd_paused;
 extern int desired_speed;
 extern int snd_blocked;
 
 EM_JS(int, js_audio_init, (int rate, int buf, int samples, int cursor, int submit_seq_ptr), {
 	try {
 		var AC = window.AudioContext || window.webkitAudioContext;
-		if (!AC) {
-			console.warn("AudioContext unavailable");
-			return 0;
-		}
+		if (typeof AC !== 'function') return 0;
+
 		var ctx;
 		try { ctx = new AC({sampleRate: rate}); }
 		catch (e) { ctx = new AC(); }
-		if (!ctx.createScriptProcessor) {
-			console.warn("createScriptProcessor unavailable");
-			return 0;
-		}
 
-		var node = ctx.createScriptProcessor(512, 0, 2);
-		var out = ctx.createGain();
-		try { out.gain.value = 0.0; } catch (e0) {}
+		if (typeof ctx.createScriptProcessor !== 'function') return 0;
+
+		var ua = navigator.userAgent || '';
+		var blockSize = /android|iphone|ipad|ipod/i.test(ua) ? 1024 : 512;
+		var node = ctx.createScriptProcessor(blockSize, 0, 2);
 		var mask = samples - 1;
 		var base = buf >> 1;
 		var ca = cursor >> 2;
 		var sa = submit_seq_ptr >> 2;
-		var sampleFrames = samples >> 1;
-		var staleFrameBudget = Math.min(sampleFrames, Math.max(512, Math.floor(rate * 0.35)));
-		var lastSubmitSeq = HEAPU32[sa] >>> 0;
-		var framesSinceSubmit = staleFrameBudget;
-		var fadeStep = 1.0 / 256.0;
+		var staleBudget = Math.min(samples >> 1, Math.max(512, (rate * 0.35) | 0));
+		var lastSubmitSeq = 0;
+		var framesSinceSubmit = staleBudget;
 		var fadeGain = 0.0;
+		var fadeStep = 1.0 / 256.0;
+		var scale = 1.0 / 32768.0;
 
-		function rampOutputIn() {
-			var now = ctx.currentTime;
-			try {
-				out.gain.cancelScheduledValues(now);
-				out.gain.setValueAtTime(0.0, now);
-				out.gain.linearRampToValueAtTime(1.0, now + 0.02);
-			} catch (e) {
-				try { out.gain.value = 1.0; } catch (e2) {}
-			}
-		}
+		var a = {
+			ctx: ctx, node: node,
+			paused: false, suspendToken: 0,
+			targets: null, events: null, resume: null
+		};
 
 		node.onaudioprocess = function(e) {
 			var L = e.outputBuffer.getChannelData(0);
 			var R = e.outputBuffer.getChannelData(1);
+
 			var seq = HEAPU32[sa] >>> 0;
 			if (seq !== lastSubmitSeq) {
 				lastSubmitSeq = seq;
@@ -64,104 +57,113 @@ EM_JS(int, js_audio_init, (int rate, int buf, int samples, int cursor, int submi
 				framesSinceSubmit += L.length;
 			}
 
-			if (framesSinceSubmit >= staleFrameBudget) {
+			var active = !a.paused && framesSinceSubmit < staleBudget;
+
+			// Fast path: fully silent and should stay silent
+			if (!active && fadeGain <= 0.0) {
 				L.fill(0);
 				R.fill(0);
-				fadeGain = 0.0;
 				return;
 			}
 
+			var target = active ? 1.0 : 0.0;
 			var p = HEAP32[ca];
 			for (var i = 0; i < L.length; i++) {
-				var q = p & mask;
-				if (fadeGain < 1.0) {
+				if (fadeGain < target) {
 					fadeGain += fadeStep;
-					if (fadeGain > 1.0)
-						fadeGain = 1.0;
+					if (fadeGain > 1.0) fadeGain = 1.0;
+				} else if (fadeGain > target) {
+					fadeGain -= fadeStep;
+					if (fadeGain < 0.0) fadeGain = 0.0;
 				}
-				L[i] = (HEAP16[base + q] / 32768.0) * fadeGain;
-				R[i] = (HEAP16[base + q + 1] / 32768.0) * fadeGain;
+				var q = p & mask;
+				L[i] = HEAP16[base + q] * scale * fadeGain;
+				R[i] = HEAP16[base + q + 1] * scale * fadeGain;
 				p += 2;
 			}
 			HEAP32[ca] = p & mask;
 		};
 
-		node.connect(out);
-		out.connect(ctx.destination);
-		rampOutputIn();
+		node.connect(ctx.destination);
 
-		var r = function() {
-			if (ctx.state === 'suspended')
-				ctx.resume();
+		// Resume context on user interaction (browser autoplay policy)
+		var resume = function() {
+			if (a.paused || ctx.state !== 'suspended') return;
+			ctx.resume();
 		};
 		var canvas = document.getElementById('canvas');
-		var targets = [document];
-		if (canvas) targets.push(canvas);
+		var targets = canvas ? [document, canvas] : [document];
 		var events = ['click', 'keydown', 'mousedown', 'touchstart'];
 		for (var t = 0; t < targets.length; t++)
 			for (var ev = 0; ev < events.length; ev++)
-				targets[t].addEventListener(events[ev], r, true);
+				targets[t].addEventListener(events[ev], resume, true);
 
-		Module._nq_audio = {
-			ctx: ctx,
-			node: node,
-			out: out,
-			resume: r,
-			targets: targets,
-			events: events,
-			connected: true,
-			rampOutputIn: rampOutputIn,
-			fadeIn: function() { fadeGain = 0.0; }
-		};
+		a.targets = targets;
+		a.events = events;
+		a.resume = resume;
+		Module._nq_audio = a;
 		return 1;
 	} catch (e) {
-		console.warn("js_audio_init failed:", e);
+		console.warn("js_audio_init:", e);
 		return 0;
 	}
 });
 
 EM_JS(void, js_audio_shutdown, (), {
-	try {
-		if (Module._nq_audio) {
-			var a = Module._nq_audio;
-			for (var t = 0; t < a.targets.length; t++)
-				for (var ev = 0; ev < a.events.length; ev++)
-					a.targets[t].removeEventListener(a.events[ev], a.resume, true);
-			a.node.onaudioprocess = null;
-			if (a.connected) {
-				a.node.disconnect();
-				a.connected = false;
-			}
-			a.out.disconnect();
-			a.ctx.close();
-			Module._nq_audio = null;
-		}
-	} catch (e) {
-		console.warn("js_audio_shutdown failed:", e);
+	var a = Module._nq_audio;
+	if (!a) return;
+	Module._nq_audio = null;
+	if (a.suspendToken) clearTimeout(a.suspendToken);
+	for (var t = 0; t < a.targets.length; t++)
+		for (var ev = 0; ev < a.events.length; ev++)
+			a.targets[t].removeEventListener(a.events[ev], a.resume, true);
+	a.node.onaudioprocess = null;
+	try { a.node.disconnect(); } catch (e) {}
+	try { a.ctx.close(); } catch (e) {}
+});
+
+EM_JS(void, js_audio_set_paused, (int paused), {
+	var a = Module._nq_audio;
+	if (!a) return;
+	if (a.suspendToken) {
+		clearTimeout(a.suspendToken);
+		a.suspendToken = 0;
+	}
+	a.paused = !!paused;
+	if (paused) {
+		// Delay suspend so the callback can fade out first
+		a.suspendToken = setTimeout(function() {
+			a.suspendToken = 0;
+			if (a.paused) try { a.ctx.suspend(); } catch(e) {}
+		}, 200);
+	} else {
+		try {
+			var p = a.ctx.resume();
+			if (p && p.catch) p.catch(function(){});
+		} catch(e) {}
 	}
 });
 
-EM_JS(void, js_audio_pause, (), {
-	if (Module._nq_audio) {
-		if (Module._nq_audio.connected) {
-			Module._nq_audio.node.disconnect();
-			Module._nq_audio.connected = false;
-		}
-		Module._nq_audio.ctx.suspend();
-	}
-});
+static void SNDDMA_SetPaused(int paused)
+{
+	if (!snd_inited || !!paused == !!snd_paused)
+		return;
 
-EM_JS(void, js_audio_unpause, (), {
-	if (Module._nq_audio) {
-		Module._nq_audio.fadeIn();
-		if (!Module._nq_audio.connected) {
-			Module._nq_audio.node.connect(Module._nq_audio.out);
-			Module._nq_audio.connected = true;
-		}
-		Module._nq_audio.rampOutputIn();
-		Module._nq_audio.ctx.resume();
+	if (paused)
+	{
+		snd_paused = 1;
+		snd_blocked++;
+		js_audio_set_paused(1);
+		return;
 	}
-});
+
+	memset(dma_buffer, 0, sizeof(dma_buffer));
+	audio_read_cursor = shm->samplepos;
+	js_audio_set_paused(0);
+	if (snd_blocked > 0)
+		snd_blocked--;
+	snd_paused = 0;
+}
 
 qboolean SNDDMA_Init(void) {
 	if (snd_inited)
@@ -171,6 +173,7 @@ qboolean SNDDMA_Init(void) {
 	memset(dma_buffer, 0, sizeof(dma_buffer));
 	audio_read_cursor = 0;
 	audio_submit_seq = 0;
+	snd_paused = 0;
 	shm = &the_shm;
 	shm->splitbuffer = 0;
 	shm->samplebits = 16;
@@ -187,21 +190,8 @@ qboolean SNDDMA_Init(void) {
 	return true;
 }
 
-void SNDDMA_Pause(void) {
-	if (!snd_inited)
-		return;
-	snd_blocked++;
-	js_audio_pause();
-}
-
-void SNDDMA_Resume(void) {
-	if (!snd_inited)
-		return;
-	memset(dma_buffer, 0, sizeof(dma_buffer));
-	audio_read_cursor = shm->samplepos;
-	js_audio_unpause();
-	snd_blocked--;
-}
+void SNDDMA_Pause(void)  { SNDDMA_SetPaused(1); }
+void SNDDMA_Resume(void) { SNDDMA_SetPaused(0); }
 
 int SNDDMA_GetDMAPos(void) {
 	return snd_inited ? audio_read_cursor : 0;
@@ -213,8 +203,9 @@ void SNDDMA_Submit(void) {
 }
 
 void SNDDMA_Shutdown(void) {
-	if (snd_inited) {
-		js_audio_shutdown();
-		snd_inited = 0;
-	}
+	if (!snd_inited)
+		return;
+	js_audio_shutdown();
+	snd_inited = 0;
+	snd_paused = 0;
 }

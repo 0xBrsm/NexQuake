@@ -4,6 +4,11 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.7.3
+
+### Fixed
+- WASM client audio pause/resume now uses smoother fade and delayed suspend/resume handling on mobile browsers, reducing audible pop/click artifacts and improving visibility-transition stability.
+
 ## 1.7.2
 
 ### Changed
