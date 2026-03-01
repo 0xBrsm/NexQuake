@@ -25,9 +25,9 @@ type FrameDispatch struct {
 	// HandleClose is invoked once during relay close.
 	HandleClose func(relay *Relay)
 
-	// IsAllowedPort, if non-nil, gates which UDP destination ports a client
-	// may target. Frames addressed to ports that return false are silently
-	// dropped. When nil, all ports are allowed.
+	// IsAllowedPort, if non-nil, gates primary UDP destination ports a client
+	// may target. Relay-learned return-path ports are also allowed. When nil,
+	// all destination ports are allowed.
 	IsAllowedPort func(port int) bool
 }
 
@@ -52,6 +52,7 @@ type Relay struct {
 
 	routeMu        sync.RWMutex
 	lastServerPort int
+	routePorts     map[int]struct{}
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -189,6 +190,28 @@ func (r *Relay) NoteServerRoutePort(port int) {
 	r.routeMu.Unlock()
 }
 
+func (r *Relay) hasRoutePort(port int) bool {
+	if !isValidServerPort(port) {
+		return false
+	}
+	r.routeMu.RLock()
+	_, ok := r.routePorts[port]
+	r.routeMu.RUnlock()
+	return ok
+}
+
+func (r *Relay) rememberRoutePort(port int) {
+	if !isValidServerPort(port) {
+		return
+	}
+	r.routeMu.Lock()
+	if r.routePorts == nil {
+		r.routePorts = make(map[int]struct{}, 4)
+	}
+	r.routePorts[port] = struct{}{}
+	r.routeMu.Unlock()
+}
+
 // activeServerPort returns the last-routed server port.
 func (r *Relay) activeServerPort() int {
 	r.routeMu.RLock()
@@ -266,11 +289,16 @@ func (r *Relay) handleWSFrame(packet []byte) {
 	if !isValidServerPort(dstPort) {
 		return
 	}
-	if r.dispatch.IsAllowedPort != nil && !r.dispatch.IsAllowedPort(dstPort) {
+	allowed := true
+	if r.dispatch.IsAllowedPort != nil {
+		allowed = r.dispatch.IsAllowedPort(dstPort) || r.hasRoutePort(dstPort)
+	}
+	if !allowed {
 		r.debugf("dropping frame to unmanaged port %d", dstPort)
 		return
 	}
 
+	r.rememberRoutePort(dstPort)
 	r.NoteServerRoutePort(dstPort)
 	r.udpWrite(dstPort, payload)
 }

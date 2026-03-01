@@ -75,6 +75,7 @@ func (r *Relay) udpReadLoop() {
 				remoteSrcAddr.String(), srcPort, len(packet), packet[:min(len(packet), 24)])
 		}
 
+		r.rememberRoutePort(srcPort)
 		r.sendWS(buildWSFrame(srcPort, packet), true)
 	}
 }

@@ -4,6 +4,11 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.7.1
+
+### Fixed
+- Nexus relay now allows server-observed return-path UDP source ports in addition to primary managed listen ports, preventing post-connect gameplay hangs when server traffic shifts to ephemeral ports.
+
 ## 1.7.0
 
 ### Added

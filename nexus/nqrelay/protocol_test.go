@@ -181,3 +181,25 @@ func TestRelayHandleWSFrame_DropsDisallowedPort(t *testing.T) {
 		t.Fatalf("activeServerPort = %d, want 0 after disallowed frame", got)
 	}
 }
+
+func TestRelayHandleWSFrame_AllowsObservedRoutePort(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	r := &Relay{
+		ctx:    ctx,
+		cancel: cancel,
+		warnf:  noopLogf,
+		debugf: noopLogf,
+		dispatch: FrameDispatch{
+			IsAllowedPort: func(port int) bool { return port == 26000 },
+		},
+	}
+
+	r.rememberRoutePort(38543)
+	cancel()
+	r.handleWSFrame(buildWSFrame(38543, []byte{1}))
+	if got := r.activeServerPort(); got != 38543 {
+		t.Fatalf("activeServerPort = %d, want 38543 after observed-route frame", got)
+	}
+}
