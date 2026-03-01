@@ -15,7 +15,7 @@ The client patches and overlays are a mix of required and additive features. The
 | `sys_wasm.c` | System layer: `emscripten_set_main_loop`, file I/O, timing, IDBFS persistence, deferred shutdown. |
 | `vid_wasm.c` | Video and input: WebGL2 context, GPU-side palette rendering (R8 framebuffer + RGBA palette + fragment shader lookup), HTML5 input callbacks, pointer lock. |
 | `snd_wasm.c` | Audio: WASM heap ring buffer read by a `ScriptProcessorNode` callback. Single-threaded, no locks. |
-| `cd_wasm.c` | Emulated CD audio: `EM_JS` bridges to the shell JS CD pipeline (`20-cdaudio.js`). |
+| `cd_wasm.c` | Emulated CD audio: `EM_JS` browser-side implementation for Quake `cd` commands, with shell overlay controls. |
 | `net.h.patch` | Strict `PollProcedure` function pointer signature. WASM enforces exact signature matching. |
 | `net_main.c.patch` | `void*` poll signatures and `emscripten_sleep` yields in blocking loops. |
 | `net_dgrm.c.patch` | `void*` poll signatures and `emscripten_sleep` yields during connect. |
@@ -30,9 +30,9 @@ The client patches and overlays are a mix of required and additive features. The
 | `net_ws_vnet.c/h` | Virtual LAN driver implementing Quake's `net_landriver` interface. Synthesizes virtual `qsockaddr` structures for Quake's address APIs. |
 | `net_bsd.c` | Driver table registering only the WebSocket landriver. |
 
-### 3. Mod Switching
+### 3. Game Directory Switching
 
-**Quality-of-life addition.** Original Quake requires restarting the executable to change mods that rely on client-side resources. Since the browser client loads via a URL, restarting means a full page reload and re-downloading all assets. This feature adds runtime game directory switching so the client can seamlessly connect to servers running different mods (e.g. `id1` to `ctf`) without reloading. On connect, the client detects the server's game mod from `hostcache`, snapshots/restores the filesystem search paths, and notifies JavaScript to fetch the new game mod's data.
+**Quality-of-life addition.** Original Quake requires restarting the executable to change game directories that rely on client-side resources. Since the browser client loads via a URL, restarting means a full page reload and re-downloading all assets. This feature adds runtime game directory switching so the client can seamlessly connect to servers running different game dirs (e.g. `id1` to `ctf`) without reloading. On connect, the client detects the server's game directory from `hostcache`, snapshots/restores the filesystem search paths, and notifies JavaScript to fetch the new game data.
 
 | File | Purpose |
 |------|---------|
@@ -40,7 +40,7 @@ The client patches and overlays are a mix of required and additive features. The
 | `common.c.patch` | Core implementation. Baseline search path snapshot, restore, `.usr` user-overlay links, JS notification via `Module.nexquakeSwitchGameData()`. |
 | `host.c.patch` | Adds `fs_hunklevel` for safe Hunk free/realloc during directory switch. |
 | `cl_main.c.patch` | Resets game directory to base on disconnect. |
-| `cl_parse.c.patch` | Auto-switches mod on connect based on server's gamedir. |
+| `cl_parse.c.patch` | Auto-switches game directory on connect based on server's gamedir. |
 
 ### 4. RCON
 
@@ -71,17 +71,19 @@ The client patches and overlays are a mix of required and additive features. The
 
 ## Shell JavaScript
 
-The `shell/` directory contains the JavaScript runtime that quickstarts the WASM module, manages game data, and provides a browser-native overlay UI. Files are numbered `00-` through `60-` and load in order.
+The `shell/` directory contains the JavaScript runtime that quickstarts the WASM module, manages game data, and provides a browser-native overlay UI. Files are grouped by numbered buckets (`00`, `10s`, `20s`, `50s`, `60`) and load in lexicographic order.
 
-**Startup and VFS** — `00-core.js`, `10-module.js`, `11-remote-vfs.js`, `12-args.js`, `13-persist.js`
+**Startup and VFS** — `00-core.js`, `10-startup.js`, `11-startup-vfs-support.js`, `12-startup-vfs.js`, `13-startup-args.js`
+
+**Touch UI** — `20-touch-glyphs.js`, `21-touch-layout.js`, `22-touch-controls.js`
 
 On page load, the shell fetches a manifest bundle from `/start`, builds a virtual filesystem in Emscripten's VFS, and syncs persistent user data from IndexedDB (IDBFS). Remote game assets are mounted as lazy nodes under `/nexusfs/<mod>/` and downloaded on first read via synchronous XHR with retry and exponential backoff. User mod files live in `/NexQuake/game/<mod>/` and are linked at `/nexusfs/.usr/<mod>/`; user CD uploads live in `/NexQuake/cd` and are exposed at `/cd`. This keeps Quake search paths layered so user files override remote assets. Asset URLs are computed from an FNV-1a hash of the manifest reference and file key, producing immutable CDN-friendly paths. At first browser startup, bundled seed cfg files (`/nqseed/<base>/autoexec.cfg` and `/nqseed/<base>/nexquake.cfg`) are copied once into the user IDBFS tree and guarded by `/NexQuake/.nq.cfgseed-v1`. Startup args come from Nexus runtime config (`CL_ARGS`), with optional URL arg append when `CL_URL_ARGS=1` (for example `?-nosound&+exec&ctf.cfg`). URL parsing splits on `&`, so each `&`-separated value maps to one argv token. Tokens are passed to Quake as command-line args (including normal `stuffcmds` handling for `+` tokens).
 
-**CD Audio** — `20-cdaudio.js`, `cd_wasm.c`
+**CD Audio** — `cd_wasm.c`, `52-ui-cd.js`, `54-ui-upload.js`
 
 Quake's CD audio system originally played music tracks from a physical CD-ROM drive. NexQuake replaces this with digital audio streaming through a two-tier resolution system. When the engine requests a track number, JavaScript first scans the user's `/cd/` browser store for uploaded files whose filenames contain the track number (e.g. `track02.ogg`, `#3.mp3`). If no local file matches, it falls back to the remote CD manifest served by Nexus. Playback uses an HTML5 `<audio>` element with smooth fade transitions on pause/stop and automatic resume on user gesture to handle browser autoplay policies. On the C side, `cd_wasm.c` implements Quake's `CDAudio_*` API by calling into JavaScript via `EM_JS` bridges, tracking the `bgmvolume` cvar each frame. All in-game `cd` commands control audio play as normal and reflect current state in the overlay UI. Users can upload their own music files through the overlay, which take priority over server-provided tracks.
 
-**Overlay UI** — `50-overlay.js`, `51-overlay-core.js`, `52-overlay-cd.js`, `53-overlay-vfs.js`, `54-overlay-upload.js`, `59-overlay-events.js`
+**UI Panel** — `50-ui.js`, `51-ui-core.js`, `52-ui-cd.js`, `53-ui-vfs.js`, `54-ui-upload.js`, `58-ui-actions.js`, `59-ui-events.js`
 
 A settings panel layered over the game canvas. Provides a tabbed file browser (one tab per installed mod), a text editor for `.cfg` files, drag-and-drop file management between mod directories, CD playback controls with play/pause per track, file upload with progress and overwrite confirmation, and per-mod vs. shared config toggling. All state persists to IndexedDB on page hide.
 
@@ -103,7 +105,7 @@ build/build-client.sh
 # Manual
 git clone --depth 1 https://github.com/id-Software/Quake.git
 cd Quake/WinQuake
-patch -p0 < /path/to/client/*.patch
+patch -p0 < /path/to/client/patches/*.patch
 cp /path/to/client/*.c /path/to/client/*.h .
 make -f Makefile.emscripten
 ```

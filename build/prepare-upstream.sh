@@ -160,8 +160,9 @@ fi
 
 if [[ "${kind}" == "client" ]]; then
   echo "Applying client (WASM) overlays + patches ..."
-  cp "${ROOT}/client/net_bsd.c" "${ROOT}/client/net_ws_transport.c" "${ROOT}/client/net_ws_vnet.c" "${ROOT}/client/cmd_rcon.c" "${ROOT}/client/net_ws_transport.h" "${ROOT}/client/net_ws_vnet.h" "${OUT_DIR}/"
-  cp "${ROOT}/client/sys_wasm.c" "${ROOT}/client/vid_wasm.c" "${ROOT}/client/snd_wasm.c" "${ROOT}/client/cd_wasm.c" "${OUT_DIR}/"
+  cp "${ROOT}/client/net_bsd.c" "${ROOT}/client/net_ws_transport.c" "${ROOT}/client/net_ws_vnet.c" "${ROOT}/client/net_slist.c" "${ROOT}/client/cmd_rcon.c" "${ROOT}/client/net_ws_transport.h" "${ROOT}/client/net_ws_vnet.h" "${OUT_DIR}/"
+  cp "${ROOT}/client/sys_wasm.c" "${ROOT}/client/vid_wasm.c" "${ROOT}/client/in_wasm.c" "${ROOT}/client/snd_wasm.c" "${ROOT}/client/cd_wasm.c" "${OUT_DIR}/"
+  cp "${ROOT}/client/com_gameswitch.c" "${ROOT}/client/com_gameswitch.h" "${ROOT}/client/cl_prefetch.c" "${ROOT}/client/cl_prefetch.h" "${OUT_DIR}/"
   cp "${ROOT}/client/Makefile.emscripten" "${ROOT}/client/shell/shell.html" "${ROOT}/client/shell/shell.css" "${ROOT}/client/shell/favicon.svg" "${OUT_DIR}/"
   resolve_nq_version
   client_version="${resolved_nq_version}"
@@ -179,15 +180,16 @@ if [[ "${kind}" == "client" ]]; then
   mkdir -p "${OUT_DIR}/shell"
   cp "${ROOT}/client/shell/"*.js "${OUT_DIR}/shell/"
 
-  apply_patch "${ROOT}/client/net.h.patch"
-  apply_patch "${ROOT}/client/common.h.patch"
-  apply_patch "${ROOT}/client/common.c.patch"
-  apply_patch "${ROOT}/client/host.c.patch"
-  apply_patch "${ROOT}/client/net_main.c.patch"
-  apply_patch "${ROOT}/client/menu.c.patch"
-  apply_patch "${ROOT}/client/net_dgrm.c.patch"
-  apply_patch "${ROOT}/client/cl_parse.c.patch"
-  apply_patch "${ROOT}/client/cl_main.c.patch"
+  apply_patch "${ROOT}/client/patches/net.h.patch"
+  apply_patch "${ROOT}/client/patches/common.h.patch"
+  apply_patch "${ROOT}/client/patches/common.c.patch"
+  apply_patch "${ROOT}/client/patches/host.c.patch"
+  apply_patch "${ROOT}/client/patches/keys.c.patch"
+  apply_patch "${ROOT}/client/patches/net_main.c.patch"
+  apply_patch "${ROOT}/client/patches/menu.c.patch"
+  apply_patch "${ROOT}/client/patches/net_dgrm.c.patch"
+  apply_patch "${ROOT}/client/patches/cl_parse.c.patch"
+  apply_patch "${ROOT}/client/patches/cl_main.c.patch"
 
   client_gamename="$(sed -n 's/^[[:space:]]*#define[[:space:]]*GAMENAME[[:space:]]*"\([^"]\+\)".*/\1/p' "${OUT_DIR}/quakedef.h" | head -n1)"
   if [[ -z "${client_gamename}" ]]; then

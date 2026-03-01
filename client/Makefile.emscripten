@@ -44,10 +44,13 @@ net_bsd.c \
 net_dgrm.c \
 net_loop.c \
 net_main.c \
+net_slist.c \
 net_vcr.c \
 net_ws_transport.c \
 net_ws_vnet.c \
 cmd_rcon.c \
+com_gameswitch.c \
+cl_prefetch.c \
 pr_cmds.c \
 pr_edict.c \
 pr_exec.c \
@@ -98,6 +101,7 @@ screen.c
 
 SRCS += \
 cd_wasm.c \
+in_wasm.c \
 sys_wasm.c \
 vid_wasm.c \
 snd_wasm.c

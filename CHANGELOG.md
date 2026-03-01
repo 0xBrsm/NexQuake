@@ -4,6 +4,19 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.7.0
+
+### Added
+- Mobile-focused touch controls for browser play, including on-screen action glyphs, configurable touch layout behavior, and touch-driven menu navigation.
+- WASM client gamepad support with bind-driven action routing so touch/gamepad inputs map through standard Quake command binds.
+
+### Fixed
+- Mobile fullscreen and safe-area handling now keeps the overlay/menu surfaces usable across orientation and settings transitions.
+
+### Changed
+- Client video mode and canvas sizing behavior now adapts more consistently across mobile and desktop aspect ratios, with cleaner runtime mode selection.
+- Browser shell startup/UI modules were reorganized to simplify input and overlay behavior across touch, mouse, and controller use.
+
 ## 1.6.2
 
 ### Fixed

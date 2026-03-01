@@ -13,7 +13,3 @@
 +		if (lowmark)
 +			Hunk_FreeToLowMark (lowmark);
 +	}
-@@ -915,2 +915,3 @@
- 	Hunk_AllocName (0, "-HOST_HUNKLEVEL-");
- 	host_hunklevel = Hunk_LowMark ();
-+	fs_hunklevel = host_hunklevel;

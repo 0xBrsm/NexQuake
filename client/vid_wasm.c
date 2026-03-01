@@ -1,9 +1,10 @@
-// vid_wasm.c -- WebGL2 video + input
+// vid_wasm.c -- WebGL2 video driver
 #include "quakedef.h"
 #include "d_local.h"
 #include <emscripten.h>
 #include <emscripten/html5.h>
 #include <GLES3/gl3.h>
+#include <math.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -11,45 +12,317 @@ unsigned short d_8to16table[256];
 int VGA_width, VGA_height, VGA_rowbytes;
 byte *VGA_pagebase;
 extern viddef_t vid;
-extern int m_state;
-extern void SNDDMA_Pause(void);
-extern void SNDDMA_Resume(void);
 
-#define BASEWIDTH  800
-#define BASEHEIGHT 525
+//engine mins/maxes
+#define VID_MIN_WIDTH  320
+#define VID_MIN_HEIGHT 200
+#define VID_MAX_WIDTH  1280
+#define VID_MAX_HEIGHT 1024
+//
+#define VID_ASPECT_RATIO (4.0 / 3.0)
+#define VID_DEFAULT_MODE "0"
+#define VID_DEFAULT_MODE_INDEX 0
+#define VID_NUM_MODES 6
+#define VID_ROW_SIZE 3
+#define MODE_SECTION_GAP_ROWS 2
+#define VID_FOV_MIN 10.0
+#define VID_FOV_MAX 170.0
+
+
+static int clamp_int(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
+static double clamp_double(double v, double lo, double hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+EM_JS(void, js_update_canvas_ar, (double ar), {
+	var c = document.getElementById('canvas');
+	if (c && ar > 0) c.style.setProperty('--nq-ar', ar);
+});
+
+EM_JS(int, js_viewport_dim, (int use_width), {
+	var key = use_width ? 'nqStartupMonitorWidth' : 'nqStartupMonitorHeight';
+	try { var v = (Module && Module[key]) | 0; if (v > 0) return v; } catch(e) {}
+	try {
+		var dpr = window.devicePixelRatio || 1;
+		var vp  = window.visualViewport;
+		var px  = use_width ? (vp ? vp.width  : window.innerWidth  || (screen && screen.width)  || 0)
+		                    : (vp ? vp.height : window.innerHeight || (screen && screen.height) || 0);
+		return px > 0 ? Math.max(1, Math.round(px * dpr)) : 0;
+	} catch(e2) { return 0; }
+});
+
+static double startup_viewport_aspect(void)
+{
+	int w = js_viewport_dim(1), h = js_viewport_dim(0);
+	if (w <= 0 || h <= 0) return VID_ASPECT_RATIO;
+	return w > h ? (double)w / h : (double)h / w;
+}
+
+typedef struct { int width, height; char desc[32]; } vid_mode_t;
+static vid_mode_t modelist[VID_NUM_MODES];
+static int        vid_nummodes;
+static cvar_t     vid_mode = {"vid_mode", VID_DEFAULT_MODE, true};
+static int        startup_vid_mode = VID_DEFAULT_MODE_INDEX;
+static int        vid_modenum = -1;
+static int        vid_hunkmark = 0;
+static int        vid_line = 0;
+static int        vid_wmodes = 0;
+static int        vid_fixedmodes = 0;
+
+extern void M_Menu_Options_f(void);
+extern void M_Print(int cx, int cy, char *str);
+extern void M_PrintWhite(int cx, int cy, char *str);
+extern void M_DrawCharacter(int cx, int line, int num);
+extern void M_DrawPic(int x, int y, qpic_t *pic);
+extern qpic_t *Draw_CachePic(char *path);
+int VID_NumModes(void);
+char *VID_GetModeDescription(int n);
+
+typedef struct {
+	int modenum;
+	char *desc;
+	int iscur;
+} modedesc_t;
+
+#define MAX_COLUMN_SIZE 5
+#define MODE_AREA_HEIGHT (MAX_COLUMN_SIZE + 6)
+#define MAX_MODEDESCS (MAX_COLUMN_SIZE * 3)
+
+static modedesc_t modedescs[MAX_MODEDESCS];
+
+static qboolean mode_is_widescreen(int modenum)
+{
+	if (modenum < 0 || modenum >= vid_nummodes)
+		return false;
+	return modelist[modenum].width * 3 > modelist[modenum].height * 4;
+}
+
+static void update_mode_fov(int old_w, int old_h, int new_w, int new_h)
+{
+	cvar_t *fovvar;
+	double old_aspect, new_aspect, old_fov, old_half, new_fov;
+
+	if (new_w <= 0 || new_h <= 0)
+		return;
+
+	fovvar = Cvar_FindVar("fov");
+	if (!fovvar)
+		return;
+
+	old_aspect = (old_w > 0 && old_h > 0)
+		? (double)old_w / old_h
+		: VID_ASPECT_RATIO;
+	new_aspect = (double)new_w / new_h;
+	if (old_aspect <= 0.0 || new_aspect <= 0.0 || fabs(new_aspect - old_aspect) < 0.0001)
+		return;
+
+	old_fov = clamp_double(fovvar->value, VID_FOV_MIN, VID_FOV_MAX);
+	old_half = old_fov * (M_PI / 360.0);
+	new_fov = atan(tan(old_half) * (new_aspect / old_aspect)) * (360.0 / M_PI);
+	new_fov = clamp_double(new_fov, VID_FOV_MIN, VID_FOV_MAX);
+	if (fabs(new_fov - old_fov) > 0.01)
+		Cvar_SetValue("fov", (float)new_fov);
+}
+
+// Compute (w,h) from one anchored dimension; anchor_w true = width anchor.
+static void mode_size(double aspect, qboolean anchor_w, int anchor, int *w, int *h)
+{
+	if (anchor_w) {
+		*w = clamp_int(anchor, VID_MIN_WIDTH,  VID_MAX_WIDTH);
+		*h = clamp_int((int)(*w / aspect + 0.5), VID_MIN_HEIGHT, VID_MAX_HEIGHT);
+	} else {
+		*h = clamp_int(anchor, VID_MIN_HEIGHT, VID_MAX_HEIGHT);
+		*w = clamp_int((int)(*h * aspect + 0.5), VID_MIN_WIDTH,  VID_MAX_WIDTH);
+	}
+}
+
+static void append_mode(int w, int h)
+{
+	int i;
+
+	if (vid_nummodes >= VID_NUM_MODES) return;
+	for (i = 0; i < vid_nummodes; i++) {
+		if (modelist[i].width == w && modelist[i].height == h)
+			return;
+	}
+	modelist[vid_nummodes].width  = w;
+	modelist[vid_nummodes].height = h;
+	sprintf(modelist[vid_nummodes].desc, "%dx%d", w, h);
+	vid_nummodes++;
+}
+
+static void build_modelist(void)
+{
+	static const double scales[3]    = {0.25, 0.5, 1.0};
+	const double hardcap = (double)VID_MAX_WIDTH / VID_MAX_HEIGHT;
+	double aspects[2] = {VID_ASPECT_RATIO, startup_viewport_aspect()};
+	int w, h, i, j;
+
+	vid_nummodes = 0;
+	vid_fixedmodes = 0;
+	startup_vid_mode = Q_atoi(vid_mode.string);
+
+	for (i = 0; i < 2; i++) {
+		qboolean wa = (aspects[i] >= hardcap);
+		int base = wa ? VID_MAX_WIDTH : VID_MAX_HEIGHT;
+		for (j = 0; j < 3; j++) {
+			mode_size(aspects[i], wa, (int)(base * scales[j] + 0.5), &w, &h);
+			append_mode(w, h);
+		}
+		if (i == 0)
+			vid_fixedmodes = vid_nummodes;
+	}
+}
+
+static void VID_DescribeModes_f(void)
+{
+	int i;
+	for (i = 0; i < vid_nummodes; i++)
+		Con_Printf("%2d: %s%s\n", i, modelist[i].desc, i == vid_modenum ? "  *" : "");
+}
+
+static void VID_MenuDraw(void)
+{
+	int i, column, row, fixed_modes, fullscreen_modes;
+	int fixed_rows, fullscreen_label_y, fullscreen_modes_y;
+	qpic_t *p;
+
+	if (vid_nummodes <= 0) {
+		M_Print(16, 36, "No video modes available");
+		M_Print(16, 52, "Esc to exit");
+		return;
+	}
+
+	p = Draw_CachePic("gfx/vidmodes.lmp");
+	M_DrawPic((320 - p->width) / 2, 4, p);
+
+	vid_wmodes = vid_nummodes;
+	if (vid_wmodes > MAX_MODEDESCS)
+		vid_wmodes = MAX_MODEDESCS;
+	fixed_modes = clamp_int(vid_fixedmodes, 0, vid_wmodes);
+	fullscreen_modes = vid_wmodes - fixed_modes;
+	fixed_rows = (fixed_modes + (VID_ROW_SIZE - 1)) / VID_ROW_SIZE;
+	fullscreen_label_y = 36 + (2 + fixed_rows + MODE_SECTION_GAP_ROWS) * 8;
+	fullscreen_modes_y = fullscreen_label_y + 2 * 8;
+
+	for (i = 0; i < vid_wmodes; i++) {
+		modedescs[i].modenum = i;
+		modedescs[i].desc = VID_GetModeDescription(i);
+		modedescs[i].iscur = (i == vid_modenum);
+	}
+
+	if (vid_line < 0 || vid_line >= vid_wmodes)
+		vid_line = clamp_int(vid_modenum, 0, vid_wmodes - 1);
+
+	column = 16;
+	row = 36 + 2 * 8;
+	M_Print(13 * 8, 36, "Classic Modes");
+	for (i = 0; i < fixed_modes; i++) {
+		if (modedescs[i].iscur)
+			M_PrintWhite(column, row, modedescs[i].desc);
+		else
+			M_Print(column, row, modedescs[i].desc);
+
+		column += 13 * 8;
+		if ((i % VID_ROW_SIZE) == (VID_ROW_SIZE - 1)) {
+			column = 16;
+			row += 8;
+		}
+	}
+
+	if (fullscreen_modes > 0) {
+		M_Print(11 * 8, fullscreen_label_y, "Fullscreen Modes");
+		column = 16;
+		row = fullscreen_modes_y;
+		for (i = fixed_modes; i < vid_wmodes; i++) {
+			int fsidx = i - fixed_modes;
+			if (modedescs[i].iscur)
+				M_PrintWhite(column, row, modedescs[i].desc);
+			else
+				M_Print(column, row, modedescs[i].desc);
+
+			column += 13 * 8;
+			if ((fsidx % VID_ROW_SIZE) == (VID_ROW_SIZE - 1)) {
+				column = 16;
+				row += 8;
+			}
+		}
+	}
+
+	if (mode_is_widescreen(modedescs[vid_line].modenum))
+		M_Print(6 * 8, 36 + MODE_AREA_HEIGHT * 8 - 8, "Weapon hidden in widescreen");
+	M_Print(9 * 8, 36 + MODE_AREA_HEIGHT * 8 + 8, "Press Enter to set mode");
+	M_Print(15 * 8, 36 + MODE_AREA_HEIGHT * 8 + 8 * 2, "Esc to exit");
+	if (vid_line < fixed_modes || fullscreen_modes <= 0) {
+		row = 36 + 2 * 8 + (vid_line / VID_ROW_SIZE) * 8;
+		column = 8 + (vid_line % VID_ROW_SIZE) * 13 * 8;
+	} else {
+		int fsline = vid_line - fixed_modes;
+		row = fullscreen_modes_y + (fsline / VID_ROW_SIZE) * 8;
+		column = 8 + (fsline % VID_ROW_SIZE) * 13 * 8;
+	}
+	M_DrawCharacter(column, row, 12 + ((int)(realtime * 4) & 1));
+}
+
+static void VID_MenuKey(int key)
+{
+	if (vid_wmodes <= 0)
+		return;
+	if (vid_line < 0 || vid_line >= vid_wmodes)
+		vid_line = clamp_int(vid_modenum, 0, vid_wmodes - 1);
+
+	switch (key) {
+	case K_ESCAPE:
+		S_LocalSound("misc/menu1.wav");
+		M_Menu_Options_f();
+		break;
+	case K_LEFTARROW:
+		S_LocalSound("misc/menu1.wav");
+		vid_line = ((vid_line / VID_ROW_SIZE) * VID_ROW_SIZE) +
+				   ((vid_line + (VID_ROW_SIZE - 1)) % VID_ROW_SIZE);
+		if (vid_line >= vid_wmodes)
+			vid_line = vid_wmodes - 1;
+		break;
+	case K_RIGHTARROW:
+		S_LocalSound("misc/menu1.wav");
+		vid_line = ((vid_line / VID_ROW_SIZE) * VID_ROW_SIZE) +
+				   ((vid_line + 1) % VID_ROW_SIZE);
+		if (vid_line >= vid_wmodes)
+			vid_line = (vid_line / VID_ROW_SIZE) * VID_ROW_SIZE;
+		break;
+	case K_UPARROW:
+		S_LocalSound("misc/menu1.wav");
+		vid_line -= VID_ROW_SIZE;
+		if (vid_line < 0) {
+			vid_line += ((vid_wmodes + (VID_ROW_SIZE - 1)) / VID_ROW_SIZE) * VID_ROW_SIZE;
+			while (vid_line >= vid_wmodes)
+				vid_line -= VID_ROW_SIZE;
+		}
+		break;
+	case K_DOWNARROW:
+		S_LocalSound("misc/menu1.wav");
+		vid_line += VID_ROW_SIZE;
+		if (vid_line >= vid_wmodes) {
+			vid_line -= ((vid_wmodes + (VID_ROW_SIZE - 1)) / VID_ROW_SIZE) * VID_ROW_SIZE;
+			while (vid_line < 0)
+				vid_line += VID_ROW_SIZE;
+		}
+		break;
+	case K_ENTER:
+		S_LocalSound("misc/menu1.wav");
+		VID_SetMode(modedescs[vid_line].modenum, NULL);
+		break;
+	default:
+		break;
+	}
+}
+
+int   VID_NumModes(void)            { return vid_nummodes; }
+char *VID_GetModeDescription(int n) { return (n >= 0 && n < vid_nummodes) ? modelist[n].desc : NULL; }
 
 static EMSCRIPTEN_WEBGL_CONTEXT_HANDLE gl_ctx;
-static GLuint prog, vao, fb_tex, pal_tex;
+static GLuint prog, blit_prog, vao, fb_tex, pal_tex, resolve_fbo, resolve_tex;
 static byte *pixels;
 static uint32_t pal_rgba[256];
-static qboolean mouse_avail;
-static float mouse_x, mouse_y;
-static qboolean pointer_locked;
-static double ptrlock_lost_at;
-
-// DOM keyCode -> Quake key (browser handles numlock translation for numpad)
-static const uint8_t keymap[256] = {
-	[8]=K_BACKSPACE, [9]=K_TAB, [13]=K_ENTER, [27]=K_ESCAPE, [32]=K_SPACE,
-	[16]=K_SHIFT, [17]=K_CTRL, [18]=K_ALT, [19]=K_PAUSE,
-	[33]=K_PGUP, [34]=K_PGDN, [35]=K_END, [36]=K_HOME,
-	[37]=K_LEFTARROW, [38]=K_UPARROW, [39]=K_RIGHTARROW, [40]=K_DOWNARROW,
-	[45]=K_INS, [46]=K_DEL,
-	[48]='0',[49]='1',[50]='2',[51]='3',[52]='4',
-	[53]='5',[54]='6',[55]='7',[56]='8',[57]='9',
-	[65]='a',[66]='b',[67]='c',[68]='d',[69]='e',[70]='f',
-	[71]='g',[72]='h',[73]='i',[74]='j',[75]='k',[76]='l',
-	[77]='m',[78]='n',[79]='o',[80]='p',[81]='q',[82]='r',
-	[83]='s',[84]='t',[85]='u',[86]='v',[87]='w',[88]='x',
-	[89]='y',[90]='z',
-	[93]='`', // APPLICATION/context menu -> console
-	[96]='0',[97]='1',[98]='2',[99]='3',[100]='4',
-	[101]='5',[102]='6',[103]='7',[104]='8',[105]='9',
-	[106]='*',[107]='+',[109]='-',[110]='.',[111]='/',
-	[112]=K_F1,[113]=K_F2,[114]=K_F3,[115]=K_F4,[116]=K_F5,[117]=K_F6,
-	[118]=K_F7,[119]=K_F8,[120]=K_F9,[121]=K_F10,[122]=K_F11,[123]=K_F12,
-	[186]=';',[187]='=',[188]=',',[189]='-',[190]='.',[191]='/',
-	[192]='`',[219]='[',[220]='\\',[221]=']',[222]='\''
-};
+static int disp_w, disp_h;
 
 // Fullscreen triangle from gl_VertexID (no VBO), palette lookup in fragment
 static const char *vs_src =
@@ -71,6 +344,14 @@ static const char *fs_src =
 	"  o=texelFetch(pal,ivec2(int(texture(framebuf,uv).r*255.0+0.5),0),0);\n"
 	"}\n";
 
+static const char *blit_fs_src =
+	"#version 300 es\n"
+	"precision mediump float;\n"
+	"in vec2 uv;\n"
+	"out vec4 o;\n"
+	"uniform sampler2D framebuf;\n"
+	"void main(){o=texture(framebuf,vec2(uv.x,1.0-uv.y));}\n";
+
 static GLuint compile_shader(GLenum type, const char *src) {
 	GLuint s = glCreateShader(type);
 	glShaderSource(s, 1, &src, NULL);
@@ -78,6 +359,15 @@ static GLuint compile_shader(GLenum type, const char *src) {
 	GLint ok; glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
 	if (!ok) { char log[512]; glGetShaderInfoLog(s, 512, NULL, log); Sys_Error("Shader: %s", log); }
 	return s;
+}
+
+static GLuint link_program(GLuint vs, GLuint fs) {
+	GLuint p = glCreateProgram();
+	glAttachShader(p, vs); glAttachShader(p, fs);
+	glLinkProgram(p);
+	GLint ok; glGetProgramiv(p, GL_LINK_STATUS, &ok);
+	if (!ok) { char log[512]; glGetProgramInfoLog(p, 512, NULL, log); Sys_Error("Link: %s", log); }
+	return p;
 }
 
 static GLuint mk_tex(GLenum ifmt, int w, int h, GLenum fmt) {
@@ -90,173 +380,77 @@ static GLuint mk_tex(GLenum ifmt, int w, int h, GLenum fmt) {
 	return t;
 }
 
-static void init_gl(int w, int h) {
+static void init_gl(void) {
 	EmscriptenWebGLContextAttributes a;
 	emscripten_webgl_init_context_attributes(&a);
 	a.majorVersion = 2; a.alpha = a.antialias = a.depth = a.stencil = 0;
 	gl_ctx = emscripten_webgl_create_context("#canvas", &a);
 	if (gl_ctx <= 0) Sys_Error("VID: WebGL2 failed (%d)", gl_ctx);
 	emscripten_webgl_make_context_current(gl_ctx);
-	emscripten_set_canvas_element_size("#canvas", w, h);
 	// Framebuffer is GL_R8; width may be non-4-byte aligned on custom modes.
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
 	GLuint vs = compile_shader(GL_VERTEX_SHADER, vs_src);
 	GLuint fs = compile_shader(GL_FRAGMENT_SHADER, fs_src);
-	prog = glCreateProgram();
-	glAttachShader(prog, vs); glAttachShader(prog, fs);
-	glLinkProgram(prog);
-	GLint ok; glGetProgramiv(prog, GL_LINK_STATUS, &ok);
-	if (!ok) { char log[512]; glGetProgramInfoLog(prog, 512, NULL, log); Sys_Error("Link: %s", log); }
-	glDeleteShader(vs); glDeleteShader(fs);
+	prog = link_program(vs, fs); glDeleteShader(fs);
+	GLuint bfs = compile_shader(GL_FRAGMENT_SHADER, blit_fs_src);
+	blit_prog = link_program(vs, bfs); glDeleteShader(vs); glDeleteShader(bfs);
 
 	glGenVertexArrays(1, &vao);
-	fb_tex = mk_tex(GL_R8, w, h, GL_RED);
 	pal_tex = mk_tex(GL_RGBA8, 256, 1, GL_RGBA);
+	glGenFramebuffers(1, &resolve_fbo);
 	glUseProgram(prog);
 	glUniform1i(glGetUniformLocation(prog, "framebuf"), 0);
 	glUniform1i(glGetUniformLocation(prog, "pal"), 1);
+	glUseProgram(blit_prog);
+	glUniform1i(glGetUniformLocation(blit_prog, "framebuf"), 0);
 }
 
-// Pointer lock with caught promise rejection (avoids SecurityError on post-Escape cooldown)
-EM_JS(void, js_request_pointerlock, (), {
-	var p = document.getElementById('canvas').requestPointerLock();
-	if (p && p.catch) p.catch(function(){});
-});
+int VID_SetMode(int modenum, unsigned char *palette)
+{
+	if (modenum < 0 || modenum >= vid_nummodes)
+		return 0;
 
-EM_JS(int, js_overlay_modal_open, (), {
-	return (typeof Module !== 'undefined' && Module && Module.nqOverlayModalOpen) ? 1 : 0;
-});
+	int w = modelist[modenum].width, h = modelist[modenum].height;
+	int old_w = VGA_width, old_h = VGA_height;
 
-// Input callbacks
-static EM_BOOL on_key(int type, const EmscriptenKeyboardEvent *e, void *ud) {
-	if (js_overlay_modal_open() && e->keyCode != 37 && e->keyCode != 38 && e->keyCode != 39 && e->keyCode != 40) return 0;
-	if (e->keyCode == 27 && emscripten_get_now() - ptrlock_lost_at < 50) return 1;
-	int k = e->keyCode < 256 ? keymap[e->keyCode] : 0;
-	if (!k) return 0;
-	Key_Event(k, type == EMSCRIPTEN_EVENT_KEYDOWN);
-	return e->keyCode != 116 && e->keyCode != 123; // let F5/F12 through
-}
+	free(pixels);
+	pixels = malloc(w * h);
+	if (!pixels) Sys_Error("VID_SetMode: not enough memory\n");
 
-static EM_BOOL on_mouse_move(int t, const EmscriptenMouseEvent *e, void *ud) {
-	if (js_overlay_modal_open()) return 0;
-	if (!mouse_avail || !pointer_locked) return 0;
-	mouse_x += e->movementX * 2; mouse_y += e->movementY * 2;
+	if (fb_tex)      glDeleteTextures(1, &fb_tex);
+	if (resolve_tex) glDeleteTextures(1, &resolve_tex);
+	fb_tex      = mk_tex(GL_R8,    w, h, GL_RED);
+	resolve_tex = mk_tex(GL_RGBA8, w, h, GL_RGBA);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, resolve_tex, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	emscripten_set_canvas_element_size("#canvas", w, h);
+	js_update_canvas_ar((double)w / h);
+	disp_w = disp_h = 0;
+	update_mode_fov(old_w, old_h, w, h);
+
+	VGA_width = vid.width = vid.conwidth = w;
+	VGA_height = vid.height = vid.conheight = h;
+	VGA_pagebase = vid.buffer = vid.conbuffer = pixels;
+	VGA_rowbytes = vid.rowbytes = vid.conrowbytes = w;
+
+	if (d_pzbuffer) { D_FlushCaches(); Hunk_FreeToHighMark(vid_hunkmark); }
+	vid_hunkmark = Hunk_HighMark();
+	int chunk = w * h * sizeof(*d_pzbuffer), cachesize = D_SurfaceCacheForRes(w, h);
+	d_pzbuffer = Hunk_HighAllocName(chunk + cachesize, "video");
+	if (!d_pzbuffer) Sys_Error("VID_SetMode: not enough memory for video mode\n");
+	D_InitCaches((byte *)d_pzbuffer + chunk, cachesize);
+
+	VID_SetPalette(palette);
+	Cvar_Set("vid_mode", va("%d", modenum));
+	vid_modenum = modenum;
+	vid.recalc_refdef = 1;
 	return 1;
 }
 
-static EM_BOOL on_mouse_btn(int type, const EmscriptenMouseEvent *e, void *ud) {
-	if (js_overlay_modal_open()) return 0;
-	if (!mouse_avail) return 0;
-	qboolean down = (type == EMSCRIPTEN_EVENT_MOUSEDOWN);
-	if (down && !pointer_locked) {
-		js_request_pointerlock();
-		if (key_dest == key_menu) { m_state = 0; key_dest = key_game; return 1; }
-	}
-	static const int bmap[] = { K_MOUSE1, K_MOUSE3, K_MOUSE2 };
-	if (e->button > 2) return 0;
-	Key_Event(bmap[e->button], down);
-	return 1;
-}
-
-static void emit_wheel_key(int dir) {
-	int key = (dir < 0) ? K_MWHEELUP : K_MWHEELDOWN;
-	Key_Event(key, 1);
-	Key_Event(key, 0);
-}
-
-static EM_BOOL on_wheel(int t, const EmscriptenWheelEvent *e, void *ud) {
-	static float accum;
-	static int accum_dir;
-	static double last_emit_ms;
-	static int last_emit_dir;
-	const float pixel_notch_cutoff = 35.0f;
-	const double notch_cooldown_ms = 30.0;
-	const float pixel_tick = 60.0f;
-	float dy;
-	int dir;
-	double now_ms;
-	qboolean large_pixel_step;
-	qboolean non_pixel_mode;
-
-	if (js_overlay_modal_open()) return 0;
-	if (!mouse_avail) return 0;
-
-	dy = (float)e->deltaY;
-	if (dy == 0.0f) return 1;
-	dir = (dy < 0.0f) ? -1 : 1;
-	now_ms = emscripten_get_now();
-	large_pixel_step = (dy <= -pixel_notch_cutoff || dy >= pixel_notch_cutoff);
-	non_pixel_mode = (e->deltaMode != DOM_DELTA_PIXEL);
-
-	// Line/page units and large pixel deltas are treated as single notches.
-	// Large pixel steps get a short same-direction cooldown to coalesce
-	// bursty multi-event ratchet notches.
-	if (non_pixel_mode || large_pixel_step) {
-		if (large_pixel_step && dir == last_emit_dir && (now_ms - last_emit_ms) < notch_cooldown_ms)
-			return 1;
-		emit_wheel_key(dir);
-		last_emit_ms = now_ms;
-		last_emit_dir = dir;
-		accum = 0.0f;
-		accum_dir = 0;
-		return 1;
-	}
-
-	// Smooth wheels/trackpads emit many small pixel deltas per gesture.
-	// Accumulate fractional movement until we cross one notch.
-	if (accum_dir && dir != accum_dir)
-		accum = 0.0f;
-	accum_dir = dir;
-	accum += dy / pixel_tick;
-
-	while (accum <= -1.0f) {
-		emit_wheel_key(-1);
-		accum += 1.0f;
-	}
-	while (accum >= 1.0f) {
-		emit_wheel_key(1);
-		accum -= 1.0f;
-	}
-	return 1;
-}
-
-static EM_BOOL on_ptrlock(int t, const EmscriptenPointerlockChangeEvent *e, void *ud) {
-	pointer_locked = e->isActive;
-	if (!e->isActive) {
-		ptrlock_lost_at = emscripten_get_now();
-		if (key_dest == key_game) { Key_Event(K_ESCAPE, 1); Key_Event(K_ESCAPE, 0); }
-	}
-	return 1;
-}
-
-static EM_BOOL on_visibility(int t, const EmscriptenVisibilityChangeEvent *e, void *ud) {
-	if (e->hidden) {
-		mouse_x = mouse_y = 0;
-		SNDDMA_Pause();
-		emscripten_set_main_loop_timing(EM_TIMING_SETTIMEOUT, 100);
-	} else {
-		emscripten_set_main_loop_timing(EM_TIMING_RAF, 0);
-		SNDDMA_Resume();
-		EmscriptenPointerlockChangeEvent pe;
-		if (emscripten_get_pointerlock_status(&pe) == EMSCRIPTEN_RESULT_SUCCESS)
-			pointer_locked = pe.isActive;
-	}
-	return 1;
-}
-
-static void init_input(void) {
-	emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, 0, 1, on_key);
-	emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, 0, 1, on_key);
-	emscripten_set_mousemove_callback("#canvas", 0, 1, on_mouse_move);
-	emscripten_set_mousedown_callback("#canvas", 0, 1, on_mouse_btn);
-	emscripten_set_mouseup_callback("#canvas", 0, 1, on_mouse_btn);
-	emscripten_set_wheel_callback("#canvas", 0, 1, on_wheel);
-	emscripten_set_pointerlockchange_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, 0, 1, on_ptrlock);
-	emscripten_set_visibilitychange_callback(0, 1, on_visibility);
-}
-
-// Video interface
 void VID_SetPalette(unsigned char *palette) {
 	if (!palette) return;
 	for (int i = 0; i < 256; i++)
@@ -268,67 +462,70 @@ void VID_SetPalette(unsigned char *palette) {
 void VID_ShiftPalette(unsigned char *p) { VID_SetPalette(p); }
 
 void VID_Init(unsigned char *palette) {
-	int pnum, chunk, cachesize;
-	byte *cache;
-
-	vid.width = BASEWIDTH; vid.height = BASEHEIGHT;
 	vid.maxwarpwidth = WARP_WIDTH; vid.maxwarpheight = WARP_HEIGHT;
-	if ((pnum = COM_CheckParm("-width"))) {
-		if (pnum >= com_argc - 1) Sys_Error("VID: -width <width>\n");
-		vid.width = Q_atoi(com_argv[pnum+1]);
-		vid.height = vid.width * 3 / 4;
-	}
-	if ((pnum = COM_CheckParm("-height"))) {
-		if (pnum >= com_argc - 1) Sys_Error("VID: -height <height>\n");
-		vid.height = Q_atoi(com_argv[pnum+1]);
-	}
-	if ((pnum = COM_CheckParm("-winsize"))) {
-		if (pnum >= com_argc - 2) Sys_Error("VID: -winsize <width> <height>\n");
-		vid.width = Q_atoi(com_argv[pnum+1]);
-		vid.height = Q_atoi(com_argv[pnum+2]);
-		if (!vid.width || !vid.height) Sys_Error("VID: Bad window width/height\n");
-	}
-	if (vid.width < 320) vid.width = 320;
-	if (vid.height < 200) vid.height = 200;
-	vid.conwidth = vid.width; vid.conheight = vid.height;
-
-	init_gl(vid.width, vid.height);
-	VGA_width = vid.width; VGA_height = vid.height;
-	pixels = malloc(VGA_width * VGA_height);
-	if (!pixels) Sys_Error("VID: Not enough memory for framebuffer\n");
-
-	VGA_pagebase = vid.buffer = vid.conbuffer = pixels;
-	VGA_rowbytes = vid.rowbytes = vid.conrowbytes = VGA_width;
 	vid.direct = 0;
-	vid.aspect = ((float)vid.height / (float)vid.width) * (320.0 / 240.0);
+	vid.aspect = 1.0f;
 	vid.numpages = 1;
 	vid.colormap = host_colormap;
 	vid.fullbright = 256 - LittleLong(*((int *)vid.colormap + 2048));
 
-	chunk = vid.width * vid.height * sizeof(*d_pzbuffer);
-	cachesize = D_SurfaceCacheForRes(vid.width, vid.height);
-	d_pzbuffer = Hunk_HighAllocName(chunk + cachesize, "video");
-	if (!d_pzbuffer) Sys_Error("VID: Not enough memory for video mode\n");
-	cache = (byte *)d_pzbuffer + chunk;
-	D_InitCaches(cache, cachesize);
-
-	VID_SetPalette(palette);
-	init_input();
+	build_modelist();
+	Cvar_RegisterVariable(&vid_mode);
+	Cmd_AddCommand("vid_describemodes", VID_DescribeModes_f);
+	vid_menudrawfn = VID_MenuDraw;
+	vid_menukeyfn = VID_MenuKey;
+	init_gl();
+	VID_SetMode(clamp_int(startup_vid_mode, 0, vid_nummodes - 1), palette);
 }
 
 void VID_Shutdown(void) {
 	free(pixels); pixels = NULL;
-	glDeleteTextures(1, &fb_tex); glDeleteTextures(1, &pal_tex);
-	glDeleteProgram(prog); glDeleteVertexArrays(1, &vao);
+	glDeleteFramebuffers(1, &resolve_fbo);
+	glDeleteTextures(1, &fb_tex); glDeleteTextures(1, &pal_tex); glDeleteTextures(1, &resolve_tex);
+	glDeleteProgram(prog); glDeleteProgram(blit_prog); glDeleteVertexArrays(1, &vao);
 	if (gl_ctx > 0) { emscripten_webgl_destroy_context(gl_ctx); gl_ctx = 0; }
 }
 
 void VID_Update(vrect_t *rects) {
+	if ((int)vid_mode.value != vid_modenum) {
+		int req = (int)vid_mode.value;
+		int m   = clamp_int(req, 0, vid_nummodes - 1);
+		if (req != m)
+			Con_Printf("vid_mode %d invalid (0-%d); using %d\n", req, vid_nummodes - 1, m);
+		VID_SetMode(m, NULL);
+		return;  // skip render this frame; renderer resets next frame
+	}
+
+	double css_w, css_h;
+	emscripten_get_element_css_size("#canvas", &css_w, &css_h);
+	double dpr = emscripten_get_device_pixel_ratio();
+	int dw = (int)(css_w * dpr), dh = (int)(css_h * dpr);
+	if (dw > 0 && dh > 0 && (dw != disp_w || dh != disp_h)) {
+		disp_w = dw; disp_h = dh;
+		emscripten_set_canvas_element_size("#canvas", disp_w, disp_h);
+	}
+	// Pass 1: palette resolve at game res into FBO
+	glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo);
+	glViewport(0, 0, VGA_width, VGA_height);
 	glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, fb_tex);
 	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, VGA_width, VGA_height, GL_RED, GL_UNSIGNED_BYTE, pixels);
 	glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, pal_tex);
-	glViewport(0, 0, VGA_width, VGA_height);
 	glUseProgram(prog); glBindVertexArray(vao);
+	glDrawArrays(GL_TRIANGLES, 0, 3);
+	// Pass 2: aspect-correct blit to display (letterbox / pillarbox)
+	glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, resolve_tex);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glGenerateMipmap(GL_TEXTURE_2D);
+	{
+		int fw = disp_w ? disp_w : VGA_width, fh = disp_h ? disp_h : VGA_height;
+		double gasp = (double)VGA_width / VGA_height;
+		int bx = 0, by = 0, bw = fw, bh = fh;
+		if ((double)fw / fh > gasp) { bw = (int)(fh * gasp + 0.5); bx = (fw - bw) / 2; }
+		else                        { bh = (int)(fw / gasp + 0.5); by = (fh - bh) / 2; }
+		glClear(GL_COLOR_BUFFER_BIT);
+		glViewport(bx, by, bw, bh);
+	}
+	glUseProgram(blit_prog);
 	glDrawArrays(GL_TRIANGLES, 0, 3);
 }
 
@@ -338,38 +535,8 @@ void D_BeginDirectRect(int x, int y, byte *pbitmap, int width, int height) {
 	if (x < 0 || y < 0 || x >= VGA_width || y >= VGA_height) return;
 	if (x + width > VGA_width) width = VGA_width - x;
 	if (y + height > VGA_height) height = VGA_height - y;
-	if (width <= 0 || height <= 0) return;
 	byte *dst = pixels + y * VGA_width + x;
 	while (height--) { memcpy(dst, pbitmap, width); dst += VGA_width; pbitmap += width; }
 }
 
 void D_EndDirectRect(int x, int y, int width, int height) {}
-
-// Input interface
-// Yield to the browser event loop so keyboard/mouse callbacks can fire.
-// Native Quake pumps OS events here synchronously; the WASM equivalent is
-// an ASYNCIFY yield.  This is called once per frame in _Host_Frame and
-// also inside tight polling loops (SCR_ModalMessage, Con_NotifyBox).
-void Sys_SendKeyEvents(void) { emscripten_sleep(0); }
-void IN_Init(void) { if (!COM_CheckParm("-nomouse")) mouse_avail = 1; }
-void IN_Shutdown(void) { mouse_avail = 0; }
-void IN_Commands(void) {}
-
-void IN_Move(usercmd_t *cmd) {
-	if (!mouse_avail) return;
-	mouse_x *= sensitivity.value; mouse_y *= sensitivity.value;
-	if ((in_strafe.state & 1) || lookstrafe.value)
-		cmd->sidemove += m_side.value * mouse_x;
-	else
-		cl.viewangles[YAW] -= m_yaw.value * mouse_x;
-	V_StopPitchDrift();
-	if (!(in_strafe.state & 1)) {
-		cl.viewangles[PITCH] += m_pitch.value * mouse_y;
-		if (cl.viewangles[PITCH] > 80) cl.viewangles[PITCH] = 80;
-		if (cl.viewangles[PITCH] < -70) cl.viewangles[PITCH] = -70;
-	} else {
-		if (noclip_anglehack) cmd->upmove -= m_forward.value * mouse_y;
-		else cmd->forwardmove -= m_forward.value * mouse_y;
-	}
-	mouse_x = mouse_y = 0;
-}

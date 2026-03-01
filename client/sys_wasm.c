@@ -19,6 +19,41 @@ static double time, oldtime, newtime;
 static qboolean quit_requested, bootstrap_ready, main_loop_started, canvas_visible;
 void main_loop(void);
 
+EM_JS(void, js_syncfs, (), {
+	if (typeof FS !== 'undefined')
+		try { FS.syncfs(false, function(err) { if (err) console.warn('syncfs:', err); }); } catch(e) {}
+});
+
+EM_JS(void, js_on_quit, (), {
+	if (typeof FS !== 'undefined')
+		try { FS.syncfs(false, function(err) { if (err) console.warn('syncfs:', err); }); } catch(e) {}
+	if (Module.nqOverlayRefreshVFS) try { Module.nqOverlayRefreshVFS(); } catch(e2) {}
+	if (Module.nqShowReloadScreen) try { Module.nqShowReloadScreen(); } catch(e3) {}
+});
+
+EM_JS(void, js_on_bootstrap_ready, (), {
+	if (Module.nqOnBootstrapReady)
+		try { Module.nqOnBootstrapReady(); } catch(e) {}
+});
+
+EM_JS(void, js_hide_console, (), {
+	if (typeof Module.hideConsole === 'function') Module.hideConsole();
+});
+
+EM_JS(void, js_register_unload_handlers, (), {
+	var fired = false;
+	function handler() {
+		if (fired) return;
+		fired = true;
+		try {
+			if (typeof Module.ccall === 'function')
+				Module.ccall('NQWasm_OnPageUnload', 'void', [], []);
+		} catch(e) { console.warn('NQWasm_OnPageUnload failed:', e); }
+	}
+	window.addEventListener('pagehide', handler);
+	window.addEventListener('beforeunload', handler);
+});
+
 // Stubs: no-ops on WASM (engine calls these but they have no meaning here)
 void Sys_MakeCodeWriteable(unsigned long startaddr, unsigned long length) {}
 char *Sys_ConsoleInput(void) { return 0; }
@@ -177,6 +212,7 @@ int main(int c, char **v) {
 	parms.cachedir = NULL;
 
 	Host_Init(&parms);
+	js_register_unload_handlers();
 	Con_Printf("NextQuake WebAssembly - %s\n", NEXQUAKE_VERSION);
 	oldtime = Sys_FloatTime() - 0.1;
 	bootstrap_ready = false;
@@ -195,35 +231,19 @@ void main_loop(void) {
 		Host_Shutdown();
 		main_loop_started = false;
 		canvas_visible = false;
-		EM_ASM({
-			try {
-				if (Module.nqPersistUserFiles) Module.nqPersistUserFiles();
-				if (Module.nqOverlayRefreshVFS) Module.nqOverlayRefreshVFS();
-			} catch(e) { console.warn('quit cleanup failed:', e); }
-		});
-		EM_ASM({
-			try {
-				if (Module.nqShowReloadScreen)
-					Module.nqShowReloadScreen();
-			} catch(e) {}
-		});
+		js_on_quit();
 		emscripten_cancel_main_loop();
 		return;
 	}
 	if (!bootstrap_ready) {
 		bootstrap_ready = true;
-		EM_ASM({
-			try {
-				if (Module.nqOnBootstrapReady)
-					Module.nqOnBootstrapReady();
-			} catch(e) {}
-		});
+		js_on_bootstrap_ready();
 	}
 	if (!main_loop_started)
 		return;
 	if (!canvas_visible) {
 		canvas_visible = true;
-		EM_ASM( if (typeof Module.hideConsole === 'function') Module.hideConsole(); );
+		js_hide_console();
 	}
 	newtime = Sys_FloatTime();
 	time = newtime - oldtime;
@@ -233,7 +253,7 @@ void main_loop(void) {
 }
 
 // Exported JS hooks (browser only).
-EMSCRIPTEN_KEEPALIVE void NexQuake_ExecCommand(const char *cmd)
+EMSCRIPTEN_KEEPALIVE void NQWasm_ExecCommand(const char *cmd)
 {
 	if (!cmd || !cmd[0])
 		return;
@@ -241,19 +261,57 @@ EMSCRIPTEN_KEEPALIVE void NexQuake_ExecCommand(const char *cmd)
 	Cbuf_AddText("\n");
 }
 
-EMSCRIPTEN_KEEPALIVE void NexQuake_StartMainLoop(void)
+EMSCRIPTEN_KEEPALIVE void NQWasm_StartMainLoop(void)
 {
 	main_loop_started = true;
 }
 
-EMSCRIPTEN_KEEPALIVE void NexQuake_OnPageUnload(void)
+EMSCRIPTEN_KEEPALIVE void NQWasm_OnPageUnload(void)
 {
 	if (cls.state == ca_connected)
 		CL_Disconnect();
 	Host_Shutdown();
+	js_syncfs();
 }
 
-EMSCRIPTEN_KEEPALIVE void NexQuake_VFSReady(void)
+EMSCRIPTEN_KEEPALIVE const char *NQWasm_GetKeyBinding(int key)
 {
-	// No-op for the browser; headless builds define this in sys_node.c.
+	if (key < 0 || key >= 256 || !keybindings[key])
+		return "";
+	return keybindings[key];
+}
+
+EMSCRIPTEN_KEEPALIVE int NQWasm_GetVideoWidth(void)
+{
+	return vid.width;
+}
+
+EMSCRIPTEN_KEEPALIVE int NQWasm_GetConnectedServerListenPort(void)
+{
+	int listen_port;
+	int driver;
+
+	if (cls.state != ca_connected || !cls.netcon)
+		return 0;
+	driver = cls.netcon->driver;
+	if (driver < 0 || driver >= net_numdrivers)
+		return 0;
+
+	// Join code is only valid for remote Datagram transport (WebSocket/UDP tunnel),
+	// not local loopback ("connect local"/single-player).
+	if (Q_strcmp(net_drivers[driver].name, "Datagram") != 0)
+		return 0;
+
+	// NexQuake WS virtual server address encoding:
+	// 13.37.<listen-port-high-byte>.<listen-port-low-byte>
+	if ((byte)cls.netcon->addr.sa_data[2] != 13 ||
+		(byte)cls.netcon->addr.sa_data[3] != 37)
+		return 0;
+
+	listen_port = (((int)(byte)cls.netcon->addr.sa_data[4]) << 8) |
+		(int)(byte)cls.netcon->addr.sa_data[5];
+	if (listen_port < 1 || listen_port > 65535)
+		return 0;
+
+	return listen_port;
 }

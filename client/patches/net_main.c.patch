@@ -10,11 +10,7 @@
  
  qsocket_t	*net_activeSockets = NULL;
  qsocket_t	*net_freeSockets = NULL;
-@@ -46,11 +49,12 @@
- qboolean	slistInProgress = false;
- qboolean	slistSilent = false;
- qboolean	slistLocal = true;
-+extern qboolean	slist_agg_done;
+@@ -49,8 +52,8 @@
  static double	slistStartTime;
  static int		slistLastShown;
  
@@ -25,7 +21,7 @@
  PollProcedure	slistSendProcedure = {NULL, 0.0, Slist_Send};
  PollProcedure	slistPollProcedure = {NULL, 0.0, Slist_Poll};
  
-@@ -63,7 +67,7 @@
+@@ -63,7 +66,7 @@
  int unreliableMessagesSent = 0;
  int unreliableMessagesReceived = 0;
  
@@ -34,45 +30,29 @@
  cvar_t	hostname = {"hostname", "UNNAMED"};
  
  qboolean	configRestored = false;
-@@ -261,11 +265,22 @@
+@@ -261,8 +264,7 @@
  
  static void PrintSlistHeader(void)
  {
 -	Con_Printf("Server          Map             Users\n");
 -	Con_Printf("--------------- --------------- -----\n");
-+	Con_Printf("%-24.24s %-15.15s %-15.15s %-15.15s\n", "Server", "Map", "Game", "Users");
-+	Con_Printf("%-24.24s %-15.15s %-15.15s %-15.15s\n", "------------------------", "---------------", "---------------", "---------------");
++	NET_SlistPrintHeader((vid.width >> 3) - 3);
  	slistLastShown = 0;
  }
  
-+char *NET_SlistFormatEntry(const hostcache_t *host)
-+{
-+	static char string[96];
-+	char users[32];
-+	int instances = host->instances > 0 ? host->instances : 1;
-+	snprintf(users, sizeof(users), "%u/%u", host->users, host->maxusers);
-+	if (instances > 1)
-+		snprintf(string, sizeof(string), "%-24.24s %-15.15s %-15.15s %-8s (%u)\n",
-+				host->name, host->map, host->gamedir, users, instances);
-+	else
-+		snprintf(string, sizeof(string), "%-24.24s %-15.15s %-15.15s %-8s\n",
-+				host->name, host->map, host->gamedir, users);
-+	return string;
-+}
-+
+@@ -273,10 +275,7 @@
  
- static void PrintSlist(void)
- {
-@@ -274,7 +286,7 @@
  	for (n = slistLastShown; n < hostCacheCount; n++)
  	{
- 		if (hostcache[n].maxusers)
+-		if (hostcache[n].maxusers)
 -			Con_Printf("%-15.15s %-15.15s %2u/%2u\n", hostcache[n].name, hostcache[n].map, hostcache[n].users, hostcache[n].maxusers);
-+			Con_Printf("%s", NET_SlistFormatEntry(&hostcache[n]));
- 		else
- 			Con_Printf("%-24.24s %-15.15s\n", hostcache[n].name, hostcache[n].map);
+-		else
+-			Con_Printf("%-15.15s %-15.15s\n", hostcache[n].name, hostcache[n].map);
++		NET_SlistPrintEntry((vid.width >> 3) - 3, &hostcache[n]);
  	}
-@@ -295,6 +307,7 @@
+ 	slistLastShown = n;
+ }
+@@ -295,6 +294,7 @@
  {
  	if (slistInProgress)
  		return;
@@ -80,7 +60,7 @@
  
  	if (! slistSilent)
  	{
-@@ -312,8 +325,11 @@
+@@ -312,8 +312,11 @@
  }
  
  
@@ -93,7 +73,7 @@
  	for (net_driverlevel=0; net_driverlevel < net_numdrivers; net_driverlevel++)
  	{
  		if (!slistLocal && net_driverlevel == 0)
-@@ -323,12 +339,12 @@
+@@ -323,12 +326,12 @@
  		dfunc.SearchForHosts (true);
  	}
  
@@ -108,12 +88,10 @@
  {
  	for (net_driverlevel=0; net_driverlevel < net_numdrivers; net_driverlevel++)
  	{
-@@ -342,6 +358,18 @@
+@@ -342,6 +345,16 @@
  	if (! slistSilent)
  		PrintSlist();
  
-+	// If Nexus responded with a single aggregated server list packet,
-+	// there's no need to wait out Quake's default 1.5s LAN polling window.
 +	if (slist_agg_done)
 +	{
 +		if (!slistSilent)
@@ -127,49 +105,7 @@
  	if ((Sys_FloatTime() - slistStartTime) < 1.5)
  	{
  		SchedulePollProcedure(&slistPollProcedure, 0.1);
-@@ -365,11 +393,49 @@
- int hostCacheCount = 0;
- hostcache_t hostcache[HOSTCACHESIZE];
- 
-+int NET_ResolveHostcacheName(char *token, char *out, int out_size)
-+{
-+	int i, match = -1;
-+	int token_len;
-+
-+	if (!token || !token[0] || !out || out_size < 2)
-+		return 0;
-+
-+	token_len = Q_strlen(token);
-+
-+	for (i = 0; i < hostCacheCount; i++)
-+		if (!Q_strcasecmp(token, hostcache[i].name))
-+		{
-+			match = i;
-+			break;
-+		}
-+
-+	if (match < 0)
-+	{
-+		for (i = 0; i < hostCacheCount; i++)
-+		{
-+			if (Q_strncasecmp(token, hostcache[i].name, token_len))
-+				continue;
-+			if (match >= 0)
-+				return -1;
-+			match = i;
-+		}
-+	}
-+
-+	if (match < 0)
-+		return 0;
-+
-+	Q_strncpy(out, hostcache[match].cname, out_size - 1);
-+	out[out_size - 1] = 0;
-+	return match + 1;
-+}
-+
- qsocket_t *NET_Connect (char *host)
- {
+@@ -370,6 +383,7 @@
  	qsocket_t		*ret;
  	int				n;
  	int				numdrivers = net_numdrivers;
@@ -177,7 +113,7 @@
  
  	SetNetTime();
  
-@@ -386,14 +452,12 @@
+@@ -386,14 +400,12 @@
  
  		if (hostCacheCount)
  		{
@@ -197,7 +133,7 @@
  		}
  	}
  
-@@ -401,7 +465,12 @@
+@@ -401,7 +413,12 @@
  	NET_Slist_f ();
  
  	while(slistInProgress)
@@ -210,7 +146,7 @@
  
  	if (host == NULL)
  	{
-@@ -412,12 +481,12 @@
+@@ -412,12 +429,12 @@
  	}
  
  	if (hostCacheCount)
@@ -229,12 +165,10 @@
  
  JustDoIt:
  	for (net_driverlevel=0 ; net_driverlevel<numdrivers; net_driverlevel++)
-@@ -959,6 +1028,19 @@
+@@ -959,6 +976,17 @@
  {
  	PollProcedure *pp, *prev;
  
-+	// Ensure a poll procedure is scheduled at most once at a time.
-+	// Re-scheduling an existing node can corrupt the linked list.
 +	for (pp = pollProcedureList, prev = NULL; pp; prev = pp, pp = pp->next)
 +	{
 +		if (pp != proc)

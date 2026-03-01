@@ -1,4 +1,4 @@
-// nq-overlay: CD state, controls, and track list
+// nq-ui: CD state, controls, and track list
 (function() {
   if (!Module || !Module.nqOverlayInstall) return;
 
@@ -50,19 +50,13 @@
       return Number(Module.nqCdGetTrackNumberFromPath(path) || 0) | 0;
     }
 
-    function isGameLoaded() {
-      return !!nqGameStarted;
-    }
-
     function syncCdInfoMessage(runtime) {
       var text;
       var level = 'info';
       if (ctx.isCdDir(ctx.currentDir)) {
-        if (ctx.cdInfoText || ctx.cdInfoLevel) {
-          ctx.cdInfoText = '';
-          ctx.cdInfoLevel = '';
-          ctx.clearStatusMessage(STATUS_CD_INFO);
-        }
+        ctx.cdInfoText = '';
+        ctx.cdInfoLevel = '';
+        ctx.clearStatusMessage(STATUS_CD_INFO);
         return;
       }
 
@@ -106,12 +100,9 @@
     }
 
     function syncCdButtonsState() {
-      var disabled;
-      var command;
       ctx.cdButtons.forEach(function(btn) {
-        command = btn.getAttribute('data-cd-command');
-        disabled = ctx.uploadBusy || (!ctx.cdEnabled && command !== 'toggle') || (!isGameLoaded() && command === 'toggle');
-        btn.disabled = disabled;
+        var command = btn.getAttribute('data-cd-command');
+        btn.disabled = ctx.uploadBusy || (!ctx.cdEnabled && command !== 'toggle') || (!nqGameStarted && command === 'toggle');
       });
     }
 
@@ -148,20 +139,17 @@
     }
 
     function syncCdEnabledFromPreference() {
-      setCdEnabled(isGameLoaded() && !!ctx.cdPreferredEnabled, false);
+      setCdEnabled(!!nqGameStarted && !!ctx.cdPreferredEnabled, false);
     }
 
     function applyCdPreferenceToGame() {
       var command;
-      if (!isGameLoaded())
+      if (!nqGameStarted)
         return;
       syncCdEnabledFromPreference();
       command = ctx.cdPreferredEnabled ? 'cd on' : 'cd off';
-      try {
-        Module.ccall('NexQuake_ExecCommand', 'void', ['string'], [command]);
-      } catch (e) {
-        console.error('Failed to apply CD preference:', e);
-      }
+      if (!nqWasmExecCommand(command))
+        console.error('Failed to apply CD preference: wasm command bridge unavailable');
     }
 
     function toggleCdView() {
@@ -183,7 +171,7 @@
       var command = String(cdCommand || '').trim().toLowerCase();
       var finalCommand;
       if (!command) return;
-      if (!isGameLoaded()) {
+      if (!nqGameStarted) {
         syncCdEnabledFromPreference();
         return;
       }
@@ -211,31 +199,28 @@
         finalCommand = 'cd ' + command;
       }
 
-      try {
-        Module.ccall('NexQuake_ExecCommand', 'void', ['string'], [finalCommand]);
-      } catch (e) {
+      if (!nqWasmExecCommand(finalCommand)) {
         ctx.showErrorMessage('Failed to run: ' + finalCommand, 3000);
-        console.error('Exec command failed:', e);
+        console.error('Exec command failed: wasm command bridge unavailable');
         return;
       }
 
       if (command === 'on')
         setCdEnabled(true);
-      if (command === 'off')
+      if (command === 'off') {
         setCdEnabled(false);
+        if (ctx.isCdDir(ctx.currentDir))
+          toggleCdView();
+      }
       syncCdRuntimeState();
 
       if (command === 'loop' || command === 'resume' || command === 'pause') {
-        setTimeout(function() {
-          syncCdRuntimeState();
-        }, 0);
+        setTimeout(syncCdRuntimeState, 0);
         return;
       }
 
-      if (command === 'off' || command === 'stop' || command === 'on')
-        return;
-
-      ctx.showInfoMessage(finalCommand, 1200);
+      if (command !== 'off' && command !== 'stop' && command !== 'on')
+        ctx.showInfoMessage(finalCommand, 1200);
     }
 
     function getCdRemoteTracks() {
@@ -248,29 +233,24 @@
       }).filter(Boolean);
     }
 
-    function getCdTrackButtonState(trackPath, runtime) {
+    function getCdTrackButtonState(trackPath, runtime, forceDisabled) {
       var runtimePath = runtime && runtime.path ? String(runtime.path).replace(/\\/g, '/').toLowerCase() : '';
       var pathLower = String(trackPath || '').replace(/\\/g, '/').toLowerCase();
       var isPlaying = runtime && (runtime.state === 'playing' || runtime.state === 'loading');
       var isPaused = runtime && runtime.state === 'paused';
       var isCurrentTrack;
-
+      var disabled = !!forceDisabled || !ctx.cdEnabled;
       var trackNumber = getCdTrackNumber(trackPath);
       isCurrentTrack = !!(runtimePath && runtimePath === pathLower);
-      return {
+      var state = {
         isCurrentTrack: isCurrentTrack,
         isCurrentActive: isCurrentTrack && (isPlaying || isPaused),
         isCurrentPlaying: isCurrentTrack && isPlaying,
         isCurrentPaused: isCurrentTrack && isPaused,
         trackNumber: trackNumber,
-        disabled: false
+        disabled: disabled
       };
-    }
-
-    function getCdTrackState(trackPath, runtime, forceDisabled) {
-      var state = getCdTrackButtonState(trackPath, runtime);
-      if (forceDisabled || !ctx.cdEnabled) {
-        state.disabled = true;
+      if (disabled) {
         state.isCurrentPlaying = false;
         state.isCurrentPaused = false;
         state.isCurrentActive = false;
@@ -279,15 +259,11 @@
     }
 
     function runCdTrackCommand(command, trackNumber, errorMessage) {
-      runCdCommand(command, trackNumber).catch(function(err) {
-        ctx.showErrorMessage(errorMessage, 2500);
-        console.error(errorMessage + ':', err);
-      });
+      runCdCommand(command, trackNumber).catch(function(err) { ctx.showErrorMessage(errorMessage, 2500); console.error(errorMessage + ':', err); });
     }
 
     function runCdTrackToggle(trackPath, trackState) {
-      if (!trackState || trackState.disabled)
-        return;
+      if (!trackState || trackState.disabled) return;
       if (trackState.isCurrentPlaying) {
         runCdTrackCommand('pause', 0, 'CD pause failed');
         return;
@@ -304,7 +280,7 @@
     }
 
     function toggleCdTrack(trackPath, forceDisabled) {
-      runCdTrackToggle(trackPath, getCdTrackState(trackPath, getCdRuntimeState(), !!forceDisabled));
+      runCdTrackToggle(trackPath, getCdTrackButtonState(trackPath, getCdRuntimeState(), !!forceDisabled));
     }
 
     function applyCdTrackToggleState(btn, trackState) {
@@ -323,12 +299,6 @@
       btn.disabled = disabled;
     }
 
-    function applyCdTrackRowState(li, trackState) {
-      var state = trackState || { trackNumber: 0 };
-      li.classList.toggle('nq-cd-track-active', !!state.isCurrentActive);
-      li.classList.toggle('nq-cd-track-clickable', !state.disabled && (state.isCurrentActive || state.trackNumber));
-    }
-
     function setCdTrackMeta(el, trackPath, forceDisabled) {
       if (!el)
         return;
@@ -336,25 +306,23 @@
       el.setAttribute('data-cd-track-disabled', forceDisabled ? '1' : '0');
     }
 
-    function getCdTrackStateFromElement(el, runtime) {
-      var trackPath = el.getAttribute('data-cd-track-path') || '';
-      var forceDisabled = el.getAttribute('data-cd-track-disabled') === '1';
-      return getCdTrackState(trackPath, runtime, forceDisabled);
-    }
-
     function applyCdTrackElementState(li, runtime) {
       var btn = li.querySelector('.nq-cd-track-toggle');
-      var state = getCdTrackStateFromElement(li, runtime);
-      applyCdTrackRowState(li, state);
-      if (btn)
-        applyCdTrackToggleState(btn, state);
+      var state = getCdTrackButtonState(
+        li.getAttribute('data-cd-track-path') || '',
+        runtime,
+        li.getAttribute('data-cd-track-disabled') === '1'
+      );
+      li.classList.toggle('nq-cd-track-active', !!state.isCurrentActive);
+      li.classList.toggle('nq-cd-track-clickable', !state.disabled && (state.isCurrentActive || state.trackNumber));
+      if (btn) applyCdTrackToggleState(btn, state);
     }
 
     function createCdTrackToggleButton(trackPath, forceDisabled, runtime) {
       var btn = document.createElement('button');
       btn.className = 'nq-cd-track-toggle';
       setCdTrackMeta(btn, trackPath, forceDisabled);
-      applyCdTrackToggleState(btn, getCdTrackState(trackPath, runtime, forceDisabled));
+      applyCdTrackToggleState(btn, getCdTrackButtonState(trackPath, runtime, forceDisabled));
       return btn;
     }
 
@@ -399,7 +367,7 @@
       CD_PAUSE_ICON,
       getCdTrackNumber,
       getCdRuntimeState,
-      isGameLoaded,
+      isGameLoaded: function() { return !!nqGameStarted; },
       syncCdButtonsState,
       syncCdModeUI,
       syncCdEnabledFromPreference,
@@ -408,7 +376,7 @@
       runCdCommand,
       getCdRemoteTracks,
       getCdTrackButtonState,
-      getCdTrackState,
+      getCdTrackState: getCdTrackButtonState,
       setCdTrackMeta,
       applyCdTrackElementState,
       createCdTrackToggleButton,

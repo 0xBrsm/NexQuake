@@ -4,7 +4,8 @@ var loaderStatusElement = document.getElementById('nq-loader-status');
 var loaderProgressBar = document.getElementById('nq-loader-progress-bar');
 var loaderReloadButton = document.getElementById('nq-loader-reload');
 var overlayToggleElement = document.getElementById('nq-overlay-toggle');
-var canvasElement = document.getElementById('canvas');
+/** @type {HTMLCanvasElement} */
+var canvasElement = /** @type {HTMLCanvasElement} */ (document.getElementById('canvas'));
 var outputElement = document.getElementById('output');
 var exportElement = document.getElementById('exportFile');
 var NEXQUAKE_GAMENAME = '__NEXQUAKE_GAMENAME__';
@@ -73,6 +74,37 @@ function nqSafeUnlink(path) {
 
 function nqSafeSyncFS() {
   try { FS.syncfs(false, function(){}); } catch (e) {}
+}
+
+function nqWasmCall(symbol, returnType, argTypes, args, fallbackValue) {
+  if (typeof Module === 'undefined' || !Module || typeof Module.ccall !== 'function')
+    return fallbackValue;
+  try {
+    return Module.ccall(symbol, returnType, argTypes || [], args || []);
+  } catch (e) {
+    return fallbackValue;
+  }
+}
+
+function nqWasmExecCommand(command) {
+  return nqWasmCall('NQWasm_ExecCommand', 'void', ['string'], [String(command || '')], null) !== null;
+}
+
+function nqWasmStartMainLoop() {
+  return nqWasmCall('NQWasm_StartMainLoop', 'void', [], [], null) !== null;
+}
+
+function nqWasmGetKeyBinding(key) {
+  var binding = nqWasmCall('NQWasm_GetKeyBinding', 'string', ['number'], [Number(key) | 0], '');
+  return binding || '';
+}
+
+function nqWasmGetVideoWidth() {
+  return Number(nqWasmCall('NQWasm_GetVideoWidth', 'number', [], [], 0)) | 0;
+}
+
+function nqWasmGetConnectedServerListenPort() {
+  return Number(nqWasmCall('NQWasm_GetConnectedServerListenPort', 'number', [], [], 0)) | 0;
 }
 
 var NQ_PER_MOD_CONFIG_STORAGE_KEY = 'nexquake.per_mod_config';

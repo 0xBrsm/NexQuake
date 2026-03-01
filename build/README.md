@@ -20,7 +20,7 @@ Scripts that compile the WASM client and dedicated server from the upstream id S
 
 2. build-client.sh
    ├── cp tmp/WinQuake/ -> tmp/client/ (working copy)
-   ├── apply src/client/*.patch
+   ├── apply src/client/patches/*.patch
    ├── cp src/client/*.c, *.h, *.js, Makefile.emscripten, shell.html, shell.css, favicon.svg
    ├── stage seed cfgs from src/etc/ into tmp/client/seed/<base-game>/
    └── emcc (Emscripten) -> output files

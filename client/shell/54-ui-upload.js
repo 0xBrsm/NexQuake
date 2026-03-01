@@ -1,4 +1,4 @@
-// nq-overlay: upload queue and file writes
+// nq-ui: upload queue and file writes
 (function() {
   if (!Module || !Module.nqOverlayInstall) return;
 
@@ -16,9 +16,7 @@
         reader.onerror = function() {
           reject(reader.error || new Error('read failed'));
         };
-        reader.onprogress = function(e) {
-          if (onProgress) onProgress(e);
-        };
+        reader.onprogress = onProgress || null;
         reader.onload = function(e) {
           var result = e && e.target ? e.target.result : null;
           if (!(result instanceof ArrayBuffer)) {
@@ -94,7 +92,7 @@
     }
 
     async function processUploads(files, options) {
-      var queue = [];
+      var queue = Array.from(files || []);
       var opts = options || {};
       var refreshOnSuccess = opts.refreshOnSuccess !== false;
       var uploaded = 0;
@@ -102,12 +100,7 @@
       var totalBytes;
       var i;
 
-      if (ctx.uploadBusy) return;
-
-      if (files) {
-        for (i = 0; i < files.length; i++) queue.push(files[i]);
-      }
-      if (!queue.length) return;
+      if (ctx.uploadBusy || !queue.length) return;
 
       ctx.setUploadBusyState(true);
       ctx.clearStatusMessage('upload-progress');

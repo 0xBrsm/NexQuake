@@ -1,8 +1,22 @@
-// nq-overlay: settings overlay bootstrap
+// nq-ui: settings panel bootstrap
 (function() {
   var toggle = document.getElementById('nq-overlay-toggle');
   var panel = document.getElementById('nq-overlay-panel');
   if (!toggle || !panel) return;
+
+  function syncOverlayViewportHeight() {
+    var viewport = window.visualViewport;
+    var h = viewport && viewport.height ? viewport.height : window.innerHeight;
+    if (!h) return;
+    document.documentElement.style.setProperty('--nq-overlay-vh', Math.round(h) + 'px');
+  }
+  syncOverlayViewportHeight();
+  window.addEventListener('resize', syncOverlayViewportHeight, { passive: true });
+  window.addEventListener('orientationchange', syncOverlayViewportHeight, { passive: true });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', syncOverlayViewportHeight, { passive: true });
+    window.visualViewport.addEventListener('scroll', syncOverlayViewportHeight, { passive: true });
+  }
 
   var cdRow = document.getElementById('nq-cd-row');
   var userExts = (Module && Array.isArray(Module.nqUserFileExts) && Module.nqUserFileExts.length)
@@ -13,6 +27,7 @@
 
   var ctx = {
     toggle: toggle,
+    closeButton: document.getElementById('nq-overlay-close'),
     panel: panel,
     tabs: document.getElementById('nq-vfs-tabs'),
     list: document.getElementById('nq-vfs-list'),
@@ -34,7 +49,13 @@
     confirmOk: document.getElementById('nq-confirm-ok'),
     confirmCancel: document.getElementById('nq-confirm-cancel'),
     configGlobalBtn: document.getElementById('nq-config-global'),
+    joinCodeBtn: document.getElementById('nq-join-code'),
+    joinCodeValue: document.getElementById('nq-join-code-value'),
+    brandingRow: document.getElementById('nq-branding-row'),
+    branding: document.getElementById('nq-branding'),
+    versionEl: document.getElementById('nq-version'),
     tabsWrap: document.getElementById('nq-tabs-wrap'),
+    dirHeader: document.getElementById('nq-dir-header'),
     dirLabel: document.getElementById('nq-dir-label'),
     tabsMeasureCtx: document.createElement('canvas').getContext('2d'),
 
@@ -55,6 +76,7 @@
     cdEnabled: true,
     cdPaused: false,
     cdPlaying: false,
+    joinCodePort: 0,
     nonCdDir: null,
 
     safeReadDir: nqSafeReadDir,

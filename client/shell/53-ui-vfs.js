@@ -1,9 +1,10 @@
-// nq-overlay: VFS tabs, file list, editor, and directory ops
+// nq-ui: VFS tabs, file list, editor, and directory ops
 (function() {
   if (!Module || !Module.nqOverlayInstall) return;
 
   Module.nqOverlayInstall(function(ctx) {
     var FILE_DELETE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+    var FILE_EXEC_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.5 9a9 9 0 0 1 14.8-3.4L23 10"/><path d="M20.5 15A9 9 0 0 1 5.7 18.4L1 14"/></svg>';
 
     function getDirs() {
       var baseDir = ctx.getBaseGameDir();
@@ -106,6 +107,39 @@
       }
     }
 
+    function toExecCfgArg(displayPath) {
+      var path = String(displayPath || '').trim();
+      if (!path)
+        return '';
+      if (path.indexOf(ctx.currentDir) === 0)
+        path = path.slice(ctx.currentDir.length);
+      path = path.replace(/^\/+/, '');
+      if (!path || !isCfg(path))
+        return '';
+      if (/[\r\n"]/.test(path))
+        return '';
+      return '"' + path + '"';
+    }
+
+    function execCfgFile(displayPath) {
+      var arg;
+      var command;
+      if (ctx.isCdDir(ctx.currentDir) || !isCfg(displayPath))
+        return;
+      arg = toExecCfgArg(displayPath);
+      if (!arg) {
+        ctx.showErrorMessage('Invalid cfg path', 2000);
+        return;
+      }
+      command = 'exec ' + arg;
+      if (!nqWasmExecCommand(command)) {
+        ctx.showErrorMessage('Failed to run: ' + command, 3000);
+        console.error('Exec cfg failed: wasm command bridge unavailable');
+        return;
+      }
+      ctx.showInfoMessage(command, 1300);
+    }
+
     function closeEditor() {
       if (!ctx.editor.classList.contains('open')) return false;
       ctx.editor.classList.remove('open');
@@ -203,6 +237,20 @@
       }
     }
 
+    function cycleDir(step) {
+      var dirs = getDirs();
+      var index;
+      var delta = step < 0 ? -1 : 1;
+      if (!dirs.length)
+        return;
+      index = dirs.indexOf(ctx.currentDir);
+      if (index < 0)
+        index = 0;
+      index = (index + delta + dirs.length) % dirs.length;
+      ctx.currentDir = dirs[index];
+      ctx.refresh();
+    }
+
     function refresh() {
       var files;
       var dirName;
@@ -213,6 +261,7 @@
 
       ctx.syncCdModeUI();
       ctx.syncConfigToggle();
+      ctx.syncJoinCode();
       if (ctx.fileInput) ctx.fileInput.accept = ctx.getCurrentUploadSettings().accept;
       buildTabs();
 
@@ -254,13 +303,10 @@
 
       files.sort();
 
-      if (isCdMode && !files.length && !serverTracks.length) {
+      if (isCdMode && !files.length) {
         ctx.list.innerHTML = '<li style="color:#888">No user CD tracks</li>';
-        return;
+        if (!serverTracks.length) return;
       }
-
-      if (isCdMode && !files.length)
-        ctx.list.innerHTML = '<li style="color:#888">No user CD tracks</li>';
 
       files.forEach(function(displayPath) {
         var shownName = displayPath;
@@ -268,6 +314,7 @@
         var span;
         var actions;
         var cdBtn;
+        var execBtn;
         var dlBtn;
         var delBtn;
 
@@ -294,16 +341,31 @@
         actions = document.createElement('div');
         actions.className = 'nq-file-actions';
 
+        if (!isCdMode && isCfg(displayPath)) {
+          var editBtn = document.createElement('button');
+          editBtn.className = 'nq-edit';
+          editBtn.innerHTML = '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M17 3a2.83 2.83 0 1 1 4 4L7 21l-4 1 1-4Z\"/><path d=\"M15 5l4 4\"/></svg>';
+          editBtn.title = 'edit cfg';
+          editBtn.setAttribute('aria-label', 'edit cfg');
+          actions.appendChild(editBtn);
+          execBtn = document.createElement('button');
+          execBtn.className = 'nq-exec';
+          execBtn.innerHTML = FILE_EXEC_ICON;
+          execBtn.title = 'exec cfg';
+          execBtn.setAttribute('aria-label', 'exec cfg');
+          actions.appendChild(execBtn);
+        }
+
         dlBtn = document.createElement('button');
         dlBtn.className = 'nq-dl';
         dlBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
-        dlBtn.title = 'Download';
+        dlBtn.title = 'download';
         actions.appendChild(dlBtn);
 
         delBtn = document.createElement('button');
         delBtn.innerHTML = FILE_DELETE_ICON;
         delBtn.className = 'nq-del';
-        delBtn.title = 'Delete';
+        delBtn.title = 'delete';
         actions.appendChild(delBtn);
 
         li.appendChild(actions);
@@ -322,9 +384,11 @@
     Object.assign(ctx, {
       openEditor,
       closeEditor,
+      execCfgFile,
       deleteFile,
       requestDeleteFile,
       moveFileToDir,
+      cycleDir,
       refresh
     });
   });

@@ -1,0 +1,47 @@
+--- common.c
++++ common.c
+@@ -20,6 +20,7 @@
+ // common.c -- misc functions used in client and server
+ 
+ #include "quakedef.h"
++#include "com_gameswitch.h"
+ 
+ #define NUM_SAFE_ARGVS  7
+ 
+@@ -1774,12 +1775,16 @@
+ //
+ // start up with GAMENAME by default (id1)
+ //
+-	COM_AddGameDirectory (va("%s/"GAMENAME, basedir) );
++	COM_AddGameDirectories (basedir, GAMENAME);
+ 
+ 	if (COM_CheckParm ("-rogue"))
+-		COM_AddGameDirectory (va("%s/rogue", basedir) );
++	{
++		COM_AddGameDirectories (basedir, "rogue");
++	}
+ 	if (COM_CheckParm ("-hipnotic"))
+-		COM_AddGameDirectory (va("%s/hipnotic", basedir) );
++	{
++		COM_AddGameDirectories (basedir, "hipnotic");
++	}
+ 
+ //
+ // -game <gamedir>
+@@ -1789,7 +1794,7 @@
+ 	if (i && i < com_argc-1)
+ 	{
+ 		com_modified = true;
+-		COM_AddGameDirectory (va("%s/%s", basedir, com_argv[i+1]));
++		COM_AddGameDirectories (basedir, com_argv[i+1]);
+ 	}
+ 
+ //
+@@ -1822,5 +1827,7 @@
+ 
+ 	if (COM_CheckParm ("-proghack"))
+ 		proghack = true;
++
++	COM_GameSwitch_Init(basedir);
+ }
+ 

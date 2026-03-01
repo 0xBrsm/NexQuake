@@ -10,11 +10,18 @@
  	int		users;
  	int		maxusers;
 +	int		instances;
-@@ -237,6 +238,7 @@
+@@ -237,6 +238,14 @@
  
  extern int hostCacheCount;
  extern hostcache_t hostcache[HOSTCACHESIZE];
 +int NET_ResolveHostcacheName(char *token, char *out, int out_size);
++void NET_SlistParseAggregatedList(int ldriver);
++void NET_SlistPrintHeader(int budget);
++void NET_SlistPrintEntry(int budget, const hostcache_t *host);
++int NET_SlistWidth(int budget);
++int NET_SlistFormatHeaderLine(int budget, char *out, int outsz);
++int NET_SlistFormatEntryLine(int budget, const hostcache_t *host, char *out, int outsz);
++extern qboolean slist_agg_done;
  
  #if !defined(_WIN32 ) && !defined (__linux__) && !defined (__sun__)
  #ifndef htonl

@@ -1,0 +1,107 @@
+--- keys.c
++++ keys.c
+@@ -92,31 +92,31 @@
+ 	{"MOUSE2", K_MOUSE2},
+ 	{"MOUSE3", K_MOUSE3},
+ 
+-	{"JOY1", K_JOY1},
+-	{"JOY2", K_JOY2},
+-	{"JOY3", K_JOY3},
+-	{"JOY4", K_JOY4},
+-
+-	{"AUX1", K_AUX1},
+-	{"AUX2", K_AUX2},
+-	{"AUX3", K_AUX3},
+-	{"AUX4", K_AUX4},
+-	{"AUX5", K_AUX5},
+-	{"AUX6", K_AUX6},
+-	{"AUX7", K_AUX7},
+-	{"AUX8", K_AUX8},
+-	{"AUX9", K_AUX9},
+-	{"AUX10", K_AUX10},
+-	{"AUX11", K_AUX11},
+-	{"AUX12", K_AUX12},
+-	{"AUX13", K_AUX13},
+-	{"AUX14", K_AUX14},
+-	{"AUX15", K_AUX15},
+-	{"AUX16", K_AUX16},
+-	{"AUX17", K_AUX17},
+-	{"AUX18", K_AUX18},
+-	{"AUX19", K_AUX19},
+-	{"AUX20", K_AUX20},
++	{"joy_a", K_JOY1},
++	{"joy_b", K_JOY2},
++	{"joy_x", K_JOY3},
++	{"joy_y", K_JOY4},
++
++	{"joy_lb", K_AUX1},
++	{"joy_rb", K_AUX2},
++	{"joy_lt", K_AUX3},
++	{"joy_rt", K_AUX4},
++	{"joy_back", K_AUX5},
++	{"joy_start", K_AUX6},
++	{"joy_dpad_up", K_AUX7},
++	{"joy_dpad_down", K_AUX8},
++	{"joy_dpad_left", K_AUX9},
++	{"joy_dpad_right", K_AUX10},
++	{"joy_ls", K_AUX11},
++	{"joy_rs", K_AUX12},
++	{"touch1", K_AUX13},
++	{"touch2", K_AUX14},
++	{"touch3", K_AUX15},
++	{"touch4", K_AUX16},
++	{"touch5", K_AUX17},
++	{"touch6", K_AUX18},
++	{"touch7", K_AUX19},
++	{"touch8", K_AUX20},
++	{"touch_tap1", K_AUX21},
++	{"touch_tap2", K_AUX22},
+-	{"AUX21", K_AUX21},
+-	{"AUX22", K_AUX22},
+ 	{"AUX23", K_AUX23},
+@@ -588,6 +588,22 @@
+ 
+ }
+ 
++static qboolean Key_BindingContainsMenu(int key)
++{
++	char	*binding;
++	int		i;
++
++	if (key < 0 || key >= 256)
++		return false;
++	binding = keybindings[key];
++	if (!binding || !binding[0])
++		return false;
++	for (i = 0; binding[i]; i++)
++		if (!Q_strncasecmp(binding + i, "menu", 4))
++			return true;
++	return false;
++}
++
+ /*
+ ===================
+ Key_Event
+@@ -623,7 +639,7 @@
+ 		}
+ 			
+ 		if (key >= 200 && !keybindings[key])
+-			Con_Printf ("%s is unbound, hit F4 to set.\n", Key_KeynumToString (key) );
++			Con_Printf ("%s is unbound.\n", Key_KeynumToString (key) );
+ 	}
+ 
+ 	if (key == K_SHIFT)
+@@ -693,7 +709,7 @@
+ //
+ // if not a consolekey, send to the interpreter no matter what mode is
+ //
+-	if ( (key_dest == key_menu && menubound[key])
++	if ( (key_dest == key_menu && (menubound[key] || Key_BindingContainsMenu(key)))
+ 	|| (key_dest == key_console && !consolekeys[key])
+ 	|| (key_dest == key_game && ( !con_forcedup || !consolekeys[key] ) ) )
+ 	{
+@@ -756,4 +772,3 @@
+ 		key_repeats[i] = 0;
+ 	}
+ }
+-

@@ -13,7 +13,7 @@ NexQuake is designed to be drop-in compatible with any protocol 15 (NetQuake) de
 | `LOG_LEVEL` | `info` | Logging verbosity. Accepts: `error`, `warn`, `info`, `debug`. |
 | `CONSOLE_TIMESTAMPS` | `1` | Timestamps on operator console log lines. Accepts: `0`, `1`. |
 | `DEBUG_RELAY` | `0` | Logs UDP relay traffic with source/destination, length, and byte preview. Accepts: `0`, `1`. |
-| `POOL_SIZE` | `1` | Per-line scaling cap for `-port 0` startup entries (minimum `1`). Controls the maximum backend servers in that entry's backend pool. `1` (the default) disables scale-out: connections and RCON pass through to the single backend with no replica overhead. Set higher (e.g. `10`) to enable demand-driven scale-out. |
+| `POOL_SIZE` | `1` | Per-line scaling cap for `-port 0` startup entries (minimum `1`). Controls the maximum backend servers in that entry's backend pool. `1` (the default) disables scale-out while preserving proxy/reconcile safety guards; connections and RCON pass through to a single backend with no replica overhead. Set higher (for example `10`) to enable demand-driven scale-out. |
 
 ## Authentication
 
@@ -33,7 +33,7 @@ NexQuake is designed to be drop-in compatible with any protocol 15 (NetQuake) de
 | `CL_CONCURRENCY` | `16` | Sets the number of game files to download simultaneously. Set `0` for unbounded (capped by queue size). |
 | `CL_SMENU` | `0` | If `1`, auto-opens the server search menu on client start up to make joining a server easier. |
 | `CL_ARGS` | empty | Set launch arguments for client start up in shell-style strings (i.e. use single quotes for multiple args). |
-| `CL_URL_ARGS` | `0` | If `1`, lets players add extra client startup arguments in the URL after `?`, separated by `&`. |
+| `CL_URL_ARGS` | `1` | If `1`, lets players add extra client startup arguments in the URL after `?`, separated by `&`. Set `0` to disable URL argument passthrough. |
 
 ### CL*ARGS Examples
 

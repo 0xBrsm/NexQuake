@@ -168,7 +168,7 @@ func loadRuntimeConfig() runtimeConfig {
 		vfsPrefetchConcurrency: getEnvIntMin("CL_CONCURRENCY", 16, 0),
 		clientAutoSMenu:        getEnvBool01("CL_SMENU", false),
 		clientSendArgs:         getEnvArgs("CL_ARGS", nil),
-		clientURLArgs:          getEnvBool01("CL_URL_ARGS", false),
+		clientURLArgs:          getEnvBool01("CL_URL_ARGS", true),
 		poolSize:               getEnvIntMin("POOL_SIZE", 1, 1),
 	}
 }

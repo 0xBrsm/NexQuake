@@ -12,72 +12,281 @@ static qboolean	playing = false;
 static qboolean	wasPlaying = false;
 static float	cdvolume = -1.0f;
 
+// Called by JS when a track finishes or errors out naturally.
+EMSCRIPTEN_KEEPALIVE void CDAudio_OnTrackEnded(void)
+{
+	playing = false;
+	wasPlaying = false;
+}
+
+// js_cd_init: create the audio element, wire all event handlers, attach helpers
+// to the state object, and expose the overlay query API on Module.
 EM_JS(int, js_cd_init, (), {
-	if (typeof Module === 'undefined' || typeof Module.nqCdInit !== 'function')
-		return 0;
-	try { return Module.nqCdInit() ? 1 : 0; }
-	catch (e) { console.warn('nqCdInit failed:', e); return 0; }
-});
+	var CD_DIR = (typeof nqGetCdDir === 'function' ? nqGetCdDir() : '/cd/').replace(/\\/+$/, "");
 
-EM_JS(void, js_cd_shutdown, (), {
-	if (typeof Module === 'undefined' || typeof Module.nqCdShutdown !== 'function')
-		return;
-	try { Module.nqCdShutdown(); }
-	catch (e) { console.warn('nqCdShutdown failed:', e); }
-});
+	function getTrackNum(name) {
+		name = String(name || "").toLowerCase().replace(/\\.(?:ogg|mp3)$/, "");
+		var m = name.match(/^#?(\\d+)/) || name.match(/(\\d+)$/);
+		var n = m ? (Number(m[1]) | 0) : 0;
+		return n > 0 ? n : 0;
+	}
 
-EM_JS(void, js_cd_set_volume, (float volume), {
-	if (typeof Module === 'undefined' || typeof Module.nqCdSetVolume !== 'function')
-		return;
-	try { Module.nqCdSetVolume(volume); }
-	catch (e) { console.warn('nqCdSetVolume failed:', e); }
+	function resolveLocalPath(track) {
+		var st = nqSafeStat(CD_DIR);
+		if (!st || !FS.isDir(st.mode)) return "";
+		var q = [CD_DIR], qi = 0;
+		for (; qi < q.length; qi++) {
+			var dir = q[qi];
+			var entries = nqSafeReadDir(dir).slice().sort(function(a, b) { return a.localeCompare(b); });
+			for (var i = 0; i < entries.length; i++) {
+				var name = entries[i];
+				if (name === '.' || name === '..') continue;
+				var path = dir + '/' + name;
+				var s = nqSafeStat(path);
+				if (!s) continue;
+				if (FS.isFile(s.mode)) {
+					if (getTrackNum(name) === track) return path;
+				} else if (FS.isDir(s.mode)) {
+					q.push(path);
+				}
+			}
+		}
+		return "";
+	}
+
+	function loadRemoteManifest() {
+		var raw;
+		try { raw = Module.nexquakeCdRemoteManifest || []; } catch(e) { return []; }
+		if (!Array.isArray(raw)) return [];
+		var out = [];
+		raw.forEach(function(entry) {
+			var p = String(entry && entry.path || "").trim();
+			var u = String(entry && entry.url || "").trim();
+			if (p && u) out.push({ path: p, url: u });
+		});
+		return out;
+	}
+
+	function resolveTrack(track) {
+		var path = resolveLocalPath(track);
+		if (path) {
+			try {
+				var bytes = FS.readFile(path);
+				var ext = path.toLowerCase().slice(path.lastIndexOf('.') + 1);
+				var mime = ext === 'mp3' ? 'audio/mpeg' : 'audio/ogg';
+				return { path: path, url: URL.createObjectURL(new Blob([bytes], { type: mime })) };
+			} catch(e) {}
+		}
+		var entries = loadRemoteManifest();
+		for (var i = 0; i < entries.length; i++) {
+			var e = entries[i];
+			if (getTrackNum(String(e.path || "").split(/[\\\\/]/).pop()) === track)
+				return { path: CD_DIR + '/' + e.path, url: e.url };
+		}
+		return null;
+	}
+
+	var rqf = typeof requestAnimationFrame === 'function'
+		? requestAnimationFrame.bind(window)
+		: function(fn) { return setTimeout(function() { fn(Date.now()); }, 16); };
+	var cqf = typeof cancelAnimationFrame === 'function'
+		? cancelAnimationFrame.bind(window) : clearTimeout;
+
+	function notify() {
+		if (typeof Module.nqOverlayOnCdStateChange === 'function')
+			try { Module.nqOverlayOnCdStateChange(); } catch(e) {}
+	}
+
+	function revokeBlob(url) {
+		if (url && url.indexOf('blob:') === 0)
+			try { URL.revokeObjectURL(url); } catch(e) {}
+	}
+
+	function fadeToSilence(s, done) {
+		var startVol = Number(s.audio.volume);
+		if (s.audio.paused || !Number.isFinite(startVol) || startVol <= 0.001) {
+			if (done) done();
+			return;
+		}
+		var startAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+		var durationMs = 48;
+		function step(now) {
+			var t = Math.min(1, Math.max(0, (Number(now) - startAt) / durationMs));
+			try { s.audio.volume = startVol * (1 - t); } catch(e) {}
+			if (t >= 1) { s.fadeToken = 0; if (done) done(); return; }
+			s.fadeToken = rqf(step);
+		}
+		s.fadeToken = rqf(step);
+	}
+
+	var s = {
+		audio: document.createElement('audio'),
+		status: 'stopped',
+		sourcePath: "",
+		blobURL: "",
+		targetVolume: 1,
+		fadeToken: 0,
+		resolveTrack: resolveTrack,
+		loadRemoteManifest: loadRemoteManifest,
+		getTrackNum: getTrackNum,
+		notify: notify,
+		revokeBlob: revokeBlob,
+		fadeToSilence: fadeToSilence,
+		rqf: rqf,
+		cqf: cqf
+	};
+
+	s.audio.preload = 'auto';
+	s.audio.onplaying = function() { s.status = 'playing'; notify(); };
+	s.audio.onended = s.audio.onerror = function() {
+		if (s.fadeToken) { cqf(s.fadeToken); s.fadeToken = 0; }
+		revokeBlob(s.blobURL);
+		s.blobURL = "";
+		s.status = 'stopped';
+		s.sourcePath = "";
+		try { s.audio.volume = s.targetVolume; } catch(e) {}
+		_CDAudio_OnTrackEnded();
+		notify();
+	};
+
+	function resumeOnInteraction() {
+		if (s.status === 'loading' && s.audio.src)
+			try { s.audio.play(); } catch(e) {}
+	}
+	document.addEventListener('click', resumeOnInteraction);
+	document.addEventListener('keydown', resumeOnInteraction);
+	s.cleanup = function() {
+		document.removeEventListener('click', resumeOnInteraction);
+		document.removeEventListener('keydown', resumeOnInteraction);
+	};
+
+	Module._nq_cdaudio = s;
+
+	// Overlay query API
+	Module.nqCdGetPlaybackState = function() { return s.status; };
+	Module.nqCdGetSource = function() { return s.sourcePath || ""; };
+	Module.nqCdGetTrackNumberFromPath = function(path) {
+		return s.getTrackNum(String(path || "").split(/[\\\\/]/).pop());
+	};
+	Module.nqCdGetRemoteTracks = function() {
+		return s.loadRemoteManifest().map(function(e) { return String(e.path || ""); }).filter(Boolean);
+	};
+
+	notify();
+	return 1;
 });
 
 EM_JS(int, js_cd_play, (int track, int looping), {
-	if (typeof Module === 'undefined' || typeof Module.nqCdPlay !== 'function')
-		return 0;
-	try { return Module.nqCdPlay(track, looping) ? 1 : 0; }
-	catch (e) { console.warn('nqCdPlay failed:', e); return 0; }
+	var s = Module._nq_cdaudio;
+	if (!s) return 0;
+	var entry = s.resolveTrack(track);
+	if (!entry) return 0;
+
+	// Same track already active: adjust loop, resume if paused
+	if (s.sourcePath && s.sourcePath === entry.path &&
+	    (s.status === 'playing' || s.status === 'paused' || s.status === 'loading')) {
+		if (entry.url !== s.blobURL) s.revokeBlob(entry.url);
+		try { s.audio.loop = !!looping; } catch(e) {}
+		if (s.status === 'paused') {
+			if (s.fadeToken) { s.cqf(s.fadeToken); s.fadeToken = 0; }
+			try { s.audio.volume = s.targetVolume; } catch(e2) {}
+			s.status = 'loading';
+			s.notify();
+			try { s.audio.play(); } catch(e3) {}
+		} else {
+			s.notify();
+		}
+		return 1;
+	}
+
+	// Switch to new track: stop current immediately
+	if (s.fadeToken) { s.cqf(s.fadeToken); s.fadeToken = 0; }
+	try { s.audio.pause(); s.audio.currentTime = 0; } catch(e) {}
+	s.revokeBlob(s.blobURL);
+	s.sourcePath = entry.path;
+	s.status = 'loading';
+	s.blobURL = entry.url.indexOf('blob:') === 0 ? entry.url : "";
+	try {
+		s.audio.loop = !!looping;
+		if (s.audio.src !== entry.url) s.audio.src = entry.url;
+	} catch(e4) {}
+	s.notify();
+	try { s.audio.play(); } catch(e5) {}
+	return 1;
 });
 
 EM_JS(void, js_cd_stop, (), {
-	if (typeof Module === 'undefined' || typeof Module.nqCdStop !== 'function')
-		return;
-	try { Module.nqCdStop(); }
-	catch (e) { console.warn('nqCdStop failed:', e); }
+	var s = Module._nq_cdaudio;
+	if (!s) return;
+	if (s.fadeToken) { s.cqf(s.fadeToken); s.fadeToken = 0; }
+	s.status = 'stopped';
+	s.sourcePath = "";
+	s.fadeToSilence(s, function() {
+		try { s.audio.pause(); s.audio.currentTime = 0; } catch(e) {}
+		s.revokeBlob(s.blobURL);
+		s.blobURL = "";
+		try { s.audio.volume = s.targetVolume; } catch(e2) {}
+		s.notify();
+	});
+	s.notify();
 });
 
 EM_JS(void, js_cd_pause, (), {
-	if (typeof Module === 'undefined' || typeof Module.nqCdPause !== 'function')
-		return;
-	try { Module.nqCdPause(); }
-	catch (e) { console.warn('nqCdPause failed:', e); }
+	var s = Module._nq_cdaudio;
+	if (!s || s.status !== 'playing') return;
+	if (s.fadeToken) { s.cqf(s.fadeToken); s.fadeToken = 0; }
+	s.status = 'paused';
+	s.notify();
+	s.fadeToSilence(s, function() {
+		try { s.audio.pause(); s.audio.volume = s.targetVolume; } catch(e) {}
+	});
 });
 
 EM_JS(void, js_cd_resume, (), {
-	if (typeof Module === 'undefined' || typeof Module.nqCdResume !== 'function')
-		return;
-	try { Module.nqCdResume(); }
-	catch (e) { console.warn('nqCdResume failed:', e); }
+	var s = Module._nq_cdaudio;
+	if (!s || s.status !== 'paused') return;
+	if (s.fadeToken) { s.cqf(s.fadeToken); s.fadeToken = 0; }
+	try { s.audio.volume = s.targetVolume; } catch(e) {}
+	s.status = 'loading';
+	s.notify();
+	try { s.audio.play(); } catch(e2) {}
+});
+
+EM_JS(void, js_cd_set_volume, (float volume), {
+	var s = Module._nq_cdaudio;
+	if (!s) return;
+	var v = Math.min(1, Math.max(0, Number(volume)));
+	s.targetVolume = v;
+	try { s.audio.volume = v; } catch(e) {}
 });
 
 EM_JS(void, js_cd_get_source, (char *out, int outlen), {
-	if (!out || outlen <= 0)
-		return;
-	var source = '';
-	if (typeof Module !== 'undefined' && typeof Module.nqCdGetSource === 'function') {
-		try { source = String(Module.nqCdGetSource() || ''); }
-		catch (e) { source = ''; }
-	}
+	if (!out || outlen <= 0) return;
+	var source = Module._nq_cdaudio ? String(Module._nq_cdaudio.sourcePath || "") : "";
 	stringToUTF8(source, out, outlen);
+});
+
+EM_JS(void, js_cd_shutdown, (), {
+	var s = Module._nq_cdaudio;
+	if (!s) return;
+	if (s.fadeToken) { s.cqf(s.fadeToken); s.fadeToken = 0; }
+	if (s.cleanup) s.cleanup();
+	try { s.audio.pause(); } catch(e) {}
+	s.revokeBlob(s.blobURL);
+	s.audio.onplaying = s.audio.onended = s.audio.onerror = null;
+	try { s.audio.removeAttribute('src'); s.audio.load(); } catch(e2) {}
+	s.status = 'stopped';
+	s.sourcePath = "";
+	s.blobURL = "";
+	Module._nq_cdaudio = null;
+	if (typeof Module.nqOverlayOnCdStateChange === 'function')
+		try { Module.nqOverlayOnCdStateChange(); } catch(e3) {}
 });
 
 static float CDAudio_ClampVolume(float volume)
 {
-	if (volume < 0.0f)
-		return 0.0f;
-	if (volume > 1.0f)
-		return 1.0f;
+	if (volume < 0.0f) return 0.0f;
+	if (volume > 1.0f) return 1.0f;
 	return volume;
 }
 

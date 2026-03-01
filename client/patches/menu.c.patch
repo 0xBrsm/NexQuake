@@ -1,0 +1,165 @@
+--- menu.c
++++ menu.c
+@@ -1061,6 +1061,15 @@
+ }
+ 
+ 
++extern cvar_t *IN_SensitivityCvar(void);
++extern char *IN_SensitivityLabel(void);
++extern cvar_t *IN_LookspringCvar(void);
++extern char *IN_LookspringLabel(void);
++extern cvar_t *IN_LookstrafeCvar(void);
++extern char *IN_LookstrafeLabel(void);
++extern qboolean IN_InvertPitchEnabled(void);
++extern void IN_ToggleInvertPitch(void);
++extern char *IN_InvertPitchLabel(void);
+ void M_AdjustSliders (int dir)
+ {
+ 	S_LocalSound ("misc/menu3.wav");
+@@ -1083,14 +1092,17 @@
+ 			v_gamma.value = 1;
+ 		Cvar_SetValue ("gamma", v_gamma.value);
+ 		break;
+-	case 5:	// mouse speed
+-		sensitivity.value += dir * 0.5;
+-		if (sensitivity.value < 1)
+-			sensitivity.value = 1;
+-		if (sensitivity.value > 11)
+-			sensitivity.value = 11;
+-		Cvar_SetValue ("sensitivity", sensitivity.value);
++	case 5:	// look sensitivity
++	{
++		cvar_t *sens = IN_SensitivityCvar();
++		sens->value += dir * 0.5;
++		if (sens->value < 1)
++			sens->value = 1;
++		if (sens->value > 11)
++			sens->value = 11;
++		Cvar_SetValue (sens->name, sens->value);
+ 		break;
++	}
+ 	case 6:	// music volume
+ #ifdef _WIN32
+ 		bgmvolume.value += dir * 1.0;
+@@ -1126,16 +1138,22 @@
+ 		break;
+ 
+ 	case 9:	// invert mouse
+-		Cvar_SetValue ("m_pitch", -m_pitch.value);
++		IN_ToggleInvertPitch();
+ 		break;
+ 
+ 	case 10:	// lookspring
+-		Cvar_SetValue ("lookspring", !lookspring.value);
++	{
++		cvar_t *spring = IN_LookspringCvar();
++		Cvar_SetValue (spring->name, !spring->value);
+ 		break;
++	}
+ 
+ 	case 11:	// lookstrafe
+-		Cvar_SetValue ("lookstrafe", !lookstrafe.value);
++	{
++		cvar_t *strafe = IN_LookstrafeCvar();
++		Cvar_SetValue (strafe->name, !strafe->value);
+ 		break;
++	}
+ 
+ #ifdef _WIN32
+ 	case 13:	// _windowed_mouse
+@@ -1196,8 +1214,8 @@
+ 	r = (1.0 - v_gamma.value) / 0.5;
+ 	M_DrawSlider (220, 64, r);
+ 
+-	M_Print (16, 72, "           Mouse Speed");
+-	r = (sensitivity.value - 1)/10;
++	M_Print (16, 72, IN_SensitivityLabel());
++	r = (IN_SensitivityCvar()->value - 1)/10;
+ 	M_DrawSlider (220, 72, r);
+ 
+ 	M_Print (16, 80, "       CD Music Volume");
+@@ -1211,14 +1229,14 @@
+ 	M_Print (16, 96,  "            Always Run");
+ 	M_DrawCheckbox (220, 96, cl_forwardspeed.value > 200);
+ 
+-	M_Print (16, 104, "          Invert Mouse");
+-	M_DrawCheckbox (220, 104, m_pitch.value < 0);
++	M_Print (16, 104, IN_InvertPitchLabel());
++	M_DrawCheckbox (220, 104, IN_InvertPitchEnabled());
+ 
+-	M_Print (16, 112, "            Lookspring");
+-	M_DrawCheckbox (220, 112, lookspring.value);
++	M_Print (16, 112, IN_LookspringLabel());
++	M_DrawCheckbox (220, 112, IN_LookspringCvar()->value);
+ 
+-	M_Print (16, 120, "            Lookstrafe");
+-	M_DrawCheckbox (220, 120, lookstrafe.value);
++	M_Print (16, 120, IN_LookstrafeLabel());
++	M_DrawCheckbox (220, 120, IN_LookstrafeCvar()->value);
+ 
+ 	if (vid_menudrawfn)
+ 		M_Print (16, 128, "         Video Options");
+@@ -2841,6 +2859,10 @@
+ 
+ void M_Menu_Search_f (void)
+ {
++	if (key_dest == key_console)
++		Con_ToggleConsole_f ();
++	if (key_dest != key_console)
++		scr_con_current = scr_conlines = 0;
+ 	key_dest = key_menu;
+ 	m_state = m_search;
+ 	m_entersound = false;
+@@ -2914,7 +2936,10 @@
+ void M_ServerList_Draw (void)
+ {
+ 	int		n;
+-	char	string [64];
++	char	string [96];
++	int		list_x;
++	int		list_top;
++	int		list_budget;
+ 	qpic_t	*p;
+ 
+ 	if (!slist_sorted)
+@@ -2937,18 +2962,25 @@
+ 
+ 	p = Draw_CachePic ("gfx/p_multi.lmp");
+ 	M_DrawPic ( (320-p->width)/2, 4, p);
++
++	list_budget = (vid.width >> 3) - 2;
++	if (list_budget < 16)
++		list_budget = 16;
++	list_x = (320 - NET_SlistWidth(list_budget) * 8) / 2;
++	list_top = 48;
++
++	NET_SlistFormatHeaderLine(list_budget, string, sizeof(string));
++	M_Print (list_x, 32, string);
++
+ 	for (n = 0; n < hostCacheCount; n++)
+ 	{
+-		if (hostcache[n].maxusers)
+-			sprintf(string, "%-15.15s %-15.15s %2u/%2u\n", hostcache[n].name, hostcache[n].map, hostcache[n].users, hostcache[n].maxusers);
+-		else
+-			sprintf(string, "%-15.15s %-15.15s\n", hostcache[n].name, hostcache[n].map);
+-		M_Print (16, 32 + 8*n, string);
++		NET_SlistFormatEntryLine(list_budget, &hostcache[n], string, sizeof(string));
++		M_Print (list_x, list_top + 8*n, string);
+ 	}
+-	M_DrawCharacter (0, 32 + slist_cursor*8, 12+((int)(realtime*4)&1));
++	M_DrawCharacter (list_x - 8, list_top + slist_cursor*8, 12+((int)(realtime*4)&1));
+ 
+ 	if (*m_return_reason)
+-		M_PrintWhite (16, 148, m_return_reason);
++		M_PrintWhite (list_x, 148, m_return_reason);
+ }
+ 
+ 
+@@ -3015,6 +3047,7 @@
+ 	Cmd_AddCommand ("menu_video", M_Menu_Video_f);
+ 	Cmd_AddCommand ("help", M_Menu_Help_f);
+ 	Cmd_AddCommand ("menu_quit", M_Menu_Quit_f);
++	Cmd_AddCommand ("smenu", M_Menu_Search_f);
+ }
+ 
+ 

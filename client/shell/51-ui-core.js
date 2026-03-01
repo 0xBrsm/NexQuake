@@ -1,4 +1,4 @@
-// nq-overlay: core state, status, and mod config
+// nq-ui: core state, status, and mod config
 (function() {
   if (!Module || !Module.nqOverlayInstall) return;
 
@@ -25,15 +25,8 @@
       return '/' + baseName + '/';
     }
 
-    function getDefaultDirForConfig() {
-      return getBaseGameDir();
-    }
-
-    function getUploadDir() {
-      if (isCdDir(ctx.currentDir))
-        return ctx.CD_DIR;
-      return ctx.currentDir;
-    }
+    var getDefaultDirForConfig = getBaseGameDir;
+    function getUploadDir() { return ctx.currentDir; }
 
     function getCurrentUploadSettings() {
       if (isCdDir(ctx.currentDir)) {
@@ -92,24 +85,20 @@
 
     function normalizeStatusKey(key) {
       key = String(key || '').trim();
-      if (key === STATUS_PROGRESS || key === STATUS_CD_INFO || key === STATUS_TOAST)
-        return key;
-      return STATUS_TOAST;
-    }
-
-    function appendStatusSlot(key) {
-      var entry = statusSlots[key];
-      var item;
-      if (!entry) return;
-      item = document.createElement('div');
-      item.className = 'nq-status-message ' + entry.level;
-      item.textContent = entry.text;
-      ctx.uploadError.appendChild(item);
+      return Object.prototype.hasOwnProperty.call(statusSlots, key) ? key : STATUS_TOAST;
     }
 
     function renderStatusMessages() {
       ctx.uploadError.innerHTML = '';
-      STATUS_ORDER.forEach(appendStatusSlot);
+      STATUS_ORDER.forEach(function(key) {
+        var entry = statusSlots[key];
+        var item;
+        if (!entry) return;
+        item = document.createElement('div');
+        item.className = 'nq-status-message ' + entry.level;
+        item.textContent = entry.text;
+        ctx.uploadError.appendChild(item);
+      });
     }
 
     function clearStatusMessage(key) {
@@ -162,17 +151,9 @@
       }
     }
 
-    function showInfoMessage(msg, clearAfterMs, sticky, options) {
-      showStatusMessage('info', msg, clearAfterMs, sticky, options);
-    }
-
-    function showWarningMessage(msg, clearAfterMs, sticky, options) {
-      showStatusMessage('warning', msg, clearAfterMs, sticky, options);
-    }
-
-    function showErrorMessage(msg, clearAfterMs, sticky, options) {
-      showStatusMessage('error', msg, clearAfterMs, sticky, options);
-    }
+    function showInfoMessage(msg, ms, sticky, opts) { showStatusMessage('info', msg, ms, sticky, opts); }
+    function showWarningMessage(msg, ms, sticky, opts) { showStatusMessage('warning', msg, ms, sticky, opts); }
+    function showErrorMessage(msg, ms, sticky, opts) { showStatusMessage('error', msg, ms, sticky, opts); }
 
     var pendingConfirmResolve = null;
 
@@ -224,6 +205,7 @@
         closeConfirmModal(true);
       };
     }
+
     function setUploadBusyState(busy) {
       ctx.uploadBusy = !!busy;
       ctx.upload.disabled = ctx.uploadBusy;
@@ -233,12 +215,136 @@
 
     function syncConfigToggle() {
       var isGlobal = !Module.nqPerModConfig;
-      var hoverText = isGlobal ? 'Global cfgs enabled' : 'Global cfgs disabled';
+      var hoverText = isGlobal ? 'global cfgs enabled' : 'global cfgs disabled';
       if (!ctx.configGlobalBtn) return;
       ctx.configGlobalBtn.classList.toggle('active', isGlobal);
       ctx.configGlobalBtn.setAttribute('aria-pressed', isGlobal ? 'true' : 'false');
       ctx.configGlobalBtn.title = hoverText;
       ctx.configGlobalBtn.setAttribute('aria-label', hoverText);
+    }
+
+    function syncFooterLayout() {
+      var row;
+      var rowWidth;
+      var gapPx;
+      var requiredWidth;
+      var hasJoinCode;
+      var isCompact;
+      var measureCtx;
+      var versionStyle;
+      var versionText;
+      var versionWidth;
+      var letterSpacing;
+      var spacingExtra = 0;
+      if (!ctx.brandingRow || !ctx.branding || !ctx.joinCodeBtn || !ctx.versionEl)
+        return;
+
+      row = ctx.brandingRow;
+      hasJoinCode = !ctx.joinCodeBtn.hidden;
+      row.classList.toggle('nq-no-join-code', !hasJoinCode);
+      if (!hasJoinCode) {
+        row.classList.remove('nq-branding-compact');
+        return;
+      }
+
+      rowWidth = row.clientWidth;
+      if (rowWidth <= 0)
+        return;
+
+      gapPx = parseFloat(window.getComputedStyle(row).columnGap || '0') || 0;
+      measureCtx = ctx.tabsMeasureCtx;
+      versionStyle = window.getComputedStyle(ctx.versionEl);
+      versionText = ctx.versionEl.textContent || '';
+      versionWidth = Math.ceil(ctx.versionEl.scrollWidth) || 0;
+      if (measureCtx && versionText) {
+        measureCtx.font = versionStyle.font || [
+          versionStyle.fontStyle,
+          versionStyle.fontVariant,
+          versionStyle.fontWeight,
+          versionStyle.fontSize,
+          versionStyle.fontFamily
+        ].join(' ');
+        versionWidth = Math.ceil(measureCtx.measureText(versionText).width);
+        letterSpacing = parseFloat(versionStyle.letterSpacing || '');
+        if (Number.isFinite(letterSpacing) && letterSpacing !== 0 && versionText.length > 1)
+          spacingExtra = Math.ceil(letterSpacing * (versionText.length - 1));
+      }
+      requiredWidth =
+        Math.ceil(ctx.branding.getBoundingClientRect().width) +
+        Math.ceil(ctx.joinCodeBtn.getBoundingClientRect().width) +
+        versionWidth +
+        spacingExtra +
+        Math.ceil(gapPx * 2);
+
+      isCompact = row.classList.contains('nq-branding-compact');
+      if (!isCompact && requiredWidth > rowWidth) {
+        row.classList.add('nq-branding-compact');
+        return;
+      }
+      if (isCompact && requiredWidth <= (rowWidth - 12))
+        row.classList.remove('nq-branding-compact');
+    }
+
+    function syncJoinCode() {
+      var port;
+      var label;
+      if (!ctx.joinCodeBtn || !ctx.joinCodeValue)
+        return;
+      port = Number(nqWasmGetConnectedServerListenPort()) | 0;
+      if (port < 1 || port > 65535)
+        port = 0;
+      ctx.joinCodePort = port;
+      ctx.joinCodeBtn.hidden = port <= 0;
+      if (port > 0) {
+        ctx.joinCodeValue.textContent = String(port);
+        label = 'join code ' + port + ' (click to copy)';
+        ctx.joinCodeBtn.title = label;
+        ctx.joinCodeBtn.setAttribute('aria-label', label);
+      }
+      syncFooterLayout();
+    }
+
+    function copyJoinCode() {
+      var port;
+      var writeText;
+      var joinCode;
+      function reportCopyResult(copied) {
+        if (copied) showInfoMessage('Join code copied to clipboard.', 1600);
+        else showWarningMessage('Could not copy join code. Copy it manually.', 2200);
+      }
+
+      function tryLegacyCopy(text) {
+        var input = document.createElement('input');
+        var copied = false;
+        input.value = text;
+        input.style.position = 'fixed';
+        input.style.opacity = '0';
+        document.body.appendChild(input);
+        input.select();
+        try {
+          copied = document.execCommand('copy');
+        } catch (e) {}
+        document.body.removeChild(input);
+        return !!copied;
+      }
+
+      syncJoinCode();
+      port = ctx.joinCodePort | 0;
+      if (port <= 0)
+        return;
+      joinCode = String(port);
+
+      writeText = navigator.clipboard && navigator.clipboard.writeText;
+      if (typeof writeText !== 'function') {
+        reportCopyResult(tryLegacyCopy(joinCode));
+        return;
+      }
+
+      writeText.call(navigator.clipboard, joinCode).then(function() {
+        reportCopyResult(true);
+      }, function() {
+        reportCopyResult(tryLegacyCopy(joinCode));
+      });
     }
 
     Object.assign(ctx, {
@@ -259,7 +365,10 @@
       closeConfirmModal,
       clearStatusMessage,
       setUploadBusyState,
-      syncConfigToggle
+      syncConfigToggle,
+      syncJoinCode,
+      syncFooterLayout,
+      copyJoinCode
     });
 
     if (ctx.configGlobalBtn) {

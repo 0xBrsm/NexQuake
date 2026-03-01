@@ -80,39 +80,159 @@ function nqIsRuntimeStatusText(text) {
   phaseMatch = text.match(/^([^(]+)\(\s*\d+(?:\.\d+)?\s*\/\s*\d+\s*\)$/);
   if (phaseMatch)
     text = phaseMatch[1].trim();
-  if (text === 'preparing...')
-    return true;
-  if (text === 'loading...')
-    return true;
-  if (text === NQ_BOOTSTRAP_RUNNING_TEXT)
-    return true;
-  if (text === 'all downloads complete.')
-    return true;
-  if (text === 'downloading...')
-    return true;
-  return false;
+  return text === 'preparing...' ||
+    text === 'loading...' ||
+    text === NQ_BOOTSTRAP_RUNNING_TEXT ||
+    text === 'all downloads complete.' ||
+    text === 'downloading...';
+}
+
+function nqCaptureStartupMonitorSize(preferViewport) {
+  var sw = 0;
+  var sh = 0;
+  var dpr = window.devicePixelRatio || 1;
+  var useViewport = preferViewport !== false;
+  var moduleRef = (typeof Module !== 'undefined' && Module) ? Module : (window.Module = window.Module || {});
+
+  if (useViewport) {
+    try {
+      if (window.visualViewport && window.visualViewport.width && window.visualViewport.height) {
+        sw = Math.max(window.visualViewport.width, window.visualViewport.height);
+        sh = Math.min(window.visualViewport.width, window.visualViewport.height);
+      } else if (window.innerWidth && window.innerHeight) {
+        sw = Math.max(window.innerWidth, window.innerHeight);
+        sh = Math.min(window.innerWidth, window.innerHeight);
+      }
+    } catch (e) {}
+    if (!(sw > 0 && sh > 0))
+      useViewport = false;
+  }
+
+  if (!useViewport) {
+    try {
+      if (window.screen && window.screen.width && window.screen.height) {
+        sw = Math.max(window.screen.width, window.screen.height);
+        sh = Math.min(window.screen.width, window.screen.height);
+      } else if (window.visualViewport && window.visualViewport.width && window.visualViewport.height) {
+        sw = Math.max(window.visualViewport.width, window.visualViewport.height);
+        sh = Math.min(window.visualViewport.width, window.visualViewport.height);
+      } else if (window.innerWidth && window.innerHeight) {
+        sw = Math.max(window.innerWidth, window.innerHeight);
+        sh = Math.min(window.innerWidth, window.innerHeight);
+      }
+    } catch (e2) {}
+  }
+
+  if (!(sw > 0 && sh > 0))
+    return;
+
+  moduleRef.nqStartupMonitorWidth = Math.max(1, Math.round(sw * dpr));
+  moduleRef.nqStartupMonitorHeight = Math.max(1, Math.round(sh * dpr));
+}
+
+function nqSettleStartupMonitorSize(onReady) {
+  nqCaptureStartupMonitorSize(true);
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(function() {
+      nqCaptureStartupMonitorSize(true);
+      setTimeout(function() {
+        nqCaptureStartupMonitorSize(true);
+        if (typeof onReady === 'function')
+          onReady();
+      }, 120);
+    });
+    return;
+  }
+  setTimeout(function() {
+    nqCaptureStartupMonitorSize(true);
+    if (typeof onReady === 'function')
+      onReady();
+  }, 120);
+}
+
+function nqRequestStartupFullscreen(onReady) {
+  var done = false;
+  function finish() {
+    if (done)
+      return;
+    done = true;
+    if (typeof onReady === 'function')
+      onReady();
+  }
+
+  nqCaptureStartupMonitorSize(false);
+
+  try {
+    var el = /** @type {any} */ (document.documentElement);
+    var rfs = el.requestFullscreen || el.webkitRequestFullscreen;
+    var request;
+    if (!rfs)
+      return finish();
+    try {
+      request = rfs.call(el, { navigationUI: 'hide' });
+    } catch (optErr) {
+      request = rfs.call(el);
+    }
+    if (request && request.then)
+      request.then(function() { nqSettleStartupMonitorSize(finish); }).catch(function(){ finish(); });
+    else
+      nqSettleStartupMonitorSize(finish);
+  } catch (e) {
+    finish();
+  }
+
+  try {
+    var orient = /** @type {any} */ (screen.orientation);
+    if (orient && orient.lock)
+      orient.lock('landscape').catch(function(){});
+  } catch (e2) {}
+}
+
+function nqSetLoaderEnterButtonEnabled() {
+  if (!loaderReloadButton)
+    return;
+  loaderReloadButton.textContent = 'ENTER';
+  loaderReloadButton.disabled = false;
+  loaderReloadButton.classList.remove('hidden');
+}
+
+function nqSyncOverlayCdEnabled(fallbackEnabled) {
+  var overlayCtx;
+  try {
+    overlayCtx = Module && Module.nqOverlayCtx;
+    if (!overlayCtx)
+      return;
+    if (typeof overlayCtx.syncCdEnabledFromPreference === 'function')
+      overlayCtx.syncCdEnabledFromPreference();
+    else if (typeof overlayCtx.setCdEnabled === 'function')
+      overlayCtx.setCdEnabled(!!fallbackEnabled, false);
+  } catch (e) {}
+}
+
+function nqRefreshOverlayAfterStart() {
+  var overlayCtx;
+  try {
+    overlayCtx = Module && Module.nqOverlayCtx;
+    if (!overlayCtx)
+      return;
+    if (typeof overlayCtx.applyCdPreferenceToGame === 'function')
+      overlayCtx.applyCdPreferenceToGame();
+    if (typeof overlayCtx.refresh === 'function')
+      overlayCtx.refresh();
+  } catch (overlayErr) {
+    console.warn('Overlay refresh failed:', overlayErr);
+  }
 }
 
 function nqShowEnterButton() {
   nqBootstrapReady = true;
   nqSetOverlayToggleVisible(true);
-  try {
-    if (Module.nqOverlayCtx) {
-      if (typeof Module.nqOverlayCtx.syncCdEnabledFromPreference === 'function')
-        Module.nqOverlayCtx.syncCdEnabledFromPreference();
-      else if (typeof Module.nqOverlayCtx.setCdEnabled === 'function')
-        Module.nqOverlayCtx.setCdEnabled(false, false);
-    }
-  } catch (e) {}
+  nqSyncOverlayCdEnabled(false);
   if (loaderElement)
     loaderElement.classList.add('enter-mode');
   if (loaderStatusElement)
     loaderStatusElement.textContent = '';
-  if (loaderReloadButton) {
-    loaderReloadButton.textContent = 'ENTER';
-    loaderReloadButton.disabled = false;
-    loaderReloadButton.classList.remove('hidden');
-  }
+  nqSetLoaderEnterButtonEnabled();
   nqLogBootstrapStage('enter ready (100%)');
   if (nqAutoStartAfterReload) {
     nqAutoStartAfterReload = false;
@@ -120,32 +240,12 @@ function nqShowEnterButton() {
   }
 }
 
-function nqStartGameFromEnter() {
-  if (nqNeedsReload) {
-    nqMarkAutoStartAfterReload();
-    window.location.reload();
-    return;
-  }
-  if (nqGameStarted) {
-    window.location.reload();
-    return;
-  }
-  if (!nqBootstrapReady || !nqRuntimeReady || nqMainLoopStarted)
-    return;
-  nqMainLoopStarted = true;
-  nqGameStarted = true;
+function nqStartGameRuntime() {
   if (loaderReloadButton) {
     loaderReloadButton.textContent = 'STARTING...';
     loaderReloadButton.disabled = true;
   }
-  try {
-    if (Module.nqOverlayCtx) {
-      if (typeof Module.nqOverlayCtx.syncCdEnabledFromPreference === 'function')
-        Module.nqOverlayCtx.syncCdEnabledFromPreference();
-      else if (typeof Module.nqOverlayCtx.setCdEnabled === 'function')
-        Module.nqOverlayCtx.setCdEnabled(true, false);
-    }
-  } catch (e3) {}
+  nqSyncOverlayCdEnabled(true);
   nqLogBootstrapStage('starting game client...');
   try {
     if (typeof Module.callMain !== 'function')
@@ -162,45 +262,44 @@ function nqStartGameFromEnter() {
       mainArgs = [];
     Module.callMain(mainArgs);
     nqLogBootstrapStage('wasm main initialized');
-    Module.ccall('NexQuake_StartMainLoop', 'void', [], []);
+    nqWasmStartMainLoop();
     nqLogBootstrapStage('main loop started');
     if (typeof Module.hideConsole === 'function')
       Module.hideConsole();
     if (!nqFirstStartHooksRan) {
       nqFirstStartHooksRan = true;
       if (Module.nexquakeAutoSMenuOnFirstLoad === true) {
-        try {
-          Module.ccall('NexQuake_ExecCommand', 'void', ['string'], ['smenu']);
-        } catch (autoMenuErr) {
-          console.info('Auto-open server search menu skipped:', autoMenuErr);
-        }
+        if (!nqWasmExecCommand('smenu'))
+          console.info('Auto-open server search menu skipped: wasm command bridge unavailable');
       }
     }
-    try {
-      if (Module.nqOverlayCtx && typeof Module.nqOverlayCtx.applyCdPreferenceToGame === 'function')
-        Module.nqOverlayCtx.applyCdPreferenceToGame();
-      if (Module.nqOverlayCtx && typeof Module.nqOverlayCtx.refresh === 'function')
-        Module.nqOverlayCtx.refresh();
-    } catch (overlayErr) {
-      console.warn('Overlay refresh failed:', overlayErr);
-    }
+    nqRefreshOverlayAfterStart();
   } catch (err) {
     console.error('Failed to start main loop:', err);
     nqMainLoopStarted = false;
     nqGameStarted = false;
-    if (loaderReloadButton) {
-      loaderReloadButton.textContent = 'ENTER';
-      loaderReloadButton.disabled = false;
-    }
-    try {
-      if (Module.nqOverlayCtx) {
-        if (typeof Module.nqOverlayCtx.syncCdEnabledFromPreference === 'function')
-          Module.nqOverlayCtx.syncCdEnabledFromPreference();
-        else if (typeof Module.nqOverlayCtx.setCdEnabled === 'function')
-          Module.nqOverlayCtx.setCdEnabled(false, false);
-      }
-    } catch (e4) {}
+    nqSetLoaderEnterButtonEnabled();
+    nqSyncOverlayCdEnabled(false);
   }
+}
+
+function nqStartGameFromEnter() {
+  if (nqNeedsReload || nqGameStarted) {
+    if (nqNeedsReload)
+      nqMarkAutoStartAfterReload();
+    window.location.reload();
+    return;
+  }
+  if (!nqBootstrapReady || !nqRuntimeReady || nqMainLoopStarted)
+    return;
+  nqMainLoopStarted = true;
+  nqGameStarted = true;
+  if (Module && Module.nqTouchActive) {
+    nqRequestStartupFullscreen(nqStartGameRuntime);
+    return;
+  }
+  nqCaptureStartupMonitorSize(false);
+  nqStartGameRuntime();
 }
 
 Module = Object.assign(Module || {}, {
@@ -246,24 +345,13 @@ Module = Object.assign(Module || {}, {
       loaderProgressBar.style.width = '0%';
     if (loaderStatusElement)
       loaderStatusElement.textContent = '';
-    if (loaderReloadButton) {
-      loaderReloadButton.textContent = 'ENTER';
-      loaderReloadButton.disabled = false;
-      loaderReloadButton.classList.remove('hidden');
-    }
+    nqSetLoaderEnterButtonEnabled();
     if (loaderElement) {
       loaderElement.classList.remove('hidden');
       loaderElement.classList.add('enter-mode');
     }
     nqSetOverlayToggleVisible(true);
-    try {
-      if (Module.nqOverlayCtx) {
-        if (typeof Module.nqOverlayCtx.syncCdEnabledFromPreference === 'function')
-          Module.nqOverlayCtx.syncCdEnabledFromPreference();
-        else if (typeof Module.nqOverlayCtx.setCdEnabled === 'function')
-          Module.nqOverlayCtx.setCdEnabled(false, false);
-      }
-    } catch (e2) {}
+    nqSyncOverlayCdEnabled(false);
     if (canvasElement)
       canvasElement.style.display = 'none';
     if (outputElement)
@@ -278,6 +366,9 @@ Module = Object.assign(Module || {}, {
     if (loaderElement)
       loaderElement.classList.add('hidden');
     outputElement.style.display = 'none';
+    var ar = canvasElement.width / canvasElement.height;
+    if (Number.isFinite(ar) && ar > 0)
+      canvasElement.style.setProperty('--nq-ar', String(ar));
     canvasElement.style.display = 'block';
     canvasElement.focus();
   },
@@ -322,7 +413,5 @@ Module = Object.assign(Module || {}, {
 });
 
 if (loaderReloadButton) {
-  loaderReloadButton.onclick = function() {
-    nqStartGameFromEnter();
-  };
+  loaderReloadButton.onclick = nqStartGameFromEnter;
 }

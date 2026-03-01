@@ -1,0 +1,64 @@
+--- cl_parse.c
++++ cl_parse.c
+@@ -21,6 +21,8 @@
+ 
+ #include "quakedef.h"
+ 
++#include "cl_prefetch.h"
++
+ char *svc_strings[] =
+ {
+ 	"svc_bad",
+@@ -173,8 +175,8 @@
+ 			Host_Error ("CL_KeepaliveMessage: received a message");
+ 			break;
+ 		case 2:
+-			if (MSG_ReadByte() != svc_nop)
+-				Host_Error ("CL_KeepaliveMessage: datagram wasn't a nop");
++			if (net_message.cursize > 0 && net_message.data[0] != svc_nop)
++				Con_DPrintf ("CL_KeepaliveMessage: ignoring datagram type %d (%d bytes)\n", net_message.data[0], net_message.cursize);
+ 			break;
+ 		}
+ 	} while (ret);
+@@ -215,6 +220,27 @@
+ //
+ 	CL_ClearState ();
+ 
++	{
++		char gamedir[16];
++		int n;
++
++		gamedir[0] = 0;
++		if (cls.netcon)
++		{
++			int ld = cls.netcon->landriver;
++			if (ld >= 0 && ld < net_numlandrivers && net_landrivers[ld].initialized)
++				for (n = 0; n < hostCacheCount; n++)
++					if (hostcache[n].ldriver == ld &&
++						net_landrivers[ld].AddrCompare(&cls.netcon->addr, &hostcache[n].addr) >= 0)
++					{
++						Q_strncpy(gamedir, hostcache[n].gamedir, sizeof(gamedir) - 1);
++						gamedir[sizeof(gamedir) - 1] = 0;
++						break;
++					}
++		}
++		COM_SwitchGame(gamedir);
++	}
++
+ // parse protocol version number
+ 	i = MSG_ReadLong ();
+ 	if (i != PROTOCOL_VERSION)
+@@ -281,6 +307,8 @@
+ 		S_TouchSound (str);
+ 	}
+ 
++	CL_Prefetch(model_precache, nummodels, sound_precache, numsounds);
++
+ //
+ // now we try to load everything else until a cache allocation fails
+ //
+@@ -960,4 +988,3 @@
+ 		}
+ 	}
+ }
+-
