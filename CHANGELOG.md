@@ -4,6 +4,12 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.7.4
+
+### Changed
+- Refactored the WASM client shell JavaScript into clearer startup, touch, and overlay concern boundaries while preserving existing gameplay and operator-facing behavior.
+- Simplified overlay startup wiring and shared fullscreen request handling across startup and touch input paths.
+
 ## 1.7.3
 
 ### Fixed

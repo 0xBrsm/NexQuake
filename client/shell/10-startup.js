@@ -72,21 +72,6 @@ function nqSetBootstrapRunning() {
   nqLogBootstrapStage(NQ_BOOTSTRAP_RUNNING_TEXT + ' (' + NQ_BOOTSTRAP_PROGRESS_MAX + '%)');
 }
 
-function nqIsRuntimeStatusText(text) {
-  var phaseMatch;
-  if (!text)
-    return false;
-  text = String(text).trim().toLowerCase();
-  phaseMatch = text.match(/^([^(]+)\(\s*\d+(?:\.\d+)?\s*\/\s*\d+\s*\)$/);
-  if (phaseMatch)
-    text = phaseMatch[1].trim();
-  return text === 'preparing...' ||
-    text === 'loading...' ||
-    text === NQ_BOOTSTRAP_RUNNING_TEXT ||
-    text === 'all downloads complete.' ||
-    text === 'downloading...';
-}
-
 function nqCaptureStartupMonitorSize(preferViewport) {
   var sw = 0;
   var sh = 0;
@@ -130,28 +115,22 @@ function nqCaptureStartupMonitorSize(preferViewport) {
   moduleRef.nqStartupMonitorHeight = Math.max(1, Math.round(sh * dpr));
 }
 
-function nqSettleStartupMonitorSize(onReady) {
-  nqCaptureStartupMonitorSize(true);
-  if (typeof requestAnimationFrame === 'function') {
-    requestAnimationFrame(function() {
-      nqCaptureStartupMonitorSize(true);
-      setTimeout(function() {
-        nqCaptureStartupMonitorSize(true);
-        if (typeof onReady === 'function')
-          onReady();
-      }, 120);
-    });
-    return;
-  }
-  setTimeout(function() {
-    nqCaptureStartupMonitorSize(true);
-    if (typeof onReady === 'function')
-      onReady();
-  }, 120);
-}
-
 function nqRequestStartupFullscreen(onReady) {
   var done = false;
+  function settleAndFinish() {
+    function captureAndFinish() {
+      nqCaptureStartupMonitorSize(true);
+      finish();
+    }
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(function() {
+        setTimeout(captureAndFinish, 120);
+      });
+      return;
+    }
+    setTimeout(captureAndFinish, 120);
+  }
+
   function finish() {
     if (done)
       return;
@@ -163,29 +142,16 @@ function nqRequestStartupFullscreen(onReady) {
   nqCaptureStartupMonitorSize(false);
 
   try {
-    var el = /** @type {any} */ (document.documentElement);
-    var rfs = el.requestFullscreen || el.webkitRequestFullscreen;
     var request;
-    if (!rfs)
-      return finish();
-    try {
-      request = rfs.call(el, { navigationUI: 'hide' });
-    } catch (optErr) {
-      request = rfs.call(el);
-    }
+    if (Module && typeof Module.nqRequestFullscreen === 'function')
+      request = Module.nqRequestFullscreen();
     if (request && request.then)
-      request.then(function() { nqSettleStartupMonitorSize(finish); }).catch(function(){ finish(); });
+      request.then(settleAndFinish).catch(function(){ finish(); });
     else
-      nqSettleStartupMonitorSize(finish);
+      settleAndFinish();
   } catch (e) {
     finish();
   }
-
-  try {
-    var orient = /** @type {any} */ (screen.orientation);
-    if (orient && orient.lock)
-      orient.lock('landscape').catch(function(){});
-  } catch (e2) {}
 }
 
 function nqSetLoaderEnterButtonEnabled() {
@@ -325,13 +291,25 @@ Module = Object.assign(Module || {}, {
   })(),
   canvas: canvasElement,
   setStatus: function(text) {
+    var statusText;
+    var normalizedStatus;
+    var phaseMatch;
     if (!loaderStatusElement)
       return;
-    if (nqIsRuntimeStatusText(text))
+    statusText = String(text || '').trim();
+    if (!statusText)
       return;
-    text = String(text || '').trim();
-    if (text)
-      loaderStatusElement.textContent = text;
+    normalizedStatus = statusText.toLowerCase();
+    phaseMatch = normalizedStatus.match(/^([^(]+)\(\s*\d+(?:\.\d+)?\s*\/\s*\d+\s*\)$/);
+    if (phaseMatch)
+      normalizedStatus = phaseMatch[1].trim();
+    if (normalizedStatus === 'preparing...' ||
+        normalizedStatus === 'loading...' ||
+        normalizedStatus === NQ_BOOTSTRAP_RUNNING_TEXT ||
+        normalizedStatus === 'all downloads complete.' ||
+        normalizedStatus === 'downloading...')
+      return;
+    loaderStatusElement.textContent = statusText;
   },
   nqShowReloadScreen: function() {
     try {
@@ -411,6 +389,57 @@ Module = Object.assign(Module || {}, {
     nqShowEnterButton();
   }
 });
+
+(function() {
+  function parseURLArgs() {
+    var out = [];
+    var tokens = window.location.search.length > 1 ? window.location.search.slice(1).split('&') : [];
+    var i;
+    var token;
+
+    for (i = 0; i < tokens.length; i++) {
+      token = tokens[i];
+      if (!token)
+        continue;
+      if (token.indexOf('=') !== -1)
+        continue;
+      try {
+        token = decodeURIComponent(token);
+      } catch (e) {}
+      token = String(token || '').trim();
+      if (!token)
+        continue;
+      out.push(token);
+    }
+
+    return out;
+  }
+
+  function buildMainArgs() {
+    var out = [];
+    var source = Array.isArray(Module.nexquakeSendArgs) ? Module.nexquakeSendArgs : [];
+    var i;
+    var token;
+    var urlArgs;
+
+    for (i = 0; i < source.length; i++) {
+      token = String(source[i] || '').trim();
+      if (!token)
+        continue;
+      out.push(token);
+    }
+
+    if (Module.nexquakeURLArgs === true) {
+      urlArgs = parseURLArgs();
+      for (i = 0; i < urlArgs.length; i++)
+        out.push(urlArgs[i]);
+    }
+
+    return out;
+  }
+
+  Module.nexquakeBuildMainArgs = buildMainArgs;
+})();
 
 if (loaderReloadButton) {
   loaderReloadButton.onclick = nqStartGameFromEnter;

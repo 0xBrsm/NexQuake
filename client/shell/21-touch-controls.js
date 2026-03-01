@@ -6,7 +6,6 @@
   if (!overlay || !buttonsRoot) return;
 
   var moduleRef = (typeof Module !== 'undefined') ? Module : (window.Module = {});
-  var touchLayoutSupport = /** @type {any} */ (window).nqTouchLayoutSupport;
   var storageKey = 'nexquake.touch.layout.v1';
   var dragState = null;
   var touchIdleMs = 2500;
@@ -22,6 +21,149 @@
     'togglemenu': 'Q',
     'toggleconsole': '~'
   };
+
+  function clamp01(v) {
+    if (!Number.isFinite(v)) return 0;
+    if (v < 0) return 0;
+    if (v > 1) return 1;
+    return v;
+  }
+
+  function point(x, y) {
+    return {
+      x: clamp01(x),
+      y: clamp01(y)
+    };
+  }
+
+  function displayXFromLayoutX(x, flip) {
+    x = clamp01(x);
+    return flip ? (1 - x) : x;
+  }
+
+  function layoutXFromDisplayX(x, flip) {
+    x = clamp01(x);
+    return flip ? (1 - x) : x;
+  }
+
+  function buildDefaultLayout(buttonBySlot, layoutSlots, fixedMenuAnchor) {
+    var w = Math.max(window.innerWidth || 0, 1);
+    var h = Math.max(window.innerHeight || 0, 1);
+    var css;
+    var size;
+    var margin;
+    var crossStep;
+    var edgePad;
+    var mLeftX;
+    var mRightX;
+    var mTopY;
+    var cx;
+    var cy;
+    var touch4Y;
+    var midY;
+    var offset;
+    if (buttonBySlot[layoutSlots[0]]) {
+      try { css = window.getComputedStyle(buttonBySlot[layoutSlots[0]]); } catch (e) {}
+    }
+    size = parseFloat(css && css.width);
+    if (!(Number.isFinite(size) && size > 0)) size = 62;
+    margin = size * 0.58;
+    crossStep = size * 0.90;
+    edgePad = (size * 0.5) + 8;
+    mLeftX = clamp01(edgePad / w);
+    mRightX = clamp01(1 - (edgePad / w));
+    mTopY = clamp01(edgePad / h);
+    fixedMenuAnchor.left = mLeftX;
+    fixedMenuAnchor.right = mRightX;
+    fixedMenuAnchor.top = mTopY;
+    cx = 1 - ((margin + crossStep) / w);
+    cy = 1 - ((margin + crossStep) / h);
+    touch4Y = clamp01(cy - (crossStep / h));
+    midY = clamp01(mTopY + ((touch4Y - mTopY) * 0.5));
+    offset = Math.max(0, midY - mTopY);
+
+    return {
+      1: point(cx, cy + (crossStep / h)),
+      2: point(cx + (crossStep / w), cy),
+      3: point(cx - (crossStep / w), cy),
+      4: point(cx, touch4Y),
+      5: point(mRightX, midY),
+      6: point(mRightX - offset, mTopY),
+      7: point(mLeftX, midY),
+      8: point(mLeftX + offset, mTopY)
+    };
+  }
+
+  function loadLayout(storageKey, layoutSlots, defaultLayout, customLayout) {
+    var raw;
+    var parsed;
+    var merged = {};
+
+    try { raw = localStorage.getItem(storageKey); } catch (e) {}
+    if (raw) {
+      try { parsed = JSON.parse(raw); } catch (e2) {}
+    }
+
+    layoutSlots.forEach(function(slot) {
+      var base = defaultLayout[slot] || { x: 0.5, y: 0.5 };
+      var val = parsed && parsed[slot];
+      var x = Number(val && val.x);
+      var y = Number(val && val.y);
+      var hasX = Number.isFinite(x);
+      var hasY = Number.isFinite(y);
+      customLayout[slot] = hasX && hasY;
+      merged[slot] = {
+        x: hasX ? clamp01(x) : base.x,
+        y: hasY ? clamp01(y) : base.y
+      };
+    });
+
+    return merged;
+  }
+
+  function normalizeBinding(binding) {
+    return (binding || '')
+      .split(';', 1)[0]
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ');
+  }
+
+  function ensureLandscapeFullscreen() {
+    var root = document.documentElement;
+    var fullscreenEl = document.fullscreenElement || document.webkitFullscreenElement;
+    var requestFullscreen = root.requestFullscreen || root.webkitRequestFullscreen;
+    var request;
+    var lockRequest;
+
+    if (!fullscreenEl && requestFullscreen) {
+      try {
+        request = requestFullscreen.call(root, { navigationUI: 'hide' });
+      } catch (e1) {
+        try {
+          request = requestFullscreen.call(root);
+        } catch (e2) {}
+      }
+      if (request && request.catch)
+        request.catch(function() {});
+    }
+
+    try {
+      if (screen.orientation && screen.orientation.lock) {
+        lockRequest = screen.orientation.lock('landscape');
+        if (lockRequest && lockRequest.catch)
+          lockRequest.catch(function() {});
+      }
+    } catch (e3) {}
+  }
+
+  function prepareOverlayMode() {
+    try {
+      if (screen.orientation && screen.orientation.unlock)
+        screen.orientation.unlock();
+    } catch (e1) {}
+  }
+
   var isTouchInput = (function() {
     if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches)
       return true;
@@ -30,6 +172,7 @@
     return false;
   })();
   moduleRef.nqIsTouchInput = isTouchInput;
+
   function syncBodyTouchClasses() {
     if (!document || !document.body)
       return;
@@ -40,9 +183,10 @@
       document.body.classList.remove('nq-touch-portrait');
   }
   syncBodyTouchClasses();
-  var fixedMenuAnchor = { left: 0.04, right: 0.96, top: 0.05 };
 
+  var fixedMenuAnchor = { left: 0.04, right: 0.96, top: 0.05 };
   var buttonBySlot = {};
+
   Array.prototype.slice.call(
     buttonsRoot.querySelectorAll('.nq-touch-btn[data-touch-slot]')
   ).forEach(function(btn) {
@@ -52,13 +196,11 @@
 
   var menuBackButton = document.getElementById('nq-touch-menu-m1');
   var menuOverlayButton = document.getElementById('nq-touch-menu-m2');
-
   var layoutSlots = bindableSlots.filter(function(slot) {
     return !!buttonBySlot[slot];
   });
-
-  var defaultLayout = touchLayoutSupport.buildDefaultLayout(buttonBySlot, layoutSlots, fixedMenuAnchor);
-  var layout = touchLayoutSupport.loadLayout(storageKey, layoutSlots, defaultLayout, customLayout);
+  var defaultLayout = buildDefaultLayout(buttonBySlot, layoutSlots, fixedMenuAnchor);
+  var layout = loadLayout(storageKey, layoutSlots, defaultLayout, customLayout);
 
   moduleRef.nqTouchButtonElementIds = bindableSlots.map(function(slot) {
     return buttonBySlot[slot] ? buttonBySlot[slot].id : ('nq-touch-missing-slot' + slot);
@@ -97,7 +239,18 @@
       }, true);
     });
     menuOverlayButton.addEventListener('click', function(ev) {
-      touchLayoutSupport.toggleOverlayPanel(moduleRef, syncFixedButtons, syncVisibility, ev);
+      var ctx = moduleRef.nqOverlayCtx;
+      var opening;
+      if (!ctx || typeof ctx.setPanelOpen !== 'function' || !ctx.panel)
+        return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      opening = !ctx.panel.classList.contains('open');
+      ctx.setPanelOpen(opening);
+      if (opening && moduleRef.ccall && moduleRef.calledRun)
+        nqWasmExecCommand('menu_options');
+      syncFixedButtons();
+      syncVisibility();
     }, true);
   }
 
@@ -121,36 +274,20 @@
     return true;
   }
 
-  function consumeOverlayResumeRequest() {
-    if (!resumeOverlayPending || document.visibilityState !== 'visible')
-      return;
-    resumeOverlayPending = false;
-    if (!tryOpenOverlayAfterResume())
-      resumeOverlayPending = true;
-  }
-
   document.addEventListener('visibilitychange', function() {
     if (document.visibilityState === 'hidden') {
       resumeOverlayPending = true;
       return;
     }
-    consumeOverlayResumeRequest();
+    syncVisibility();
   }, { passive: true });
 
   window.addEventListener('pageshow', function() {
-    consumeOverlayResumeRequest();
+    syncVisibility();
   }, { passive: true });
 
-  moduleRef.nqTouchEnsureLandscapeFullscreen = touchLayoutSupport.ensureLandscapeFullscreen;
-  moduleRef.nqTouchPrepareOverlayMode = touchLayoutSupport.prepareOverlayMode;
-
-  function displayXFromLayoutX(x) {
-    return touchLayoutSupport.displayXFromLayoutX(x, moduleRef.nqTouchFlip);
-  }
-
-  function layoutXFromDisplayX(x) {
-    return touchLayoutSupport.layoutXFromDisplayX(x, moduleRef.nqTouchFlip);
-  }
+  moduleRef.nqTouchEnsureLandscapeFullscreen = ensureLandscapeFullscreen;
+  moduleRef.nqTouchPrepareOverlayMode = prepareOverlayMode;
 
   function saveLayout() {
     try { localStorage.setItem(storageKey, JSON.stringify(layout)); } catch (e) {}
@@ -162,7 +299,7 @@
       var cfg = layout[slot] || defaultLayout[slot];
       var displayX;
       if (!btn || !cfg) return;
-      displayX = displayXFromLayoutX(cfg.x);
+      displayX = displayXFromLayoutX(cfg.x, moduleRef.nqTouchFlip);
       btn.style.left = (displayX * 100) + '%';
       btn.style.top = (cfg.y * 100) + '%';
       btn.classList.toggle('nq-touch-btn-hidden', boundBySlot[slot] === false);
@@ -182,7 +319,7 @@
     var svg;
     var text;
     if (!btn) return;
-    norm = touchLayoutSupport.normalizeBinding(binding);
+    norm = normalizeBinding(binding);
     svg = window.NQ_TOUCH_GLYPHS && window.NQ_TOUCH_GLYPHS[norm];
     if (svg) {
       btn.innerHTML = svg;
@@ -239,8 +376,8 @@
     if (menuOverlayButton)
       menuOverlayButton.classList.toggle('active', panelOpen);
 
-    leftX = displayXFromLayoutX(fixedMenuAnchor.left);
-    rightX = displayXFromLayoutX(fixedMenuAnchor.right);
+    leftX = displayXFromLayoutX(fixedMenuAnchor.left, moduleRef.nqTouchFlip);
+    rightX = displayXFromLayoutX(fixedMenuAnchor.right, moduleRef.nqTouchFlip);
 
     if (menuBackButton) {
       menuBackButton.style.left = (leftX * 100) + '%';
@@ -259,7 +396,7 @@
   }
 
   function onViewportChange() {
-    defaultLayout = touchLayoutSupport.buildDefaultLayout(buttonBySlot, layoutSlots, fixedMenuAnchor);
+    defaultLayout = buildDefaultLayout(buttonBySlot, layoutSlots, fixedMenuAnchor);
     layoutSlots.forEach(function(slot) {
       if (customLayout[slot]) return;
       layout[slot].x = defaultLayout[slot].x;
@@ -271,7 +408,11 @@
   }
 
   function syncVisibility() {
-    consumeOverlayResumeRequest();
+    if (resumeOverlayPending && document.visibilityState === 'visible') {
+      resumeOverlayPending = false;
+      if (!tryOpenOverlayAfterResume())
+        resumeOverlayPending = true;
+    }
 
     var canvasShown = canvasElement && canvasElement.style.display === 'block';
     var landscape = isLandscapeOrientation();
@@ -305,7 +446,7 @@
     var cfg = layout[slot] || defaultLayout[slot];
     var displayX;
     if (!cfg) return;
-    displayX = displayXFromLayoutX(cfg.x);
+    displayX = displayXFromLayoutX(cfg.x, moduleRef.nqTouchFlip);
 
     dragState = {
       button: button,
@@ -332,26 +473,82 @@
   }
 
   function bindDragHandlers(button, slot) {
-    touchLayoutSupport.bindDragHandlers({
-      button: button,
-      slot: slot,
-      moduleRef: moduleRef,
-      beginDrag: beginDrag,
-      endDrag: endDrag,
-      getDragState: function() { return dragState; },
-      setSlotLayout: function(targetSlot, x, y) {
-        if (!layout[targetSlot])
+    var holdTimer = 0;
+    var startX = 0;
+    var startY = 0;
+
+    function clearHold() {
+      if (!holdTimer) return;
+      clearTimeout(holdTimer);
+      holdTimer = 0;
+    }
+
+    function finishPointer(ev) {
+      clearHold();
+      endDrag(ev.pointerId);
+      try { button.releasePointerCapture(ev.pointerId); } catch (e) {}
+    }
+
+    button.addEventListener('pointerdown', function(ev) {
+      if (ev.pointerType === 'mouse' && ev.button !== 0)
+        return;
+      if (!moduleRef.nqTouchMenuMode)
+        return;
+
+      startX = ev.clientX;
+      startY = ev.clientY;
+      clearHold();
+      holdTimer = setTimeout(function() {
+        if (!moduleRef.nqTouchMenuMode)
           return;
-        layout[targetSlot].x = x;
-        layout[targetSlot].y = y;
-      },
-      layoutXFromDisplayX: layoutXFromDisplayX,
-      applyLayout: applyLayout
+        holdTimer = 0;
+        beginDrag(button, slot, ev.pointerId, ev.clientX, ev.clientY);
+        try { button.setPointerCapture(ev.pointerId); } catch (e) {}
+      }, 350);
+    }, { passive: true });
+
+    button.addEventListener('pointermove', function(ev) {
+      var dx;
+      var dy;
+      var x;
+      var y;
+      if (!dragState || dragState.pointerId !== ev.pointerId) {
+        if (holdTimer) {
+          dx = ev.clientX - startX;
+          dy = ev.clientY - startY;
+          if ((dx * dx + dy * dy) > 64)
+            clearHold();
+        }
+        return;
+      }
+
+      ev.preventDefault();
+      x = layoutXFromDisplayX((ev.clientX + dragState.offsetX) / window.innerWidth, moduleRef.nqTouchFlip);
+      y = clamp01((ev.clientY + dragState.offsetY) / window.innerHeight);
+      if (!layout[dragState.slot])
+        return;
+      layout[dragState.slot].x = x;
+      layout[dragState.slot].y = y;
+      applyLayout();
+    }, { passive: false });
+
+    ['pointerup', 'pointercancel'].forEach(function(type) {
+      button.addEventListener(type, finishPointer, { passive: true });
+    });
+
+    button.addEventListener('lostpointercapture', function(ev) {
+      clearHold();
+      endDrag(ev.pointerId);
     });
   }
 
-  setInterval(syncVisibility, 200);
-  setInterval(refreshBoundVisibility, 1000);
+  var intervalTick = 0;
+  setInterval(function() {
+    syncVisibility();
+    intervalTick = (intervalTick + 1) % 5;
+    if (intervalTick === 0)
+      refreshBoundVisibility();
+  }, 200);
 
   if (moduleRef.nqOverlayCtx) {
     var baseSyncModalOpen = moduleRef.nqOverlayCtx.syncModalOpen;

@@ -39,6 +39,38 @@ function nqSetOverlayToggleVisible(visible) {
   overlayToggleElement.style.display = visible ? '' : 'none';
 }
 
+function nqRequestFullscreen() {
+  var request = null;
+  try {
+    var el = document.documentElement;
+    var requestFullscreen = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (!requestFullscreen)
+      return null;
+    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+      try {
+        request = requestFullscreen.call(el, { navigationUI: 'hide' });
+      } catch (optErr) {
+        request = requestFullscreen.call(el);
+      }
+    }
+  } catch (e) {}
+
+  try {
+    var orient = screen.orientation;
+    if (orient && orient.lock) {
+      var lockRequest = orient.lock('landscape');
+      if (lockRequest && lockRequest.catch)
+        lockRequest.catch(function() {});
+    }
+  } catch (e2) {}
+
+  return request;
+}
+
+if (typeof Module === 'undefined' || !Module)
+  Module = {};
+Module.nqRequestFullscreen = nqRequestFullscreen;
+
 function nqNormalizeGameName(name) {
   name = String(name || '').trim();
   return name || NEXQUAKE_GAMENAME;

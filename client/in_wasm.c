@@ -467,7 +467,14 @@ EM_JS(void, js_set_touch_active, (int active), {
 
 // Request fullscreen + landscape lock (one-shot, called on first touch)
 EM_JS(void, js_request_fullscreen, (), {
-	if (document.fullscreenElement) return;
+	if (Module && typeof Module.nqRequestFullscreen === 'function') {
+		try {
+			var request = Module.nqRequestFullscreen();
+			if (request && request.catch) request.catch(function(){});
+			return;
+		} catch (e0) {}
+	}
+	if (document.fullscreenElement || document.webkitFullscreenElement) return;
 	try {
 		var el = document.documentElement;
 		var rfs = el.requestFullscreen || el.webkitRequestFullscreen;

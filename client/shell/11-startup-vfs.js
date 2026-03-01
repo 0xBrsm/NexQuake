@@ -1,7 +1,6 @@
 // nq-remote-vfs: remote manifests, lazy VFS entries, and saved-data sync
 (function() {
   Module.preRun.push(function() {
-    var startupVfsSupport = /** @type {any} */ (window).nqStartupVfsSupport;
     var normalizeGameName = nqNormalizeGameName;
     var getBaseGameName = nqGetBaseGameName;
     var safeMkdirTree = nqSafeMkdirTree;
@@ -11,6 +10,83 @@
     var USER_CD_ROOT = USERFS_ROOT + '/cd';
     var USER_LINK_BASENAME = '.usr';
     var USER_CFG_SEED_MARKER = USERFS_ROOT + '/.nq.cfgseed-v1';
+
+    function resolvePrefetchWorkerCount(concurrency, queueLength, fallbackConcurrency) {
+      concurrency = Number(concurrency);
+      if (!Number.isFinite(concurrency) || concurrency < 0)
+        concurrency = fallbackConcurrency;
+      else
+        concurrency = Math.floor(concurrency);
+      if (queueLength <= 0) return 0;
+      if (concurrency === 0) return queueLength;
+      return Math.min(concurrency, queueLength);
+    }
+
+    function normalizeRemotePath(path) {
+      path = String(path || '').replace(/\\/g, '/').replace(/^\/+/, '');
+      return path.split('/').filter(Boolean).map(function(part) { return part.toLowerCase(); }).join('/');
+    }
+
+    function fnv1a64Hex(text) {
+      var FNV_OFFSET = 0xcbf29ce484222325n;
+      var FNV_PRIME = 0x100000001b3n;
+      var MASK_64 = 0xffffffffffffffffn;
+      var bytes;
+      var hash = FNV_OFFSET;
+      var i;
+      var hex;
+
+      if (typeof BigInt === 'undefined')
+        throw new Error('BigInt is required for NexQuake asset hashing');
+      if (typeof TextEncoder === 'undefined')
+        throw new Error('TextEncoder is required for NexQuake asset hashing');
+
+      bytes = new TextEncoder().encode(String(text || ''));
+      for (i = 0; i < bytes.length; i++) {
+        hash ^= BigInt(bytes[i]);
+        hash = (hash * FNV_PRIME) & MASK_64;
+      }
+
+      hex = hash.toString(16);
+      while (hex.length < 16) hex = '0' + hex;
+      return hex;
+    }
+
+    function computeAssetURL(assetRef, kind, mod, relPath) {
+      var ref = String(assetRef || '').trim();
+      var normalizedPath = normalizeRemotePath(relPath);
+      var normalizedMod;
+      var key;
+      if (!ref || !normalizedPath)
+        return '';
+      if (kind === 'cd') {
+        key = 'cd:' + normalizedPath;
+      } else {
+        normalizedMod = normalizeGameName(mod);
+        if (!normalizedMod)
+          return '';
+        key = 'mod:' + normalizedMod + ':' + normalizedPath;
+      }
+      return '/nq/' + fnv1a64Hex(ref + ':' + key);
+    }
+
+    function decodeBase64UTF8(encoded) {
+      var text = String(encoded || '').trim();
+      var binary;
+      var bytes;
+      var i;
+      if (!text)
+        throw new Error('start bundle payload is empty');
+      if (typeof atob !== 'function')
+        throw new Error('base64 decode not supported in this runtime');
+      if (typeof TextDecoder === 'undefined')
+        throw new Error('TextDecoder is required for start bundle decode');
+      binary = atob(text);
+      bytes = new Uint8Array(binary.length);
+      for (i = 0; i < binary.length; i++)
+        bytes[i] = binary.charCodeAt(i) & 255;
+      return new TextDecoder().decode(bytes);
+    }
 
     function ensureGameDir(mod) {
       mod = normalizeGameName(mod);
@@ -50,13 +126,11 @@
       node.nqErrorCount = 0;
       node.nqRetryAfterMs = 0;
       node.nqLastLoadError = '';
-      // Export a handle so we can prefetch into this node later.
 
       function ensureLoaded() {
         if (node.contents) return;
-        if (node.nqRetryAfterMs && Date.now() < node.nqRetryAfterMs) {
+        if (node.nqRetryAfterMs && Date.now() < node.nqRetryAfterMs)
           throw new FS.ErrnoError(44); // ENOENT
-        }
 
         function markErrorAndThrow(error) {
           node.nqErrorCount++;
@@ -75,9 +149,8 @@
           try { xhr.overrideMimeType('text/plain; charset=x-user-defined'); } catch (e) {}
           xhr.send(null);
 
-          if (xhr.status !== 200 && xhr.status !== 0) {
+          if (xhr.status !== 200 && xhr.status !== 0)
             throw new Error('remote file fetch failed: ' + xhr.status + ' for ' + node.url);
-          }
 
           var text = xhr.responseText || '';
           var bytes = new Uint8Array(text.length);
@@ -101,9 +174,9 @@
           ensureLoaded();
           var contents = node.contents;
           if (!contents) return 0;
-          var size = contents.length;
-          if (position >= size) return 0;
-          var end = Math.min(size, position + length);
+          var dataSize = contents.length;
+          if (position >= dataSize) return 0;
+          var end = Math.min(dataSize, position + length);
           buffer.set(contents.subarray(position, end), offset);
           return end - position;
         },
@@ -165,41 +238,210 @@
         ? 16
         : Module.nexquakePrefetchConcurrency;
     Module.nexquakePrefetchFailures = Module.nexquakePrefetchFailures || Object.create(null);
-    var prefetchController = startupVfsSupport.createPrefetchController({
-      moduleRef: Module,
-      normalizeGameName: normalizeGameName,
-      getBaseGameName: getBaseGameName,
-      remoteRoot: REMOTE_ROOT
-    });
 
-    Module.nexquakePrefetchReset = prefetchController.reset;
-    Module.nexquakePrefetchEnqueue = prefetchController.enqueue;
-    Module.nexquakePrefetchStart = prefetchController.start;
+    async function prefetchOne(lowerRel) {
+      var baseGame = getBaseGameName();
+      var activeGame = normalizeGameName(Module.nexquakeActiveGame || baseGame);
+      var outPath = REMOTE_ROOT + '/' + activeGame + '/' + lowerRel;
+      var node = Module.nexquakeRemoteFiles && Module.nexquakeRemoteFiles[outPath];
+      if (!node && activeGame !== baseGame)
+        node = Module.nexquakeRemoteFiles && Module.nexquakeRemoteFiles[REMOTE_ROOT + '/' + baseGame + '/' + lowerRel];
+      if (!node || node.contents) return;
+      var resp = await fetch(node.url, { cache: 'no-store' });
+      if (!resp.ok) throw new Error('prefetch failed: ' + resp.status + ' for ' + node.url);
+      var buf = await resp.arrayBuffer();
+      node.contents = new Uint8Array(buf);
+      node.usedBytes = node.contents.length;
+    }
+
+    async function prefetchMany(paths, concurrency) {
+      var uniq = Object.create(null);
+      var queue = [];
+      var i;
+
+      for (i = 0; i < paths.length; i++) {
+        var p = String(paths[i] || '').trim();
+        if (!p || uniq[p]) continue;
+        uniq[p] = true;
+        queue.push(p);
+      }
+
+      concurrency = resolvePrefetchWorkerCount(concurrency, queue.length, Module.nexquakePrefetchConcurrency);
+      if (concurrency <= 0) return;
+
+      var idx = 0;
+      async function worker() {
+        while (true) {
+          var j = idx++;
+          if (j >= queue.length) return;
+          try {
+            await prefetchOne(queue[j]);
+          } catch (e) {
+            Module.nexquakePrefetchFailures[queue[j]] = String(e && e.message ? e.message : e);
+          }
+        }
+      }
+
+      var workers = [];
+      for (var w = 0; w < concurrency; w++) workers.push(worker());
+      await Promise.all(workers);
+    }
+
+    function applyPrefetchConcurrency(value) {
+      if (value === null || value === undefined || value === '')
+        return;
+      value = Number(value);
+      if (Number.isFinite(value) && value >= 0)
+        Module.nexquakePrefetchConcurrency = Math.floor(value);
+    }
+
+    function resetPrefetch() {
+      Module.nexquakePrefetchQueue = [];
+      Module.nexquakePrefetchFailures = Object.create(null);
+    }
+
+    function enqueuePrefetch(relPath) {
+      relPath = String(relPath || '').replace(/^\/+/, '').trim();
+      if (!relPath) return;
+      var lowerRel = relPath.split('/').filter(Boolean).map(function(p) { return p.toLowerCase(); }).join('/');
+      Module.nexquakePrefetchQueue.push(lowerRel);
+    }
+
+    function startPrefetch() {
+      var list;
+      if (Module.nexquakePrefetchBusy) return;
+      list = (Module.nexquakePrefetchQueue || []).slice();
+      Module.nexquakePrefetchQueue = [];
+      if (!list.length) return;
+      Module.nexquakePrefetchBusy = 1;
+      Module.nexquakePrefetchFailures = Object.create(null);
+      prefetchMany(list, Module.nexquakePrefetchConcurrency)
+        .finally(function() { Module.nexquakePrefetchBusy = 0; });
+    }
+
+    Module.nexquakePrefetchReset = resetPrefetch;
+    Module.nexquakePrefetchEnqueue = enqueuePrefetch;
+    Module.nexquakePrefetchStart = startPrefetch;
 
     // Install virtualized manifests into REMOTE_ROOT/<mod> roots.
     // Files are installed as lazy-backed VFS entries (download on first read).
     var baseGame = getBaseGameName();
-    var userFsController = startupVfsSupport.createUserFsController({
-      safeMkdirTree: safeMkdirTree,
-      remoteRoot: REMOTE_ROOT,
-      userFsRoot: USERFS_ROOT,
-      userGameRoot: USER_GAME_ROOT,
-      userCdRoot: USER_CD_ROOT,
-      userLinkBasename: USER_LINK_BASENAME,
-      userCfgSeedMarker: USER_CFG_SEED_MARKER,
-      baseGame: baseGame,
-      normalizeGameName: normalizeGameName,
-      getBaseGameName: getBaseGameName
-    });
+
+    function syncSavedData() {
+      safeMkdirTree(USERFS_ROOT);
+      try { FS.mount(IDBFS, {}, USERFS_ROOT); } catch (e) {}
+      return new Promise(function(resolve) {
+        try {
+          FS.syncfs(true, function(err) {
+            if (err) console.warn('Failed to sync saved data:', err);
+            try {
+              safeMkdirTree(REMOTE_ROOT);
+              safeMkdirTree(USER_GAME_ROOT + '/' + baseGame);
+              safeMkdirTree(USER_CD_ROOT);
+              try { FS.symlink(USER_GAME_ROOT, REMOTE_ROOT + '/' + USER_LINK_BASENAME); } catch (e1) {}
+              try { FS.symlink(USER_CD_ROOT, '/cd'); } catch (e2) {}
+              try { FS.symlink(REMOTE_ROOT + '/' + USER_LINK_BASENAME + '/' + baseGame, '/' + baseGame); } catch (e3) {}
+              FS.readdir(USER_GAME_ROOT).forEach(function(name) {
+                var st = null;
+                if (name === '.' || name === '..' || name === baseGame) return;
+                try { st = FS.stat(USER_GAME_ROOT + '/' + name); } catch (e4) {}
+                if (st && FS.isDir(st.mode))
+                  try { FS.symlink(USER_GAME_ROOT + '/' + name, '/' + name); } catch (e5) {}
+              });
+            } catch (linkErr) {
+              console.warn('Failed to link user dirs:', linkErr);
+            }
+            resolve();
+          });
+        } catch (e) {
+          console.warn('Failed to sync saved data:', e);
+          resolve();
+        }
+      });
+    }
+
+    function syncUserFS() {
+      return new Promise(function(resolve) {
+        try {
+          FS.syncfs(false, function(err) {
+            if (err) console.warn('Failed to sync saved data:', err);
+            resolve();
+          });
+        } catch (e) {
+          console.warn('Failed to sync saved data:', e);
+          resolve();
+        }
+      });
+    }
+
+    function seedUserCfgFilesOnce() {
+      var seedGame;
+      var preloadRoot;
+      var targetRoot;
+      var autoexecData;
+      var nexquakeData;
+      var markerValue = '';
+
+      seedGame = normalizeGameName(baseGame || getBaseGameName());
+      targetRoot = USER_GAME_ROOT + '/' + seedGame;
+
+      try {
+        FS.stat(USER_CFG_SEED_MARKER);
+        try {
+          markerValue = String(FS.readFile(USER_CFG_SEED_MARKER, { encoding: 'utf8' }) || '').trim();
+        } catch (markerReadErr) {
+          markerValue = '';
+        }
+        if (markerValue === '1')
+          return Promise.resolve();
+      } catch (e) {
+        var markerMissing = e && e.name === 'ErrnoError' && e.errno === 44;
+        if (!markerMissing) {
+          console.error('Failed to stat user cfg seed marker:', e);
+          return Promise.resolve();
+        }
+      }
+
+      try {
+        preloadRoot = '/nqseed/' + seedGame;
+        autoexecData = FS.readFile(preloadRoot + '/autoexec.cfg');
+        nexquakeData = FS.readFile(preloadRoot + '/nexquake.cfg');
+      } catch (missingErr) {
+        console.error('Failed to load cfg seed payload from index.data:', missingErr);
+        return Promise.resolve();
+      }
+
+      try {
+        safeMkdirTree(targetRoot);
+        FS.writeFile(targetRoot + '/autoexec.cfg', autoexecData);
+        FS.writeFile(targetRoot + '/nexquake.cfg', nexquakeData);
+        FS.writeFile(USER_CFG_SEED_MARKER, '1\n');
+      } catch (err) {
+        console.error('Failed to seed user cfg files:', err);
+        return Promise.resolve();
+      }
+
+      return syncUserFS();
+    }
+
     var manifestDependencyId = 'manifest:' + baseGame;
     var syncDependencyId = 'sync:' + baseGame;
+    var manifestBundle = null;
+    var manifestRefreshIntervalMs = 13 * 60 * 1000;
+    var manifestRefreshState = {
+      inFlight: null,
+      loopStarted: false,
+      retryAfterMs: 0,
+      failureCount: 0
+    };
+
     nqSetBootstrapPhase(2);
     Module.addRunDependency(manifestDependencyId);
 
     function applyClientConfig(config) {
       if (!config || typeof config !== 'object')
         config = {};
-      prefetchController.applyConcurrency(config.prefetchConcurrency);
+      applyPrefetchConcurrency(config.prefetchConcurrency);
       Module.nexquakeAutoSMenuOnFirstLoad = config.smenuOnFirstLoad === true;
       Module.nexquakeSendArgs = Array.isArray(config.sendArgs) ? config.sendArgs.slice() : [];
       Module.nexquakeURLArgs = config.urlArgs === true;
@@ -213,62 +455,50 @@
           throw new Error('start bundle missing X-NexQuake-Ref header');
         return response.text();
       }).then(function(encoded) {
-        var decoded = startupVfsSupport.decodeBase64UTF8(encoded);
-        var bundle;
+        var decoded = decodeBase64UTF8(encoded);
+        var rawBundle;
+        var rawGame;
+        var rawCd;
+        var game = Object.create(null);
         try {
-          bundle = JSON.parse(decoded);
+          rawBundle = JSON.parse(decoded);
         } catch (err) {
           throw new Error('start bundle decode failed: ' + err);
         }
-        applyClientConfig(bundle.client);
-        return bundle;
+
+        applyClientConfig(rawBundle.client);
+        rawGame = (rawBundle && rawBundle.game && typeof rawBundle.game === 'object') ? rawBundle.game : {};
+        rawCd = (rawBundle && Array.isArray(rawBundle.cd)) ? rawBundle.cd : [];
+
+        Object.keys(rawGame).forEach(function(rawMod) {
+          var mod = normalizeGameName(rawMod);
+          if (!mod)
+            return;
+          game[mod] = Array.isArray(rawGame[rawMod]) ? rawGame[rawMod] : [];
+        });
+
+        if (!game[baseGame])
+          throw new Error('manifest bundle missing base game: ' + baseGame);
+
+        return { game: game, cd: rawCd };
       });
     }
 
     function installManifest(mod, entries) {
       mod = normalizeGameName(mod);
-      if (!Array.isArray(entries)) {
+      if (!Array.isArray(entries))
         throw new Error('manifest invalid for ' + mod);
-      }
 
       // Ensure the mount root exists.
       ensureGameDir(mod);
       entries.forEach(function(ent) {
         var path = String(ent && ent.path || '').trim();
         if (!path) return;
-        installLazyFile(mod, path, startupVfsSupport.computeAssetURL(
-          Module.nexquakeAssetRef,
-          'mod',
-          mod,
-          path,
-          normalizeGameName
-        ), 0);
+        installLazyFile(mod, path, computeAssetURL(Module.nexquakeAssetRef, 'mod', mod, path), 0);
       });
       Module.nexquakeInstalledManifests[mod] = true;
       Module.nexquakeActiveGame = mod;
       try { if (typeof Module.nqOverlayUpdateDirs === 'function') Module.nqOverlayUpdateDirs(); } catch (e) {}
-    }
-
-    var manifestBundle = null;
-    var manifestRefreshIntervalMs = 13 * 60 * 1000;
-    var manifestRefreshInFlight = null;
-    var manifestRefreshLoopStarted = false;
-    var onDemandManifestRefreshAfterMs = 0;
-    var onDemandManifestRefreshFailureCount = 0;
-
-    function normalizeStartBundle(rawBundle) {
-      var out = Object.create(null);
-      var rawGame = (rawBundle && rawBundle.game && typeof rawBundle.game === 'object') ? rawBundle.game : {};
-      var rawCd = (rawBundle && Array.isArray(rawBundle.cd)) ? rawBundle.cd : [];
-      Object.keys(rawGame).forEach(function(rawMod) {
-        var mod = normalizeGameName(rawMod);
-        if (!mod)
-          return;
-        out[mod] = Array.isArray(rawGame[rawMod]) ? rawGame[rawMod] : [];
-      });
-      if (!out[baseGame])
-        throw new Error('manifest bundle missing base game: ' + baseGame);
-      return { game: out, cd: rawCd };
     }
 
     function buildRemoteCdManifest(entries) {
@@ -277,14 +507,9 @@
         return out;
       entries.forEach(function(ent) {
         var path = String(ent && ent.path || '').trim();
+        var url;
         if (!path) return;
-        var url = startupVfsSupport.computeAssetURL(
-          Module.nexquakeAssetRef,
-          'cd',
-          '',
-          path,
-          normalizeGameName
-        );
+        url = computeAssetURL(Module.nexquakeAssetRef, 'cd', '', path);
         if (url) out.push({ path: path, url: url });
       });
       return out;
@@ -316,36 +541,35 @@
     }
 
     function refreshStartBundle() {
-      if (manifestRefreshInFlight)
-        return manifestRefreshInFlight;
-      manifestRefreshInFlight = fetchStartBundle()
-        .then(normalizeStartBundle)
+      if (manifestRefreshState.inFlight)
+        return manifestRefreshState.inFlight;
+      manifestRefreshState.inFlight = fetchStartBundle()
         .then(installStartBundle)
         .finally(function() {
-          manifestRefreshInFlight = null;
+          manifestRefreshState.inFlight = null;
         });
-      return manifestRefreshInFlight;
+      return manifestRefreshState.inFlight;
     }
 
     function requestOnDemandManifestRefresh() {
       var now = Date.now();
-      if (now < onDemandManifestRefreshAfterMs)
+      if (now < manifestRefreshState.retryAfterMs)
         return;
-      onDemandManifestRefreshAfterMs = now + 5000;
+      manifestRefreshState.retryAfterMs = now + 5000;
       refreshStartBundle().then(function() {
-        onDemandManifestRefreshFailureCount = 0;
+        manifestRefreshState.failureCount = 0;
       }, function(err) {
-        onDemandManifestRefreshFailureCount++;
-        onDemandManifestRefreshAfterMs =
-          Date.now() + Math.min(60000, 1000 * Math.pow(2, Math.min(onDemandManifestRefreshFailureCount, 6)));
+        manifestRefreshState.failureCount++;
+        manifestRefreshState.retryAfterMs =
+          Date.now() + Math.min(60000, 1000 * Math.pow(2, Math.min(manifestRefreshState.failureCount, 6)));
         console.warn('Failed to refresh manifest bundle:', err);
       });
     }
 
     function startManifestRefreshLoop() {
-      if (manifestRefreshLoopStarted)
+      if (manifestRefreshState.loopStarted)
         return;
-      manifestRefreshLoopStarted = true;
+      manifestRefreshState.loopStarted = true;
       setInterval(function() {
         refreshStartBundle().catch(function(err) { console.warn('Failed to refresh manifest bundle:', err); });
       }, manifestRefreshIntervalMs);
@@ -362,9 +586,8 @@
     Module.nexquakeSwitchGameData = function(mod) {
       mod = normalizeGameName(mod);
       try {
-        if (!Module.nexquakeInstalledManifests || !Module.nexquakeInstalledManifests[mod]) {
+        if (!Module.nexquakeInstalledManifests || !Module.nexquakeInstalledManifests[mod])
           throw new Error('manifest missing for ' + mod);
-        }
         Module.nexquakeActiveGame = mod;
         safeMkdirTree(USER_GAME_ROOT + '/' + mod);
         try { FS.symlink(REMOTE_ROOT + '/' + USER_LINK_BASENAME + '/' + mod, '/' + mod); } catch (e2) {}
@@ -380,9 +603,9 @@
         nqSetBootstrapPhase(3);
         Module.addRunDependency(syncDependencyId);
         Module.removeRunDependency(manifestDependencyId);
-        return userFsController.syncSavedData()
+        return syncSavedData()
           .then(function() {
-            return userFsController.seedUserCfgFilesOnce();
+            return seedUserCfgFilesOnce();
           })
           .finally(function() {
             nqSetBootstrapRunning();
