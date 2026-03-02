@@ -1,19 +1,19 @@
-# Configuration Reference
+# Environment Reference
 
 Configure Nexus with the following environment variables. Defaults are provided for a standard Docker setup.
 
-NexQuake is designed to be drop-in compatible with any protocol 15 (NetQuake) dedicated server binary. The bundled `nqserver` is the stock WinQuake engine with minimal patches. Put custom server binaries in `SERVER_DIR`; Nexus prepends that directory to `PATH` ahead of `BIN_DIR`.
+NexQuake is designed to be drop-in compatible with any `protocol 15` (NetQuake) dedicated server binary. The bundled `nqserver` is the stock WinQuake engine with minimal patches. Put custom server binaries in `SERVER_DIR`; Nexus prepends that directory to `PATH` ahead of `BIN_DIR`.
 
 ## Startup Options
 
 | Variable | Default | Description |
 |------|---------|-------------|
 | `HTTP_PORT` | `1337` | Main HTTP and WebSocket listener port. |
-| `QUICKSTART` | `ffa` | Quickstart catalog entries from `CFG_DIR/game.json` (for example `ctf,arena` or `all`). Invalid names are ignored. See [Quick Start](QUICKSTART.md). |
+| `QUICKSTART` | `ffa` | Quickstart catalog entries from `CFG_DIR/game.json` (for example `ctf,arena` or `all`). Invalid names are ignored. See [Quickstart Catalog](../etc/README.md). |
 | `LOG_LEVEL` | `info` | Logging verbosity. Accepts: `error`, `warn`, `info`, `debug`. |
 | `CONSOLE_TIMESTAMPS` | `1` | Timestamps on operator console log lines. Accepts: `0`, `1`. |
 | `DEBUG_RELAY` | `0` | Logs UDP relay traffic with source/destination, length, and byte preview. Accepts: `0`, `1`. |
-| `POOL_SIZE` | `1` | Per-line scaling cap for `-port 0` startup entries (minimum `1`). Controls the maximum backend servers in that entry's backend pool. `1` (the default) disables scale-out while preserving proxy/reconcile safety guards; connections and RCON pass through to a single backend with no replica overhead. Set higher (for example `10`) to enable demand-driven scale-out. |
+| `POOL_SIZE` | `1` | Per-line `servers.ini` scaling cap for `-port 0` startup entries (minimum `1`). Controls the maximum backend servers in that entry's backend pool. `1` (the default) disables scale-out while preserving proxy/reconcile safety guards; connections and RCON pass through to a single backend with no replica overhead. Set higher (for example `10`) to enable demand-driven scale-out. |
 
 ## Authentication
 

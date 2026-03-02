@@ -1,0 +1,1428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>NexQuake - Documentation</title>
+  <link rel="icon" href="client/shell/favicon.svg" type="image/svg+xml">
+  <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
+  <style>
+    @font-face {
+      font-family: 'DpQuakeSite';
+      src: url('assets/fonts/dpquake-full.ttf') format('truetype');
+      font-weight: normal;
+      font-style: normal;
+    }
+
+    :root {
+      color-scheme: dark;
+      --page-bg: #090909;
+      --panel-bg: rgba(12, 12, 12, 0.98);
+      --panel-border: #232323;
+      --text-main: #d8d8d8;
+      --text-dim: #7f7f7f;
+      --text-faint: #565656;
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      height: 100%;
+      background-color: #0a0a0a;
+      background-image: linear-gradient(180deg, #0a0a0a 0%, #1a1410 50%, #0a0a0a 100%);
+      color: var(--text-main);
+      font-family: var(--ui-font);
+      font-size: 16px;
+      overscroll-behavior: none;
+    }
+
+    body {
+      --accent: var(--nq-brand-color-standard, #e07020);
+      --accent-rgb: var(--nq-brand-color-standard-rgb, 224, 112, 32);
+      --accent-hi: var(--nq-brand-color-highlight, #f0a830);
+      --ui-font: var(--nq-font-ui, monospace);
+      --mono-font: var(--nq-font-ui, monospace);
+      --brand-font: 'DpQuakeSite', var(--nq-font-brand, "Courier New", monospace);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-rows: 56px 1fr;
+      grid-template-columns: 268px 1fr;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .topbar {
+      grid-column: 1 / -1;
+      background: rgba(8, 8, 8, 0.98);
+      border-bottom: 1px solid var(--panel-border);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 10px;
+      position: relative;
+      z-index: 10;
+    }
+
+    .logo-link {
+      display: flex;
+      align-items: baseline;
+      text-decoration: none;
+    }
+
+    .logo-nex {
+      font-family: var(--brand-font);
+      font-size: 25px;
+      color: var(--nq-brand-color-logo, #bf8a4e);
+      line-height: 1;
+      text-shadow: 0 0 12px rgba(var(--accent-rgb), 0.35);
+    }
+
+    .logo-quake {
+      font-family: var(--brand-font);
+      font-size: 25px;
+      color: #8b8b8b;
+      line-height: 1;
+    }
+
+    .topbar-sep {
+      color: #353535;
+      font-family: var(--mono-font);
+      font-size: 16px;
+      margin: 0 6px;
+    }
+
+    .topbar-label {
+      color: var(--text-faint);
+      font-family: var(--mono-font);
+      font-size: 11px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+
+    .topbar-right {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .topbar-link {
+      color: #777;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      text-decoration: none;
+      border-radius: 4px;
+      background: transparent;
+      transition: color 0.12s ease, background 0.12s ease;
+    }
+
+    .topbar-link svg {
+      width: 18px;
+      height: 18px;
+      opacity: 0.78;
+      transition: opacity 0.12s ease;
+      fill: currentColor;
+    }
+
+    .topbar-link:hover {
+      color: var(--accent-hi);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .topbar-link:hover svg {
+      opacity: 1;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      border: 0;
+      white-space: nowrap;
+    }
+
+    .sidebar {
+      background: var(--panel-bg);
+      border-right: 1px solid var(--panel-border);
+      overflow-y: auto;
+      padding: 8px 0 24px;
+    }
+
+    .nav-section {
+      margin-top: 16px;
+    }
+
+    .nav-section-label {
+      font-family: var(--mono-font);
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 2.6px;
+      color: var(--text-faint);
+      padding: 0 16px 4px;
+    }
+
+    .nav-item {
+      display: block;
+      padding: 8px 16px;
+      color: var(--text-dim);
+      font-family: var(--mono-font);
+      font-size: 12px;
+      text-decoration: none;
+      cursor: pointer;
+      border-left: 2px solid transparent;
+      transition: color 0.1s, background 0.1s, border-color 0.1s;
+      user-select: none;
+    }
+
+    .nav-item:hover {
+      color: #cfcfcf;
+      background: rgba(59, 59, 59, 0.25);
+      border-left-color: #4b4b4b;
+    }
+
+    .nav-item.active {
+      color: var(--accent-hi);
+      background: rgba(var(--accent-rgb), 0.08);
+      border-left-color: var(--accent);
+    }
+
+    .nav-item-external {
+      color: #727272;
+      font-size: 11px;
+    }
+
+    .content-wrap {
+      overflow-y: auto;
+      scroll-behavior: smooth;
+      overscroll-behavior-y: contain;
+    }
+
+    .content {
+      padding: 44px 60px 80px;
+      max-width: 1120px;
+    }
+
+    .hero-banner {
+      background: rgba(10, 10, 10, 0.35);
+      border: 1px solid #252525;
+      border-radius: 6px;
+      padding: clamp(24px, 4vh, 34px) clamp(16px, 4vw, 40px);
+      margin-bottom: 22px;
+      text-align: center;
+    }
+
+    .hero-logo {
+      font-family: var(--brand-font);
+      max-width: 100%;
+      font-size: min(clamp(34px, 14vmin, 93px), 20vw);
+      font-weight: normal;
+      letter-spacing: clamp(1px, 0.35vmin, 3px);
+      line-height: 1.06;
+      text-align: center;
+      white-space: nowrap;
+      transform: translateX(0.16em);
+      margin-bottom: 14px;
+      text-shadow: 0 0 20px rgba(var(--nq-brand-color-standard-rgb), 0.4);
+    }
+
+    .hero-logo .nex {
+      color: var(--nq-brand-color-logo);
+    }
+
+    .hero-logo .quake {
+      color: #888;
+    }
+
+    .hero-tagline {
+      font-family: var(--mono-font);
+      font-size: clamp(13px, 2.7vmin, 17px);
+      color: #555;
+      letter-spacing: clamp(1px, 0.5vmin, 3px);
+      text-transform: uppercase;
+      margin-bottom: clamp(12px, 2.5vh, 18px);
+      text-align: center;
+    }
+
+    .hero-cmd {
+      background: rgba(12, 12, 12, 0.9);
+      border: 1px solid #2a2a2a;
+      border-left: 3px solid var(--accent);
+      padding: 14px 20px;
+      text-align: left;
+      font-family: var(--mono-font);
+      font-size: 13px;
+      color: #ccc;
+      border-radius: 3px;
+      margin: 0 auto 28px;
+      max-width: 560px;
+    }
+
+    .hero-cmd .comment {
+      color: #888;
+    }
+
+    .code-comment {
+      color: #888;
+    }
+
+    .hero-buttons {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 9px 18px;
+      border-radius: 7px;
+      font-family: var(--mono-font);
+      font-size: 12px;
+      letter-spacing: 0.4px;
+      text-decoration: none;
+      border: 1px solid transparent;
+      transition: all 0.1s ease;
+    }
+
+    .btn-primary {
+      border-color: #555;
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(44, 26, 10, 0.95), rgba(24, 14, 6, 0.96));
+      color: #c0c0c0;
+      font-size: 18px;
+      font-weight: bold;
+      letter-spacing: 2px;
+      min-width: 164px;
+      min-height: 48px;
+      padding: 9px 18px;
+      box-shadow: 0 0 0 1px rgba(var(--nq-brand-color-glow-rgb), 0.2), 0 0 14px rgba(var(--nq-brand-color-standard-rgb), 0.26);
+      text-shadow: none;
+      animation: nq-enter-pulse 1.35s ease-in-out infinite alternate;
+    }
+
+    .btn-primary:hover {
+      background: linear-gradient(180deg, rgba(66, 36, 14, 0.96), rgba(34, 18, 8, 0.97));
+      color: #fff;
+    }
+
+    @keyframes nq-enter-pulse {
+      from {
+        box-shadow: 0 0 0 1px rgba(var(--nq-brand-color-glow-rgb), 0.2), 0 0 8px rgba(var(--nq-brand-color-standard-rgb), 0.2);
+      }
+      to {
+        box-shadow: 0 0 0 1px rgba(var(--nq-brand-color-glow-rgb), 0.32), 0 0 18px rgba(var(--nq-brand-color-highlight-rgb), 0.4);
+      }
+    }
+
+    .features {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .feature {
+      background: rgba(18, 18, 18, 0.7);
+      border: 1px solid #222;
+      border-radius: 2px;
+      padding: 16px;
+      transition: border-color 0.12s ease, background 0.12s ease;
+    }
+
+    .feature:hover {
+      border-color: #333;
+      background: rgba(24, 24, 24, 0.8);
+    }
+
+    .feature-title {
+      color: var(--accent-hi);
+      font-family: var(--mono-font);
+      font-size: 12px;
+      font-weight: bold;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .feature-desc {
+      color: var(--text-dim);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .hub-section {
+      margin-top: 24px;
+    }
+
+    .section-head {
+      margin-bottom: 12px;
+    }
+
+    .section-kicker {
+      display: inline-block;
+      color: var(--text-faint);
+      font-family: var(--mono-font);
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .section-title {
+      color: #ddd;
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 5px;
+    }
+
+    .section-desc {
+      color: #8f8f8f;
+      font-size: 14px;
+      line-height: 1.5;
+      max-width: 840px;
+    }
+
+    .doc-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(238px, 1fr));
+      gap: 12px;
+    }
+
+    .doc-grid--4 {
+      grid-template-columns: repeat(4, 1fr);
+    }
+
+    .doc-card {
+      display: block;
+      background: rgba(14, 14, 14, 0.82);
+      border: 1px solid #272727;
+      border-radius: 6px;
+      padding: 14px;
+      text-decoration: none;
+      transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+      min-height: 136px;
+    }
+
+    .doc-card:hover {
+      transform: translateY(-2px);
+      border-color: #3a3a3a;
+      background: rgba(20, 20, 20, 0.86);
+    }
+
+    .doc-type {
+      display: inline-block;
+      color: #7c7c7c;
+      font-family: var(--mono-font);
+      font-size: 10px;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+      margin-bottom: 7px;
+    }
+
+    .doc-name {
+      color: #e4e4e4;
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 7px;
+      line-height: 1.3;
+    }
+
+    .doc-summary {
+      color: #8b8b8b;
+      font-size: 13px;
+      line-height: 1.52;
+      margin-bottom: 12px;
+    }
+
+    .doc-cta {
+      color: var(--accent-hi);
+      font-family: var(--mono-font);
+      font-size: 11px;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+    }
+
+    .layout-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 10px;
+    }
+
+    .layout-card {
+      background: rgba(14, 14, 14, 0.82);
+      border: 1px solid #252525;
+      border-radius: 6px;
+      padding: 12px;
+      text-decoration: none;
+      transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+    }
+
+    .layout-card:hover {
+      transform: translateY(-2px);
+      border-color: #3a3a3a;
+      background: rgba(20, 20, 20, 0.9);
+    }
+
+    .layout-path {
+      color: var(--accent-hi);
+      font-family: var(--mono-font);
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+
+    .layout-summary {
+      color: #888;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .md h1 {
+      font-family: var(--brand-font);
+      color: var(--nq-brand-color-logo, #bf8a4e);
+      font-size: 30px;
+      border-bottom: 1px solid #2a2a2a;
+      padding-bottom: 12px;
+      margin-bottom: 24px;
+      font-weight: normal;
+    }
+
+    .md h2 {
+      color: #ddd;
+      font-size: 17px;
+      margin: 32px 0 12px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #1e1e1e;
+    }
+
+    .md h3 {
+      color: var(--accent);
+      font-size: 13px;
+      margin: 22px 0 8px;
+      font-family: var(--mono-font);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .md h4 {
+      color: #aaa;
+      font-size: 13px;
+      margin: 16px 0 6px;
+      font-family: var(--mono-font);
+    }
+
+    .md p {
+      color: #bbb;
+      line-height: 1.7;
+      margin-bottom: 14px;
+    }
+
+    .md a {
+      color: var(--accent-hi);
+      text-decoration: none;
+    }
+
+    .md a:hover {
+      color: var(--nq-brand-color-lighter);
+      text-decoration: underline;
+    }
+
+    .md code {
+      background: rgba(36, 36, 36, 0.9);
+      border: 1px solid #2e2e2e;
+      padding: 1px 5px;
+      border-radius: 2px;
+      font-family: var(--mono-font);
+      font-size: 12px;
+      color: var(--nq-brand-color-lighter);
+    }
+
+    .md pre {
+      background: rgba(12, 12, 12, 0.9);
+      border: 1px solid #2a2a2a;
+      border-left: 3px solid var(--accent);
+      padding: 16px 20px;
+      overflow-x: auto;
+      border-radius: 2px;
+      margin: 14px 0;
+    }
+
+    .md pre code {
+      background: none;
+      border: none;
+      padding: 0;
+      color: #ccc;
+      font-size: 13px;
+    }
+
+    .md table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 14px 0;
+      font-size: 13px;
+    }
+
+    .md th {
+      background: rgba(36, 36, 36, 0.7);
+      color: var(--accent-hi);
+      text-align: left;
+      padding: 8px 12px;
+      border-bottom: 1px solid #333;
+      font-family: var(--mono-font);
+      font-size: 11px;
+      font-weight: normal;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .md td {
+      padding: 7px 12px;
+      border-bottom: 1px solid #1a1a1a;
+      color: #bbb;
+    }
+
+    .md tr:hover td {
+      background: rgba(50, 50, 50, 0.2);
+    }
+
+    .md blockquote {
+      border-left: 3px solid var(--accent);
+      margin: 14px 0;
+      padding: 8px 16px;
+      background: rgba(var(--accent-rgb), 0.05);
+      color: #888;
+    }
+
+    .md ul, .md ol {
+      padding-left: 22px;
+      margin-bottom: 14px;
+    }
+
+    .md li {
+      margin-bottom: 4px;
+      color: #bbb;
+      line-height: 1.5;
+    }
+
+    .md li code {
+      font-size: 12px;
+    }
+
+    .md strong {
+      color: #e0e0e0;
+    }
+
+    .md em {
+      color: #aaa;
+    }
+
+    .md hr {
+      border: none;
+      border-top: 1px solid #1e1e1e;
+      margin: 24px 0;
+    }
+
+    .loading-msg {
+      color: #545454;
+      font-family: var(--mono-font);
+      font-size: 13px;
+      padding: 40px 0;
+    }
+
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: #2a2a2a #0a0a0a;
+    }
+
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #0a0a0a;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #2a2a2a;
+      border-radius: 3px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--accent);
+    }
+
+    .nav-item:focus-visible,
+    .doc-card:focus-visible,
+    .layout-card:focus-visible,
+    .btn:focus-visible,
+    .topbar-link:focus-visible,
+    .logo-link:focus-visible {
+      outline: 1px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    @media (max-width: 980px) {
+      .layout {
+        grid-template-columns: 224px 1fr;
+      }
+
+      .content {
+        padding: 34px 30px 62px;
+      }
+
+      .doc-grid--4 {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 760px) {
+      .layout {
+        grid-template-columns: 1fr;
+        grid-template-rows: 56px auto 1fr;
+      }
+
+      .sidebar {
+        border-right: none;
+        border-bottom: 1px solid var(--panel-border);
+        max-height: 216px;
+      }
+
+      .topbar-right {
+        gap: 10px;
+      }
+
+      .content {
+        padding: 24px 18px 56px;
+      }
+
+      .hero-banner {
+        padding: 28px 20px 22px;
+      }
+
+      .hero-buttons {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .hero-cmd {
+        font-size: 11px;
+      }
+
+      .btn {
+        width: 100%;
+      }
+
+      .doc-grid, .layout-grid, .features {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+  <link rel="stylesheet" href="client/shell/shell-nq.css">
+</head>
+<body>
+<div class="layout">
+  <header class="topbar">
+    <a class="logo-link" href="#home" onclick="navigate('home');return false;">
+      <span class="logo-nex">Nex</span><span class="logo-quake">Quake</span>
+    </a>
+    <span class="topbar-sep">/</span>
+    <span class="topbar-label">Documentation</span>
+    <div class="topbar-right">
+      <a class="topbar-link" href="https://www.brsm.dev" target="_blank" rel="noopener" aria-label="brsm.dev" title="brsm.dev">
+        <svg viewBox="0 0 100 100" aria-hidden="true">
+          <text x="50" y="82" text-anchor="middle" font-size="120" font-family="sans-serif" font-weight="700">&#8805;</text>
+        </svg>
+        <span class="sr-only">brsm.dev</span>
+      </a>
+      <a class="topbar-link" href="https://ghcr.io/0xbrsm/nexquake" target="_blank" rel="noopener" aria-label="Docker" title="Docker">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="9" width="2.5" height="2.5" rx="0.3"></rect>
+          <rect x="6" y="9" width="2.5" height="2.5" rx="0.3"></rect>
+          <rect x="9" y="9" width="2.5" height="2.5" rx="0.3"></rect>
+          <rect x="12" y="9" width="2.5" height="2.5" rx="0.3"></rect>
+          <rect x="6" y="6" width="2.5" height="2.5" rx="0.3"></rect>
+          <rect x="9" y="6" width="2.5" height="2.5" rx="0.3"></rect>
+          <path d="M2.2 12.6h13.4c.2 0 .4-.2.4-.4v-1.1c1.2-.4 2.2.2 2.6 1.2.9 0 1.8-.3 2.5-1-.1 1.4-.6 2.5-1.4 3.4-1.4 1.6-3.6 2.5-6.3 2.5H8.3c-3 0-5.1-1.8-6.1-4.6z"></path>
+        </svg>
+        <span class="sr-only">Docker</span>
+      </a>
+      <a class="topbar-link" href="https://github.com/0xBrsm/NexQuake" target="_blank" rel="noopener" aria-label="GitHub" title="GitHub">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 .297a12 12 0 0 0-3.79 23.39c.6.12.82-.26.82-.58v-2.03c-3.34.73-4.04-1.42-4.04-1.42-.55-1.39-1.34-1.76-1.34-1.76-1.09-.74.09-.72.09-.72 1.2.08 1.84 1.23 1.84 1.23 1.07 1.84 2.81 1.31 3.49 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23A11.4 11.4 0 0 1 12 6.1c1.02.01 2.05.14 3 .4 2.29-1.55 3.3-1.23 3.3-1.23.66 1.66.24 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.62-5.48 5.92.43.37.82 1.1.82 2.22v3.29c0 .32.22.7.83.58A12 12 0 0 0 12 .3z"/>
+        </svg>
+        <span class="sr-only">GitHub</span>
+      </a>
+    </div>
+  </header>
+
+  <nav class="sidebar" id="sidebar" aria-label="Documentation navigation"></nav>
+
+  <div class="content-wrap" id="content-wrap">
+    <main class="content" id="content" aria-live="polite"></main>
+  </div>
+</div>
+
+<script>
+const GITHUB_SRC_BASE = 'https://github.com/0xBrsm/NexQuake/blob/main/src/';
+
+function gh(path) {
+  return GITHUB_SRC_BASE + path;
+}
+
+function sanitizePath(path) {
+  return String(path || '')
+    .replace(/\\\\/g, '/')
+    .replace(/^\.\/+/, '')
+    .replace(/\/+/g, '/')
+    .replace(/^\/+/, '')
+    .trim();
+}
+
+function normalizePath(path) {
+  return sanitizePath(path).toLowerCase();
+}
+
+const PAGE_LIST = [
+  {
+    id: 'overview',
+    title: 'Product Overview',
+    navLabel: 'Overview',
+    path: 'README.md',
+    kind: 'Overview',
+    summary: 'High-level product narrative, features, runtime model, and source tree.'
+  },
+  {
+    id: 'docs-index',
+    title: 'Documentation Index',
+    navLabel: 'All Docs',
+    path: 'docs/README.md',
+    kind: 'Index',
+    summary: 'Role-oriented list of every product-facing document under src/.'
+  },
+  {
+    id: 'quickstart',
+    title: 'Quick Start',
+    navLabel: 'Quick Start',
+    path: 'docs/QUICKSTART.md',
+    kind: 'Guide',
+    summary: 'Fastest path to launch NexQuake with Docker defaults.'
+  },
+  {
+    id: 'changelog',
+    title: 'Release Notes',
+    navLabel: 'Release Notes',
+    path: 'CHANGELOG.md',
+    kind: 'Release',
+    summary: 'Product-visible changes organized by SemVer release.'
+  },
+  {
+    id: 'catalog',
+    title: 'Quickstart Catalog',
+    navLabel: 'Game Catalog',
+    path: 'etc/README.md',
+    kind: 'Reference',
+    summary: 'How QUICKSTART entries and game.json bootstrap data and default servers.'
+  },
+  {
+    id: 'setup',
+    title: 'Data and Servers',
+    navLabel: 'Data & Servers',
+    path: 'docs/SETUP.md',
+    kind: 'Guide',
+    summary: 'Data layout, mod installation, and servers.ini launch planning.'
+  },
+  {
+    id: 'environment',
+    title: 'Environment Reference',
+    navLabel: 'Environment',
+    path: 'docs/ENVIRONMENT.md',
+    kind: 'Reference',
+    summary: 'Runtime variables for Nexus, networking, auth, and deployment.'
+  },
+  {
+    id: 'admin',
+    title: 'Admin Commands',
+    navLabel: 'Admin Commands',
+    path: 'docs/ADMIN.md',
+    kind: 'Reference',
+    summary: 'Console-level administration for servers and Nexus runtime control.'
+  },
+  {
+    id: 'ui',
+    title: 'User Interface',
+    navLabel: 'User Interface',
+    path: 'docs/UI.md',
+    kind: 'Guide',
+    summary: 'Use the in-browser gear panel for local files, cfg edits, and CD controls.'
+  },
+  {
+    id: 'controls',
+    title: 'Controls',
+    navLabel: 'Controls',
+    path: 'docs/CONTROLS.md',
+    kind: 'Guide',
+    summary: 'Touch, keyboard, gamepad, and video-mode guidance for browser play.'
+  },
+  {
+    id: 'architecture',
+    title: 'Architecture',
+    navLabel: 'Architecture',
+    path: 'docs/ARCHITECTURE.md',
+    kind: 'Reference',
+    summary: 'System design, runtime flow, and protocol-level behavior across the stack.'
+  },
+  {
+    id: 'build-system',
+    title: 'Build System',
+    navLabel: 'Build System',
+    path: 'build/README.md',
+    kind: 'Component',
+    summary: 'Build scripts, upstream staging, and artifact generation for client and server.'
+  },
+  {
+    id: 'web-client',
+    title: 'Web Client',
+    navLabel: 'Web Client',
+    path: 'client/README.md',
+    kind: 'Component',
+    summary: 'WASM platform layer, renderer, audio, input, and browser transport internals.'
+  },
+  {
+    id: 'nexus-service',
+    title: 'Nexus Service',
+    navLabel: 'Nexus Service',
+    path: 'nexus/README.md',
+    kind: 'Component',
+    summary: 'HTTP and WebSocket relay orchestration, boundaries, and runtime wiring.'
+  },
+  {
+    id: 'relay-package',
+    title: 'Relay Package',
+    navLabel: 'Relay Package',
+    path: 'nexus/nqrelay/README.md',
+    kind: 'Package',
+    summary: 'Standalone WebSocket-to-UDP relay package and integration notes.'
+  },
+  {
+    id: 'shareware-extractor',
+    title: 'Shareware Extractor',
+    navLabel: 'Shareware Extractor',
+    path: 'nexus/quake106/README.md',
+    kind: 'Package',
+    summary: 'Pure Go extraction flow and provenance checks for Quake 1.06 shareware.'
+  },
+  {
+    id: 'dedicated-server',
+    title: 'Dedicated Server',
+    navLabel: 'Dedicated Server',
+    path: 'server/README.md',
+    kind: 'Component',
+    summary: 'Native nqserver build, patches, configuration, and dedicated-mode behavior.'
+  },
+  {
+    id: 'bugfix-catalog',
+    title: 'Bug Fix Catalog',
+    navLabel: 'Bug Fix Catalog',
+    path: 'bugfix/README.md',
+    kind: 'Reference',
+    summary: 'Upstream WinQuake fixes carried by NexQuake for safety and stability.'
+  },
+  {
+    id: 'attributions',
+    title: 'Attributions',
+    navLabel: 'Attributions',
+    path: 'ATTRIBUTIONS.md',
+    kind: 'Legal',
+    summary: 'GPL lineage, third-party credits, and product provenance notes.'
+  }
+];
+
+const PAGES = Object.fromEntries(PAGE_LIST.map((page) => [page.id, page]));
+const PAGE_IDS = new Set(['home', ...PAGE_LIST.map((page) => page.id)]);
+
+const NAV_SECTIONS = [
+  { items: ['home'] },
+  { label: 'Get Started', items: ['overview', 'quickstart'] },
+  { label: 'Operate', items: ['setup', 'catalog', 'environment', 'admin'] },
+  { label: 'Play', items: ['controls', 'ui'] },
+  { label: 'System', items: ['architecture', 'web-client', 'nexus-service', 'dedicated-server'] },
+  { label: 'Internals', items: ['build-system', 'relay-package', 'shareware-extractor', 'bugfix-catalog'] },
+  { label: 'Reference', items: ['docs-index', 'changelog', 'attributions'] }
+];
+
+const HOME_INDEX_SECTIONS = [
+  {
+    kicker: 'Get Started',
+    title: 'Overview and Quick Start',
+    description: 'Learn what NexQuake is and get an instance running in minutes.',
+    items: ['overview', 'quickstart']
+  },
+  {
+    kicker: 'Operate',
+    title: 'Servers and Data',
+    description: 'Data layout, game catalog, environment configuration, and live server administration.',
+    items: ['setup', 'catalog', 'environment', 'admin']
+  },
+  {
+    kicker: 'Play',
+    title: 'Browser Client',
+    description: 'Controls, input mapping, and the in-browser settings panel for touch, keyboard, and gamepad.',
+    items: ['controls', 'ui']
+  },
+  {
+    kicker: 'System',
+    title: 'Architecture and Components',
+    description: 'System design and component docs for the browser client, Nexus service, and dedicated server.',
+    items: ['architecture', 'web-client', 'nexus-service', 'dedicated-server']
+  },
+  {
+    kicker: 'Internals',
+    title: 'Build and Packages',
+    description: 'Build pipeline, relay and extractor packages, and the upstream WinQuake bugfix catalog.',
+    items: ['build-system', 'relay-package', 'shareware-extractor', 'bugfix-catalog']
+  },
+  {
+    kicker: 'Reference',
+    title: 'Indexes and Meta',
+    description: 'Documentation index, release history, and licensing provenance.',
+    items: ['docs-index', 'changelog', 'attributions']
+  }
+];
+
+const REPO_LAYOUT = [
+  {
+    path: 'README.md',
+    summary: 'Top-level product overview and broad project narrative.',
+    page: 'overview'
+  },
+  {
+    path: 'docs/',
+    summary: 'Task-oriented operator and player guides.',
+    page: 'docs-index'
+  },
+  {
+    path: 'etc/',
+    summary: 'Game catalog and quickstart entry definitions.',
+    page: 'catalog'
+  },
+  {
+    path: 'client/',
+    summary: 'WASM client implementation and browser-side runtime details.',
+    page: 'web-client'
+  },
+  {
+    path: 'nexus/',
+    summary: 'Relay and orchestration service plus nested packages.',
+    page: 'nexus-service'
+  },
+  {
+    path: 'server/',
+    summary: 'Dedicated server build and runtime behavior.',
+    page: 'dedicated-server'
+  },
+  {
+    path: 'build/',
+    summary: 'Build pipeline, upstream staging, and artifact generation.',
+    page: 'build-system'
+  },
+  {
+    path: 'bugfix/',
+    summary: 'Curated WinQuake patch catalog carried by NexQuake.',
+    page: 'bugfix-catalog'
+  },
+  {
+    path: 'CHANGELOG.md',
+    summary: 'Release history for shipped product changes.',
+    page: 'changelog'
+  },
+  {
+    path: 'ATTRIBUTIONS.md',
+    summary: 'Licenses, provenance, and third-party credits.',
+    page: 'attributions'
+  }
+];
+
+const LOCAL_PATH_TO_ID = {};
+for (const page of PAGE_LIST) {
+  LOCAL_PATH_TO_ID[normalizePath(page.path)] = page.id;
+}
+
+function buildRoute(page, anchor) {
+  return '#' + page + (anchor ? ('::' + anchor) : '');
+}
+
+function parseRouteHash(hash) {
+  const value = String(hash || '').replace(/^#/, '');
+  if (!value) {
+    return { page: 'home', anchor: '' };
+  }
+
+  const separator = value.indexOf('::');
+  if (separator === -1) {
+    return { page: value, anchor: '' };
+  }
+
+  return {
+    page: value.slice(0, separator),
+    anchor: value.slice(separator + 2)
+  };
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function resolveSourcePath(basePath, targetPath) {
+  const baseParts = sanitizePath(basePath).split('/').filter(Boolean);
+  const targetParts = sanitizePath(targetPath).split('/');
+  const resolved = targetPath.startsWith('/') ? [] : baseParts.slice(0, Math.max(baseParts.length - 1, 0));
+
+  for (const part of targetParts) {
+    if (!part || part === '.') {
+      continue;
+    }
+
+    if (part === '..') {
+      if (resolved.length) {
+        resolved.pop();
+      }
+      continue;
+    }
+
+    resolved.push(part);
+  }
+
+  return resolved.join('/');
+}
+
+function slugifyHeading(text) {
+  return String(text || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function applyCodeComments(container) {
+  container.querySelectorAll('.md pre code').forEach((block) => {
+    block.innerHTML = block.innerHTML
+      .split('\n')
+      .map((line) => /^\s*#/.test(line) ? '<span class="code-comment">' + line + '</span>' : line)
+      .join('\n');
+  });
+}
+
+function applyHeadingIds(container) {
+  const used = new Map();
+
+  container.querySelectorAll('.md h1, .md h2, .md h3, .md h4, .md h5, .md h6').forEach((heading) => {
+    const base = slugifyHeading(heading.textContent) || 'section';
+    const count = used.get(base) || 0;
+    const id = count ? (base + '-' + count) : base;
+    used.set(base, count + 1);
+    heading.id = id;
+  });
+}
+
+function scrollToAnchor(anchor) {
+  if (!anchor) {
+    return;
+  }
+
+  const target = document.getElementById(anchor);
+  if (target) {
+    target.scrollIntoView({ block: 'start' });
+  }
+}
+
+function renderDocCard(id) {
+  const doc = PAGES[id];
+  return `
+    <a class="doc-card" href="${buildRoute(id)}" data-page="${id}">
+      <span class="doc-type">${doc.kind}</span>
+      <div class="doc-name">${doc.title}</div>
+      <div class="doc-summary">${doc.summary}</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  `;
+}
+
+function renderMapSection(section) {
+  const gridClass = 'doc-grid' + (section.items.length === 4 ? ' doc-grid--4' : '');
+  return `
+    <section class="hub-section">
+      <div class="section-head">
+        <span class="section-kicker">${section.kicker}</span>
+        <h2 class="section-title">${section.title}</h2>
+        <p class="section-desc">${section.description}</p>
+      </div>
+      <div class="${gridClass}">
+        ${section.items.map(renderDocCard).join('')}
+      </div>
+    </section>
+  `;
+}
+
+function renderLayoutCard(item) {
+  return `
+    <a class="layout-card" href="${buildRoute(item.page)}" data-page="${item.page}">
+      <div class="layout-path">${item.path}</div>
+      <div class="layout-summary">${item.summary}</div>
+    </a>
+  `;
+}
+
+function buildDocumentationMapMarkup() {
+  return `
+    ${HOME_INDEX_SECTIONS.map(renderMapSection).join('')}
+    <section class="hub-section">
+      <div class="section-head">
+        <span class="section-kicker">Layout</span>
+        <h2 class="section-title">Source Tree</h2>
+        <p class="section-desc">Each source directory, linked to its component documentation.</p>
+      </div>
+      <div class="layout-grid">
+        ${REPO_LAYOUT.map(renderLayoutCard).join('')}
+      </div>
+    </section>
+  `;
+}
+
+function renderHomeFeatures(features) {
+  return (features || []).map((feature) => `
+      <div class="feature">
+        <div class="feature-title">${escapeHtml(feature.title)}</div>
+        <div class="feature-desc">${escapeHtml(feature.description)}</div>
+      </div>
+    `).join('');
+}
+
+const DOCUMENTATION_MAP = buildDocumentationMapMarkup();
+
+function buildHomeMarkup(features) {
+  return `
+    <div class="hero-banner">
+      <div class="hero-logo"><span class="nex">Nex</span><span class="quake">Quake</span></div>
+      <p class="hero-tagline">
+        Click. Frag.
+      </p>
+      <div class="hero-cmd">
+        <span class="comment"># launch NexQuake, then browse to http://your-server:1337</span><br>
+        docker run -p 1337:1337 -e CL_ARGS=+connect ghcr.io/0xbrsm/nexquake
+      </div>
+      <div class="hero-buttons">
+        <a class="btn btn-primary" href="${buildRoute('quickstart')}" data-page="quickstart">QUICKSTART</a>
+      </div>
+    </div>
+
+    <div class="features">
+      ${renderHomeFeatures(features)}
+    </div>
+
+    ${DOCUMENTATION_MAP}
+  `;
+}
+
+function renderNavItem(id) {
+  const label = id === 'home' ? 'Home' : PAGES[id].navLabel;
+  return `<a class="nav-item" data-page="${id}" href="${buildRoute(id)}">${label}</a>`;
+}
+
+function renderSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  sidebar.innerHTML = NAV_SECTIONS.map((section) => `
+    <div class="nav-section">
+      ${section.label ? `<div class="nav-section-label">${section.label}</div>` : ''}
+      ${section.items.map(renderNavItem).join('')}
+    </div>
+  `).join('');
+
+  bindDocumentLinks(sidebar, '');
+}
+
+function mapMarkdownHref(href, currentPath) {
+  if (!href) {
+    return href;
+  }
+
+  if (/^(https?:|mailto:|tel:)/i.test(href)) {
+    return href;
+  }
+
+  if (href.startsWith('#')) {
+    return href;
+  }
+
+  const hashIdx = href.indexOf('#');
+  const pathPart = hashIdx >= 0 ? href.slice(0, hashIdx) : href;
+  const anchorPart = hashIdx >= 0 ? href.slice(hashIdx + 1) : '';
+  const resolvedPath = resolveSourcePath(currentPath, pathPart);
+  const localId = LOCAL_PATH_TO_ID[normalizePath(resolvedPath)];
+
+  if (localId) {
+    return buildRoute(localId, anchorPart);
+  }
+
+  if (resolvedPath) {
+    return gh(resolvedPath) + (anchorPart ? ('#' + anchorPart) : '');
+  }
+
+  return href;
+}
+
+function bindDocumentLinks(container, currentPath) {
+  container.querySelectorAll('a[href]').forEach((anchor) => {
+    const dataPage = anchor.getAttribute('data-page');
+    if (dataPage && PAGE_IDS.has(dataPage)) {
+      anchor.setAttribute('href', buildRoute(dataPage));
+      anchor.addEventListener('click', (e) => {
+        e.preventDefault();
+        navigate(dataPage);
+      });
+      return;
+    }
+
+    const href = anchor.getAttribute('href');
+    const mapped = mapMarkdownHref(href, currentPath);
+
+    if (mapped !== href) {
+      anchor.setAttribute('href', mapped);
+    }
+
+    if (mapped && mapped.startsWith('http')) {
+      anchor.setAttribute('target', '_blank');
+      anchor.setAttribute('rel', 'noopener');
+      return;
+    }
+
+    if (mapped && mapped.startsWith('#')) {
+      const route = parseRouteHash(mapped);
+      if (PAGE_IDS.has(route.page)) {
+        anchor.addEventListener('click', (e) => {
+          e.preventDefault();
+          navigate(route.page, route.anchor);
+        });
+      }
+    }
+  });
+}
+
+const HOME_FEATURES_PATH = 'data/home-features.json';
+let homeFeaturesPromise = null;
+let currentPage = null;
+let currentAnchor = '';
+
+async function loadHomeFeatures() {
+  if (!homeFeaturesPromise) {
+    homeFeaturesPromise = fetch(HOME_FEATURES_PATH)
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(res.status + ' ' + res.statusText);
+        }
+        return res.json();
+      })
+      .then((data) => Array.isArray(data) ? data : [])
+      .catch(() => []);
+  }
+
+  return homeFeaturesPromise;
+}
+
+function normalizeRequestedPage(page) {
+  if (!page || page === 'site-index') {
+    return 'home';
+  }
+
+  return PAGES[page] ? page : 'home';
+}
+
+async function navigate(page, anchor) {
+  const targetPage = normalizeRequestedPage(page);
+  const targetAnchor = anchor || '';
+
+  document.querySelectorAll('.nav-item[data-page]').forEach((el) => {
+    el.classList.toggle('active', el.dataset.page === targetPage);
+  });
+
+  const content = document.getElementById('content');
+  const wrap = document.getElementById('content-wrap');
+  currentPage = targetPage;
+  currentAnchor = targetAnchor;
+
+  if (targetPage === 'home') {
+    content.innerHTML = '<p class="loading-msg">loading...</p>';
+    const homeFeatures = await loadHomeFeatures();
+    content.innerHTML = buildHomeMarkup(homeFeatures);
+    bindDocumentLinks(content, '');
+    document.title = 'NexQuake - Documentation';
+    history.replaceState(null, '', location.pathname);
+    wrap.scrollTop = 0;
+    return;
+  }
+
+  const doc = PAGES[targetPage];
+  if (!doc) {
+    return;
+  }
+
+  content.innerHTML = '<p class="loading-msg">loading...</p>';
+  document.title = 'NexQuake - ' + doc.title;
+  history.replaceState(null, '', buildRoute(targetPage, targetAnchor));
+
+  try {
+    const res = await fetch(doc.path);
+    if (!res.ok) {
+      throw new Error(res.status + ' ' + res.statusText);
+    }
+
+    const md = await res.text();
+    const html = marked.parse(md);
+    content.innerHTML = '<div class="md">' + html + '</div>';
+    applyHeadingIds(content);
+    applyCodeComments(content);
+    bindDocumentLinks(content, doc.path);
+    wrap.scrollTop = 0;
+
+    if (targetAnchor) {
+      requestAnimationFrame(() => scrollToAnchor(targetAnchor));
+    }
+  } catch (e) {
+    content.innerHTML = '<p style="color:#f66;font-family:var(--mono-font);padding:20px 0">Failed to load ' + doc.path + ': ' + e.message + '</p>';
+  }
+}
+
+renderSidebar();
+
+const initRoute = parseRouteHash(location.hash);
+navigate(initRoute.page, initRoute.anchor);
+
+window.addEventListener('popstate', () => {
+  const route = parseRouteHash(location.hash);
+  if (route.page !== currentPage || route.anchor !== currentAnchor) {
+    navigate(route.page, route.anchor);
+  }
+});
+</script>
+</body>
+</html>

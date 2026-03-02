@@ -202,8 +202,6 @@ static int touch_button_gameplay_key(int slot)
 {
 	if ((unsigned)slot < (unsigned)TOUCH_SLOT_COUNT)
 		return touch_slot_keys[slot];
-	if (slot == TOUCH_MENU_BACK_BUTTON)
-		return 0;
 	return 0;
 }
 
@@ -296,7 +294,7 @@ static void sync_menu_mode_transition(void)
 		touch_cancel_all();
 	release_menu_virtual_controls();
 	menu_mode_latched = in_menu;
-	js_set_touch_menu_mode(in_menu ? 1 : 0);
+	js_set_touch_menu_mode(in_menu);
 }
 
 static void update_menu_nav(int nav_base, float thresh, float nx, float ny)
@@ -571,8 +569,7 @@ static EM_BOOL on_wheel(int t, const EmscriptenWheelEvent *e, void *ud)
 	qboolean large_pixel_step;
 	qboolean non_pixel_mode;
 
-	if (js_overlay_modal_open()) return 0;
-	if (!mouse_avail) return 0;
+	if (js_overlay_modal_open() || !mouse_avail) return 0;
 
 	dy = (float)e->deltaY;
 	if (dy == 0.0f) return 1;
@@ -657,12 +654,8 @@ static int touch_find_look_point(long identifier)
 	int i;
 
 	for (i = 0; i < MAX_TOUCH_POINTS; i++)
-	{
-		if (!touch_look_points[i].active || touch_look_points[i].identifier != identifier)
-			continue;
-		return i;
-	}
-
+		if (touch_look_points[i].active && touch_look_points[i].identifier == identifier)
+			return i;
 	return -1;
 }
 
@@ -692,20 +685,15 @@ static qboolean touch_add_look_point(long identifier, float px, float py)
 
 static void touch_move_axes_for_point(float px, float py, float *nx, float *ny)
 {
-	float dx, dy;
-	float dist;
+	float dx, dy, dist;
 
 	dx = px - touch_move.originX;
 	dy = py - touch_move.originY;
 	dist = sqrtf(dx * dx + dy * dy);
-	if (dist > TOUCH_MOVE_RADIUS)
-	{
-		dx = dx * TOUCH_MOVE_RADIUS / dist;
-		dy = dy * TOUCH_MOVE_RADIUS / dist;
-	}
-
-	*nx = dx / TOUCH_MOVE_RADIUS;
-	*ny = dy / TOUCH_MOVE_RADIUS;
+	if (dist < TOUCH_MOVE_RADIUS)
+		dist = TOUCH_MOVE_RADIUS;
+	*nx = dx / dist;
+	*ny = dy / dist;
 }
 
 static void touch_clear_move(void)
@@ -723,10 +711,8 @@ static int touch_find_button(long identifier)
 	int slot;
 
 	for (slot = 0; slot < TOUCH_BUTTON_COUNT; slot++)
-	{
 		if (touch_buttons[slot].active && touch_buttons[slot].identifier == identifier)
 			return slot;
-	}
 	return -1;
 }
 
@@ -771,50 +757,29 @@ static qboolean touch_event_blocked(void)
 
 static float touch_look_units_per_pixel(void)
 {
-	float look_zone_width;
-
-	look_zone_width = js_touch_look_zone_width(TOUCH_MOVE_ZONE_SPLIT);
-	if (look_zone_width <= 1.0f)
+	float w = js_touch_look_zone_width(TOUCH_MOVE_ZONE_SPLIT);
+	if (w <= 1.0f)
 		return 0.0f;
-
-	return TOUCH_TARGET_SWIPE_TURN
-		/ (look_zone_width * TOUCH_TARGET_SWIPE_FRAC * DEFAULT_SENSITIVITY * DEFAULT_M_YAW);
+	return TOUCH_TARGET_SWIPE_TURN / (w * TOUCH_TARGET_SWIPE_FRAC * DEFAULT_SENSITIVITY * DEFAULT_M_YAW);
 }
 
 static qboolean touch_is_tap(float startX, float startY, double startMs, float endX, float endY, double max_ms, float max_px)
 {
-	float dx;
-	float dy;
+	float dx, dy, max_dist_sq;
 
-	dx = endX - startX;
-	dy = endY - startY;
 	if (emscripten_get_now() - startMs > max_ms)
 		return false;
-	if (sqrtf(dx * dx + dy * dy) > max_px)
-		return false;
-	return true;
-}
-
-static void touch_emit_tap_key(int zone)
-{
-	int key;
-
-	if (zone != 0 && zone != 1)
-		return;
-
-	if (key_dest == key_menu)
-		key = (zone == 0) ? K_ESCAPE : menu_accept_key();
-	else
-		key = (zone == 0) ? K_TOUCH_TAP1 : K_TOUCH_TAP2;
-
-	Key_Event(key, 1);
-	Key_Event(key, 0);
+	dx = endX - startX;
+	dy = endY - startY;
+	max_dist_sq = max_px * max_px;
+	return (dx * dx + dy * dy) <= max_dist_sq;
 }
 
 static void touch_try_zone_tap(int zone, float startX, float startY, double startMs, float endX, float endY)
 {
 	double tap_ms;
 	float tap_px;
+	int key;
 
 	if (zone != 0 && zone != 1)
 		return;
@@ -829,7 +794,13 @@ static void touch_try_zone_tap(int zone, float startX, float startY, double star
 	if (!touch_is_tap(startX, startY, startMs, endX, endY, tap_ms, tap_px))
 		return;
 
-	touch_emit_tap_key(zone);
+	if (key_dest == key_menu)
+		key = (zone == 0) ? K_ESCAPE : menu_accept_key();
+	else
+		key = (zone == 0) ? K_TOUCH_TAP1 : K_TOUCH_TAP2;
+
+	Key_Event(key, 1);
+	Key_Event(key, 0);
 }
 
 static float touch_zone_split(qboolean in_menu)
@@ -839,9 +810,7 @@ static float touch_zone_split(qboolean in_menu)
 
 static int touch_zone_for_point(float x, float split)
 {
-	if (touch_flip.value != 0.0f)
-		return js_touch_zone_for_point(x, split, 1);
-	return js_touch_zone_for_point(x, split, 0);
+	return js_touch_zone_for_point(x, split, touch_flip.value != 0.0f);
 }
 
 static void touch_sync_flip_mode(void)
@@ -851,7 +820,7 @@ static void touch_sync_flip_mode(void)
 	if (flip == touch_flip_latched)
 		return;
 	touch_flip_latched = flip;
-	js_set_touch_flip(flip ? 1 : 0);
+	js_set_touch_flip(flip);
 }
 
 // ---------------------------------------------------------------------------
@@ -924,7 +893,6 @@ static EM_BOOL on_touchstart(int type, const EmscriptenTouchEvent *e, void *ud)
 			touch_move.startMs = emscripten_get_now();
 			touch_move.axisX = touch_move.axisY = 0.0f;
 			js_joy_show(touch_move.originX, touch_move.originY);
-			js_joy_move(touch_move.originX, touch_move.originY);
 			handled = true;
 			continue;
 		}
@@ -965,12 +933,8 @@ static EM_BOOL on_touchmove(int type, const EmscriptenTouchEvent *e, void *ud)
 
 		if (touch_move.active && tp->identifier == touch_move.identifier)
 		{
-			float nx, ny;
-
-			touch_move_axes_for_point(px, py, &nx, &ny);
-			touch_move.axisX = nx;
-			touch_move.axisY = ny;
-			js_joy_move(touch_move.originX + nx * TOUCH_MOVE_RADIUS, touch_move.originY + ny * TOUCH_MOVE_RADIUS);
+			touch_move_axes_for_point(px, py, &touch_move.axisX, &touch_move.axisY);
+			js_joy_move(touch_move.originX + touch_move.axisX * TOUCH_MOVE_RADIUS, touch_move.originY + touch_move.axisY * TOUCH_MOVE_RADIUS);
 			handled = true;
 			continue;
 		}
@@ -1000,7 +964,6 @@ static EM_BOOL on_touchend(int type, const EmscriptenTouchEvent *e, void *ud)
 {
 	int i;
 	qboolean handled;
-	qboolean in_menu;
 	float zone_split;
 
 	if (js_touch_drag_active())
@@ -1010,8 +973,7 @@ static EM_BOOL on_touchend(int type, const EmscriptenTouchEvent *e, void *ud)
 	}
 
 	handled = false;
-	in_menu = (key_dest == key_menu);
-	zone_split = touch_zone_split(in_menu);
+	zone_split = touch_zone_split(key_dest == key_menu);
 
 	for (i = 0; i < e->numTouches; i++)
 	{
@@ -1067,8 +1029,7 @@ static EM_BOOL on_touchend(int type, const EmscriptenTouchEvent *e, void *ud)
 // ---------------------------------------------------------------------------
 static float joy_apply_deadzone(float val)
 {
-	float av;
-	av = fabsf(val);
+	float av = fabsf(val);
 	if (av < JOY_DEAD_ZONE)
 		return 0.0f;
 	return (val < 0.0f ? -1.0f : 1.0f) * (av - JOY_DEAD_ZONE) / (1.0f - JOY_DEAD_ZONE);
@@ -1076,16 +1037,12 @@ static float joy_apply_deadzone(float val)
 
 static void joy_handle_button(int index, qboolean pressed)
 {
-	qboolean was;
-
 	if (index < 0 || index >= JOY_MAX_BUTTONS)
 		return;
-
-	was = joy_button_state[index];
-	joy_button_state[index] = pressed;
-	if (pressed == was)
+	if (pressed == joy_button_state[index])
 		return;
 
+	joy_button_state[index] = pressed;
 	emit_virtual_control(CTRL_JOY_BTN_BASE + index, s_joy_key_map[index], 0, pressed);
 }
 
@@ -1109,7 +1066,6 @@ static void IN_PollGamepads(void)
 {
 	EmscriptenGamepadEvent gp;
 	int i, b, num;
-	float lx, ly;
 
 	num = emscripten_get_num_gamepads();
 	for (i = 0; i < num; i++)
@@ -1133,16 +1089,14 @@ static void IN_PollGamepads(void)
 
 		if (gp.numAxes >= 2)
 		{
-			lx = joy_apply_deadzone(gp.axis[0]);
-			ly = joy_apply_deadzone(gp.axis[1]);
-			joy_move_x = lx;
-			joy_move_y = ly;
+			joy_move_x = joy_apply_deadzone(gp.axis[0]);
+			joy_move_y = joy_apply_deadzone(gp.axis[1]);
 		}
 		else
 		{
-			lx = ly = joy_move_x = joy_move_y = 0.0f;
+			joy_move_x = joy_move_y = 0.0f;
 		}
-		update_menu_nav(CTRL_JOY_NAV_BASE, JOY_MENU_NAV_THRESH, lx, ly);
+		update_menu_nav(CTRL_JOY_NAV_BASE, JOY_MENU_NAV_THRESH, joy_move_x, joy_move_y);
 
 		if (gp.numAxes >= 4)
 		{
@@ -1249,7 +1203,7 @@ static void init_input(void)
 	touch_active = js_touch_active();
 	menu_mode_latched = (key_dest == key_menu);
 	touch_flip_latched = false;
-	js_set_touch_menu_mode(menu_mode_latched ? 1 : 0);
+	js_set_touch_menu_mode(menu_mode_latched);
 	touch_sync_flip_mode();
 
 	// Keyboard

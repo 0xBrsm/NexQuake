@@ -13,7 +13,7 @@ Three quality-of-life improvements are also included; native .ent support for ma
 | `bugfix/*.patch` | Upstream bugfixes. Fixes buffer overflows, format string vulnerabilities, and other vanilla WinQuake bugs. Applied by `prepare-upstream.sh` before server patches (set `BUGFIX=0` to skip). See `bugfix/README.md`. |
 | `64bit/*.64bit.patch` | 64-bit patches. Fix `string_t` pointer arithmetic for 64-bit builds where pointer subtraction overflows 32-bit offsets. Applied automatically on x86_64 and arm64. |
 | `host.c.patch` | Optional map rotation host hooks. Adds/registers the `mapcycle` cvar and enforces idle timelimit `changelevel` when no clients are connected and QuakeC doesn't issue `changelevel` (mapcycle first, then `start` -> `e1m1`, then `trigger_changelevel` map target, otherwise current map). |
-| `pr_cmds.c.patch` | Optional map rotation changelevel hook. Intercepts QuakeC-driven `changelevel` and applies map selection from `mapcycle` (CSV or file). See [`USAGE.md`](../docs/USAGE.md) for details. |
+| `pr_cmds.c.patch` | Optional map rotation changelevel hook. Intercepts QuakeC-driven `changelevel` and applies map selection from `mapcycle` (CSV or file). See [`SETUP.md`](../docs/SETUP.md) for details. |
 | `net_udp.c.patch` | Optional ephemeral port fix. Updates `net_hostport` after bind when the server starts with `-port 0`, so Nexus and operators see a reachable non-zero port. Makes configuring multiple servers much cleaner. |
 | `sv_main.c.patch` | Optional map-load hardening + entity overrides. If a requested map BSP cannot be loaded, server spawn falls back to `maps/start.bsp`. Also loads `maps/<map>.ent` files used in some mods (e.g. CTF) to override entity placement in BSP maps without modifying the BSP. |
 
@@ -58,7 +58,7 @@ The automated build script (`build/build-server.sh`) handles all of this.
 
 ## IDGODS and `please`
 
-This dedicated build is compiled with `IDGODS` to enable hidden per-server admin (`idgods`/`please`). See [`RCON.md`](../docs/RCON.md) for usage and promotion flow details.
+This dedicated build is compiled with `IDGODS` to enable hidden per-server admin (`idgods`/`please`). See [`ADMIN.md`](../docs/ADMIN.md) for usage and promotion flow details.
 
 ## Architecture Support
 

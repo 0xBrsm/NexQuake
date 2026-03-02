@@ -2,10 +2,12 @@
 
 Quake was released thirty years ago and changed video-gaming forever. For many of us, it was our first foray into true multiplayer gaming. NexQuake was built to recapture that experience without the setup hassle. With NexQuake, playing old-school Quake is as easy as clicking a link, picking a server, and pwning your friends. The same brutal, fast-paced gameplay from 1996, running natively in your browser in 2026.
 
-- **Zero friction**: Convince your friends to click a link, and now you're playing.
+<!-- pages:home-features:start -->
+- **Zero friction**: Click a link, and now you're playing.
 - **Authentic gameplay**: Same movement, same weapons, same music, same feel.
 - **Real multiplayer**: Pick your mods, run as many game servers as you want.
 - **Self-hostable**: Pull one Docker image, open one port, go frag.
+<!-- pages:home-features:end -->
 
 Ready for deathmatch?
 
@@ -17,7 +19,7 @@ docker run -p 1337:1337 -e CL_ARGS=+connect ghcr.io/0xbrsm/nexquake
 Rather try a few mods?
 
 ```bash
-# launch with several popular late-90s mod servers
+# launch with several popular server mods
 docker run -p 1337:1337 -e CL_SMENU=1 -e QUICKSTART=all ghcr.io/0xbrsm/nexquake
 ```
 
@@ -33,9 +35,9 @@ Browser Client  --WebSocket-->  Nexus  --UDP-->  NetQuake Server
 
 The result is the original Quake multiplayer experience (software rendered, original physics, original UI) with no plugins, no user installs, and no compromise on the classic experience.
 
-**The Browser Client** is the Quake engine compiled to WebAssembly with Emscripten. It uses WebGL2 for rendering (GPU-side palette conversion from the original 8-bit framebuffer), WebAudio for sound, and HTML5 events for input. Game files and background music are streamed on demand from the server through a virtual filesystem.
+**The Browser Client** is the Quake engine compiled to WebAssembly with Emscripten. It uses WebGL2 for rendering (GPU-side palette conversion from the original 8-bit framebuffer), WebAudio for sound, and HTML5 events for input. Controllers and touch devices supported. Game files and background music are streamed on demand from the server through a virtual filesystem.
 
-**Nexus** is a Go orchestration server that serves client files, serves game data, manages servers, and tunnels multiplayer traffic. Each WebSocket frame carries a small routing header plus a raw NetQuake protocol 15 datagram. Nexus acts as a transparent relay with multi-server routing; it never parses game packets.
+**Nexus** is a Go orchestration server that serves client files, serves game data, manages servers, and tunnels multiplayer traffic. Each WebSocket frame carries a small routing header plus a raw NetQuake `protocol 15` datagram. Nexus acts as a transparent relay with multi-server routing; it never parses game packets.
 
 **The Dedicated Server** is any original NetQuake engine running `-dedicated`. Stock protocol, stock gameplay. Nexus spawns and manages server instances with runtime flags and server cfgs just like the days of old. A dedicated server with [a few tweaks](./server/README.md) is included.
 
@@ -57,10 +59,11 @@ Players use the standard Quake multiplayer connection experience; use the Multip
 
 - **[Repo Overview](docs/README.md)**: Index to all the documentation in the repo.
 - **[Quick Start](docs/QUICKSTART.md)**: Get up and running quickly with Docker.
-- **[Configuration](docs/CONFIGURATION.md)**: Environment variables and networking setup.
-- **[Usage Guide](docs/USAGE.md)**: Managing game data, mods, and servers.
-- **[UI Overlay Guide](docs/UI.md)**: Using the in-browser menu for files, cfg editing, uploads, and CD controls.
-- **[RCON Commands](docs/RCON.md)**: Server administration reference.
+- **[Environment](docs/ENVIRONMENT.md)**: Environment variables and networking setup.
+- **[Setup Guide](docs/SETUP.md)**: Managing game data, mods, and servers.
+- **[UI Guide](docs/UI.md)**: Using the in-browser settings panel for files, cfg editing, and CD controls.
+- **[Controls](docs/CONTROLS.md)**: Touch, gamepad, and video mode configuration.
+- **[Admin Guide](docs/ADMIN.md)**: Server administration reference.
 - **[Architecture](docs/ARCHITECTURE.md)**: Technical deep dive into system design.
 - **[Bug Fixes](bugfix/README.md)**: Security and stability patches for the upstream WinQuake source.
 
@@ -74,6 +77,7 @@ docs/             Detailed documentation and guides
 etc/              Quickstart catalog (`game.json`) and default runtime configs
 nexus/            Go relay, file serving, server orchestration
 server/           Dedicated server Makefile and patches
+site/             GitHub Pages content
 ATTRIBUTIONS.md   Source provenance and GPL lineage
 compose.yml       Docker Compose configuration
 Dockerfile        Multi-stage production image

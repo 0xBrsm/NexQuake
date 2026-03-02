@@ -76,17 +76,9 @@ extern qpic_t *Draw_CachePic(char *path);
 int VID_NumModes(void);
 char *VID_GetModeDescription(int n);
 
-typedef struct {
-	int modenum;
-	char *desc;
-	int iscur;
-} modedesc_t;
-
 #define MAX_COLUMN_SIZE 5
 #define MODE_AREA_HEIGHT (MAX_COLUMN_SIZE + 6)
-#define MAX_MODEDESCS (MAX_COLUMN_SIZE * 3)
-
-static modedesc_t modedescs[MAX_MODEDESCS];
+#define VID_COL_WIDTH (13 * 8)
 
 static qboolean mode_is_widescreen(int modenum)
 {
@@ -179,10 +171,73 @@ static void VID_DescribeModes_f(void)
 		Con_Printf("%2d: %s%s\n", i, modelist[i].desc, i == vid_modenum ? "  *" : "");
 }
 
+static void draw_mode_grid(int start, int count, int base_y)
+{
+	int i, col = 16, row = base_y;
+	for (i = 0; i < count; i++) {
+		char *desc = VID_GetModeDescription(start + i);
+		if (start + i == vid_modenum)
+			M_PrintWhite(col, row, desc);
+		else
+			M_Print(col, row, desc);
+		col += VID_COL_WIDTH;
+		if ((i % VID_ROW_SIZE) == (VID_ROW_SIZE - 1)) {
+			col = 16;
+			row += 8;
+		}
+	}
+}
+
+static void grid_cursor_pos(int line, int fixed, int classic_y, int fs_y,
+	int *cx, int *cy)
+{
+	int in_classic = (line < fixed);
+	int local = in_classic ? line : line - fixed;
+	*cx = 8 + (local % VID_ROW_SIZE) * VID_COL_WIDTH;
+	*cy = (in_classic ? classic_y : fs_y) + (local / VID_ROW_SIZE) * 8;
+}
+
+// Navigate a flat grid of `count` items in `cols` columns.
+static int grid_nav(int line, int count, int cols, int key)
+{
+	int total_rows;
+	switch (key) {
+	case K_LEFTARROW:  // wrap left within row
+		line = (line / cols) * cols + (line + cols - 1) % cols;
+		if (line >= count)
+			line = count - 1;
+		break;
+	case K_RIGHTARROW:  // wrap right within row
+		line = (line / cols) * cols + (line + 1) % cols;
+		if (line >= count)
+			line = (line / cols) * cols;
+		break;
+	case K_UPARROW:  // wrap up to bottom-most row in same column
+		line -= cols;
+		if (line < 0) {
+			total_rows = (count + cols - 1) / cols;
+			line += total_rows * cols;
+			while (line >= count)
+				line -= cols;
+		}
+		break;
+	case K_DOWNARROW:  // wrap down to top-most row in same column
+		line += cols;
+		if (line >= count) {
+			total_rows = (count + cols - 1) / cols;
+			line -= total_rows * cols;
+			while (line < 0)
+				line += cols;
+		}
+		break;
+	}
+	return line;
+}
+
 static void VID_MenuDraw(void)
 {
-	int i, column, row, fixed_modes, fullscreen_modes;
-	int fixed_rows, fullscreen_label_y, fullscreen_modes_y;
+	int fixed_modes, fullscreen_modes, fixed_rows;
+	int classic_y, fs_label_y, fs_modes_y, cursor_x, cursor_y;
 	qpic_t *p;
 
 	if (vid_nummodes <= 0) {
@@ -195,71 +250,31 @@ static void VID_MenuDraw(void)
 	M_DrawPic((320 - p->width) / 2, 4, p);
 
 	vid_wmodes = vid_nummodes;
-	if (vid_wmodes > MAX_MODEDESCS)
-		vid_wmodes = MAX_MODEDESCS;
 	fixed_modes = clamp_int(vid_fixedmodes, 0, vid_wmodes);
 	fullscreen_modes = vid_wmodes - fixed_modes;
-	fixed_rows = (fixed_modes + (VID_ROW_SIZE - 1)) / VID_ROW_SIZE;
-	fullscreen_label_y = 36 + (2 + fixed_rows + MODE_SECTION_GAP_ROWS) * 8;
-	fullscreen_modes_y = fullscreen_label_y + 2 * 8;
-
-	for (i = 0; i < vid_wmodes; i++) {
-		modedescs[i].modenum = i;
-		modedescs[i].desc = VID_GetModeDescription(i);
-		modedescs[i].iscur = (i == vid_modenum);
-	}
+	fixed_rows = (fixed_modes + VID_ROW_SIZE - 1) / VID_ROW_SIZE;
+	classic_y = 36 + 2 * 8;
+	fs_label_y = 36 + (2 + fixed_rows + MODE_SECTION_GAP_ROWS) * 8;
+	fs_modes_y = fs_label_y + 2 * 8;
 
 	if (vid_line < 0 || vid_line >= vid_wmodes)
 		vid_line = clamp_int(vid_modenum, 0, vid_wmodes - 1);
 
-	column = 16;
-	row = 36 + 2 * 8;
 	M_Print(13 * 8, 36, "Classic Modes");
-	for (i = 0; i < fixed_modes; i++) {
-		if (modedescs[i].iscur)
-			M_PrintWhite(column, row, modedescs[i].desc);
-		else
-			M_Print(column, row, modedescs[i].desc);
-
-		column += 13 * 8;
-		if ((i % VID_ROW_SIZE) == (VID_ROW_SIZE - 1)) {
-			column = 16;
-			row += 8;
-		}
-	}
+	draw_mode_grid(0, fixed_modes, classic_y);
 
 	if (fullscreen_modes > 0) {
-		M_Print(11 * 8, fullscreen_label_y, "Fullscreen Modes");
-		column = 16;
-		row = fullscreen_modes_y;
-		for (i = fixed_modes; i < vid_wmodes; i++) {
-			int fsidx = i - fixed_modes;
-			if (modedescs[i].iscur)
-				M_PrintWhite(column, row, modedescs[i].desc);
-			else
-				M_Print(column, row, modedescs[i].desc);
-
-			column += 13 * 8;
-			if ((fsidx % VID_ROW_SIZE) == (VID_ROW_SIZE - 1)) {
-				column = 16;
-				row += 8;
-			}
-		}
+		M_Print(11 * 8, fs_label_y, "Fullscreen Modes");
+		draw_mode_grid(fixed_modes, fullscreen_modes, fs_modes_y);
 	}
 
-	if (mode_is_widescreen(modedescs[vid_line].modenum))
+	if (mode_is_widescreen(vid_line))
 		M_Print(6 * 8, 36 + MODE_AREA_HEIGHT * 8 - 8, "Weapon hidden in widescreen");
 	M_Print(9 * 8, 36 + MODE_AREA_HEIGHT * 8 + 8, "Press Enter to set mode");
 	M_Print(15 * 8, 36 + MODE_AREA_HEIGHT * 8 + 8 * 2, "Esc to exit");
-	if (vid_line < fixed_modes || fullscreen_modes <= 0) {
-		row = 36 + 2 * 8 + (vid_line / VID_ROW_SIZE) * 8;
-		column = 8 + (vid_line % VID_ROW_SIZE) * 13 * 8;
-	} else {
-		int fsline = vid_line - fixed_modes;
-		row = fullscreen_modes_y + (fsline / VID_ROW_SIZE) * 8;
-		column = 8 + (fsline % VID_ROW_SIZE) * 13 * 8;
-	}
-	M_DrawCharacter(column, row, 12 + ((int)(realtime * 4) & 1));
+
+	grid_cursor_pos(vid_line, fixed_modes, classic_y, fs_modes_y, &cursor_x, &cursor_y);
+	M_DrawCharacter(cursor_x, cursor_y, 12 + ((int)(realtime * 4) & 1));
 }
 
 static void VID_MenuKey(int key)
@@ -275,40 +290,15 @@ static void VID_MenuKey(int key)
 		M_Menu_Options_f();
 		break;
 	case K_LEFTARROW:
-		S_LocalSound("misc/menu1.wav");
-		vid_line = ((vid_line / VID_ROW_SIZE) * VID_ROW_SIZE) +
-				   ((vid_line + (VID_ROW_SIZE - 1)) % VID_ROW_SIZE);
-		if (vid_line >= vid_wmodes)
-			vid_line = vid_wmodes - 1;
-		break;
 	case K_RIGHTARROW:
-		S_LocalSound("misc/menu1.wav");
-		vid_line = ((vid_line / VID_ROW_SIZE) * VID_ROW_SIZE) +
-				   ((vid_line + 1) % VID_ROW_SIZE);
-		if (vid_line >= vid_wmodes)
-			vid_line = (vid_line / VID_ROW_SIZE) * VID_ROW_SIZE;
-		break;
 	case K_UPARROW:
-		S_LocalSound("misc/menu1.wav");
-		vid_line -= VID_ROW_SIZE;
-		if (vid_line < 0) {
-			vid_line += ((vid_wmodes + (VID_ROW_SIZE - 1)) / VID_ROW_SIZE) * VID_ROW_SIZE;
-			while (vid_line >= vid_wmodes)
-				vid_line -= VID_ROW_SIZE;
-		}
-		break;
 	case K_DOWNARROW:
 		S_LocalSound("misc/menu1.wav");
-		vid_line += VID_ROW_SIZE;
-		if (vid_line >= vid_wmodes) {
-			vid_line -= ((vid_wmodes + (VID_ROW_SIZE - 1)) / VID_ROW_SIZE) * VID_ROW_SIZE;
-			while (vid_line < 0)
-				vid_line += VID_ROW_SIZE;
-		}
+		vid_line = grid_nav(vid_line, vid_wmodes, VID_ROW_SIZE, key);
 		break;
 	case K_ENTER:
 		S_LocalSound("misc/menu1.wav");
-		VID_SetMode(modedescs[vid_line].modenum, NULL);
+		VID_SetMode(vid_line, NULL);
 		break;
 	default:
 		break;

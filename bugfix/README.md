@@ -1,4 +1,4 @@
-# Upstream WinQuake Bugfix Patches
+# Bug Fix Catalog
 
 Optional patches for bugs in the original id Software WinQuake source. These target the vanilla codebase and contain no NexQuake-specific changes. Applied by default during `prepare-upstream.sh`; set `BUGFIX=0` to opt out.
 

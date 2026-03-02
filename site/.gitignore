@@ -1,0 +1,2 @@
+# Allow index.html here (root .gitignore excludes it as a WASM build artifact)
+!index.html

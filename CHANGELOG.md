@@ -4,6 +4,15 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.7.5
+
+### Changed
+- Refactored `cd_wasm.c`, `in_wasm.c`, `sys_wasm.c`, and `vid_wasm.c`, plus related shell styles, while preserving existing WASM client behavior.
+- Refreshed product docs, README content, and the GitHub Pages docs hub, including the new `docs/CONTROLS.md` guide.
+
+### Fixed
+- Browser shell now defaults the multiplayer TCP/IP join cursor to the search field and blocks gameplay keys while the editor overlay is open.
+
 ## 1.7.4
 
 ### Changed

@@ -1,14 +1,12 @@
-# UI Overlay Guide
+# User Interface
 
 This guide explains how to use the NexQuake shell overlay (the gear button in the top-right corner) for local files, config editing, and CD audio controls.
 
 ## Open and Close
 
-1. Start the client and enter the game.
-2. Click the gear icon (`NexQuake Settings`) in the top-right corner.
-3. Close the overlay by clicking the gear again, pressing `Esc`, or clicking back into the game canvas.
+**Mouse / keyboard:** Click the gear icon (`NexQuake Settings`) in the top-right corner. Close the overlay by clicking the gear again, pressing `Esc`, or clicking back into the game canvas. When the overlay opens, pointer lock is released so you can use the mouse normally.
 
-When the overlay opens, pointer lock is released so you can use the mouse normally.
+**Touch devices:** The gear button is fixed in the top-right corner of the screen (always visible). Tap it to open or close the settings panel. See [Controls](CONTROLS.md#touch-input) for the full touch layout and button configuration.
 
 ## Overlay Layout
 
@@ -19,6 +17,8 @@ When the overlay opens, pointer lock is released so you can use the mouse normal
 | Config scope toggle (globe icon) | Switch between shared cfg files and per-mod cfg files. |
 | CD controls row | Open CD track list, play/pause, stop, and CD on/off. |
 | Upload button | Upload files to the current mode (game files or CD tracks). |
+| Join code | Displays the current server's join code when connected. See [Join Code](#join-code) below. |
+| Close button (✕) | Closes the panel. Equivalent to clicking the gear again or pressing `Esc`. |
 
 To open or collapse the directory sidebar (tabs drawer), click the current directory name beside `Game Files` at the top of the panel (for example `id1` or `ctf`). This toggle is only available in game-file mode (not in CD mode).
 
@@ -104,7 +104,7 @@ Track interaction:
 - Click a track row (or its play/pause button) to run `cd loop <track-number>`, or pause/resume if that track is already active.
 - Track filenames must include a track number at the start or end (for example `02-theme.ogg` or `track02.mp3`).
 
-Because the overlay uses native commands, console-driven `cd` commands and overlay state stay aligned.
+Because the overlay sends native Quake commands to the game, console-driven `cd` commands and overlay state stay aligned.
 
 ## Upload and Status Messages
 
@@ -113,6 +113,12 @@ Upload progress and status appear in the overlay footer:
 - Progress messages during file reads and sync.
 - Info messages on success.
 - Warning/error messages for invalid extension, sync failures, or command failures.
+
+## Join Code
+
+When connected to a server, a **join code** appears in the overlay footer. The code is the server's port number — the same value you would use with `connect <port>` at the console.
+
+Share the code with other players so they can join the same server without browsing the server list or being directed to a different server in the pool. The join code is hidden when not connected to a game server.
 
 ## Persistence
 

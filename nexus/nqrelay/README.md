@@ -1,4 +1,4 @@
-# nqrelay
+# Relay Package
 
 WebSocket-to-UDP relay package for NQ (NetQuake) dedicated game servers.
 

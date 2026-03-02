@@ -1,4 +1,4 @@
-# Quake 1.06 Extraction
+# Shareware Extractor
 
 A standalone Go package that extracts `pak0.pak` directly from the original id Software Quake 1.06 shareware distribution (`quake106.zip`). On first run, if no game data exists, Nexus downloads `quake106.zip` and uses this package to extract a verified `pak0.pak` file into `id1/`.
 

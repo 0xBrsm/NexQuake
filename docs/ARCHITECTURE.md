@@ -48,7 +48,7 @@ The original [Quake-WASM](https://github.com/GMH-Code/Quake-WASM) port by Gregor
 | Component | Before (SDL2) | After (Direct) |
 |-----------|---------------|----------------|
 | Video | SDL_CreateWindow + SDL_CreateTexture | emscripten_webgl_create_context + WebGL2 |
-| Input | SDL_PollEvent loop | emscripten_set_keydown/keyup/mousemove callbacks |
+| Input | SDL_PollEvent loop | `emscripten_set_keydown/keyup/mousemove` callbacks for keyboard and mouse; HTML5 touch callbacks (`touchstart/move/end`) for touch; Gamepad API polled per frame |
 | Audio | SDL_OpenAudioDevice | EM_JS ScriptProcessorNode + WASM heap ring buffer |
 | Binary | ~200KB SDL shim in WASM | Zero middleware |
 
@@ -60,12 +60,40 @@ NexQuake registers callbacks that fire `Key_Event()` immediately, making `Sys_Se
 
 Pointer lock uses `emscripten_request_pointerlock()` on first canvas click. Mouse movement reports `movementX`/`movementY` deltas for mouselook.
 
+### Touch Input
+
+Touch registers three native callbacks (`touchstart`, `touchmove`, `touchend`) on the document — the same event-driven pattern as keyboard and mouse. The screen is split into two zones at 40% of the viewport width:
+
+- **Left zone** — virtual joystick. A `touch_move` slot records the drag origin and current position; displacement is clamped to `TOUCH_MOVE_RADIUS` (60 px) and normalized to `[-1, 1]` axis values that drive `cmd->forwardmove`/`sidemove` via `analog_speed`.
+- **Right zone** — swipe-look accumulator. Raw pixel deltas accumulate into `touch_look_x`/`touch_look_y` and are applied in `IN_Move()` the same way mouse deltas are, scaled by `touch_sensitivity`.
+
+Tap detection fires `touch_tap1` or `touch_tap2` key events for touches that end within `touch_tap_ms` (default 220 ms) and `touch_tap_px` (default 20 px) of their start point. Eight bindable button slots (`touch1`–`touch8`) are tracked by DOM element identity, passed from JavaScript when a finger lands on a button; the C layer calls `Key_Event()` on `touchstart`/`touchend` for each slot.
+
+The joystick ring visual and overlay hide timer are driven by `EM_JS` calls into the shell JavaScript layer (`js_joy_show`, `js_joy_move`, `js_joy_hide`, `js_set_touch_active`), keeping visual state out of C.
+
+### Gamepad Input
+
+Gamepad input uses a polling model — the inverse of the event-driven keyboard and mouse. `IN_PollGamepads()` runs each frame from `IN_Commands()` and calls `emscripten_get_gamepad_status()` for each connected device. The W3C standard mapping is assumed: 16 buttons (indices 0–15) and 4 axes.
+
+Buttons transition through `joy_handle_button()`, which fires `Key_Event()` on state change, matching keyboard behavior. Analog triggers (LT/RT) use a threshold (`JOY_TRIGGER_THRESH = 0.5`) to convert their analog value to a digital key press. Left stick drives movement (`joy_move_x`/`joy_move_y`); right stick accumulates into `joy_look_x`/`joy_look_y`, which `IN_Move()` applies as look deltas scaled by `joy_sensitivity`. Only the first connected gamepad is used. On disconnect, all in-flight button presses are released before state is cleared.
+
+### Per-Device Input Profiles
+
+Sensitivity, lookspring, lookstrafe, and invert-pitch all need independent tuning per device. Rather than separate menu pages, `INPUT_PROFILE_PICK(mouse, touch, joy)` selects the right cvar at call time based on active device (`joy_connected` takes priority over `touch_active`):
+
+```c
+#define INPUT_PROFILE_PICK(mouse, touch, joy) \
+    (joy_connected ? (joy) : (touch_active ? (touch) : (mouse)))
+```
+
+The Options menu calls `IN_SensitivityCvar()`, `IN_LookspringCvar()`, etc. — wrappers that apply this macro — so the same menu slot shows the correct label and reads/writes the correct cvar for whichever device is active. Plugging in a gamepad mid-session transparently redirects the menu without any restart.
+
 ### Audio: WebAudio Ring Buffer
 
 Quake's mixer writes interleaved 16-bit stereo samples to a DMA buffer. NexQuake exposes this buffer to JavaScript:
 
 ```c
-static int16_t dma_buffer[DMA_BUFFER_SAMPLES];  // Quake writes here
+static int16_t dma_buffer[DMA_SAMPLES];  // Quake writes here
 static int audio_read_cursor;                   // JS advances this
 ```
 
@@ -77,7 +105,7 @@ node.onaudioprocess = function(e) {
 };
 ```
 
-No locks are needed because the callback runs on the main thread in browsers, and Quake always writes ahead of the read cursor. Buffer size is 512 frames (down from 2048) for low latency.
+No locks are needed because the callback runs on the main thread in browsers, and Quake always writes ahead of the read cursor. The `ScriptProcessorNode` callback block size is 512 frames for low latency. The underlying DMA ring buffer is 16384 samples.
 
 `SNDDMA_GetDMAPos()` returns the JS read cursor. `SNDDMA_Submit()` is a no-op. The standard Quake mixer (`S_PaintChannels`) works unchanged.
 
@@ -90,6 +118,18 @@ Quake's CD audio system originally played music tracks from a physical CD-ROM dr
 Nexus scans `CD_DIR` for `.ogg` and `.mp3` files and includes the resulting track index in the `/start` quickstart payload. CD audio bytes are then fetched through hash-addressed `/nq/<hash>` URLs (backed internally by the CD stream resolver). Track numbers are extracted from filenames (e.g., `02-intro.ogg` is track 2).
 
 `cd_wasm.c` replaces the original `cd_audio.c` with Emscripten `EM_JS` bindings that drive an HTML5 `<audio>` element. The JavaScript layer resolves tracks through a two-tier system: first checking user-uploaded files in the Emscripten virtual filesystem, then falling back to the server manifest. Playback respects the `bgmvolume` cvar and handles browser autoplay policies with resume-on-user-gesture logic.
+
+### Video Modes and FOV Scaling
+
+The video mode list is built once at startup in `build_modelist()` from two aspect ratios — fixed 4:3 and the detected viewport aspect — each at three scale factors (25%, 50%, 100%), producing up to six entries. Duplicates are deduplicated. The first group (fixed 4:3) appear as **Classic Modes** in the Video Modes menu; the second group (viewport-matched) appear as **Fullscreen Modes**.
+
+When `VID_SetMode()` changes resolution, `update_mode_fov()` adjusts the `fov` cvar to preserve the vertical field of view:
+
+```
+new_fov = atan(tan(old_fov / 2) × (new_aspect / old_aspect)) × 2
+```
+
+This keeps the vertical play area constant — switching to a widescreen viewport widens the horizontal view without compressing the vertical. The canvas CSS `--nq-ar` property is updated via `js_update_canvas_ar()` so the browser letterboxes or pillarboxes the canvas when the render aspect does not match the display.
 
 ## Stateless WebSocket Tunnel
 
@@ -113,29 +153,25 @@ Because Nexus never parses the datagram payload, it has no knowledge of whether 
 
 ### Multi-Server Routing
 
-Server selection is port-based:
+Server selection is port-based. `connect <port>` connects directly to that backend. For scaled pools (`-port 0` lines) there is no proxy port — load balancing happens at slist time.
 
-- `connect <backend port>` targets that backend instance directly.
-- Startup entries using `-port 0` are treated as scaling-enabled seeds. Nexus assigns each seed a dynamic proxy port.
-- `connect <pool proxy port>` load-balances across running backend members in that scaled entry.
+When a client sends a `CCREQ_SERVER_INFO` browse request, `snapshotForSlist()` calls `pickPoolBackendLocked()` for each pool. This selects the least-loaded routable backend (fill ratio `players/maxplayers`, round-robin tie-break) and puts that backend's actual listen port in the slist entry. The aggregate users/maxusers/instances reflect the whole pool, but the port the client receives is a real backend port it connects to directly.
 
-Nexus keeps short-lived per-session affinity (`300s`) for scaled proxy joins so multi-packet handshakes remain coherent and connect spam cannot spray a single client across many backends.
+Backend selection order:
 
-Backend selection inside a scaled proxy follows this order:
+1. Prefer `active` backends with free slots.
+2. If all `active` backends are full, include full ones rather than failing.
+3. If no `active` backend exists, fall back to `draining` backends — free slots first, then full.
+4. If no routable backend exists, the pool is omitted from the slist response.
 
-1. Prefer `active` backends.
-2. Prefer candidates with free slots (`players < maxplayers`, treating unknown `maxplayers` as temporarily usable).
-3. If no active backend is available, or all active backends are full, fall back to `draining` backends rather than black-holing joins.
-4. Among candidates, pick the least loaded backend by relative fill ratio (`players/maxplayers`) and break ties with round-robin.
-
-If no routable backend exists, the join fails as unknown/unavailable instead of sending to a random dead target.
+Each slist poll may return a different backend port for the same pool as load shifts. There is no session affinity; the slist is the load balancer.
 
 ### Scaling Lifecycle and Autoscaling
 
 Each `-port 0` startup line becomes a managed backend pool with lifecycle states:
 
 - `warming`: process started but not yet seen in `CCREP_SERVER_INFO`.
-- `active`: routable for new proxy joins.
+- `active`: routable; eligible for slist backend selection.
 - `draining`: still routable as fallback, but no longer preferred for new joins.
 - `terminating`: selected for despawn; removed once stop completes.
 
@@ -146,7 +182,7 @@ Pool reconcile runs in two loops:
 
 Scale-up and scale-down policy:
 
-- Headroom target is `max(4, ceil(joinRPS * 12s * 1.5))`, where `joinRPS` is observed from proxy-routed session demand over a `30s` window.
+- Headroom target is `max(4, ceil(joinRPS * 12s * 1.5))`, where `joinRPS` is the rate of slist poll hits on that pool over a `30s` sliding window.
 - Scale-up happens when current free slots fall below target headroom, no scale-up is already in flight, cooldown (`30s`) has elapsed, and running backends are below `POOL_SIZE`.
 - Idle backends only move to `draining` when at least two active routable backends remain and enough headroom would still exist after draining.
 - While scale-up is in flight, additional active backends are not moved to `draining`.
@@ -155,10 +191,16 @@ Scale-up and scale-down policy:
 
 Control/broadcast traffic uses `udp_port = 0`. For `slist`, Nexus detects `CCREQ_SERVER_INFO` and replies with aggregated `CCREP_SERVER_INFO` data built from its polled cache:
 
-- one row per scaled entry (proxy port, aggregate users/maxusers, instance count),
+- one row per scaled pool (a load-balanced backend port, aggregate users/maxusers, instance count),
 - plus non-scaled servers as direct entries.
 
 This replaces NetQuake's UDP broadcast, which never worked well and doesn't work across loopback addresses on Linux anyway.
+
+### Server List Aggregation
+
+Standard NetQuake server browsing (`slist`) sends a UDP broadcast `CCREQ_SERVER_INFO` and waits for individual server replies. NexQuake runs on loopback, where broadcast never reaches game servers, so Nexus intercepts the request and replies with a single aggregated `CCREP_SERVER_INFO` packet containing the full server list.
+
+`net_slist.c` parses this batch response: a count byte followed by per-server fields (port, name, map, gamedir, users, maxusers, backend instance count). Parsed entries are written directly into `hostcache[]` and the `slist_agg_done` flag short-circuits the normal poll loop so the client does not wait for individual server replies that will never come. A dynamic column layout adapts the console output width to the terminal, adding a gamedir column so players can see which mod each server runs.
 
 ## Port-Only Relay Addressing
 
@@ -174,7 +216,7 @@ NexQuake routes exclusively by UDP port:
 Quake's networking code passes `qsockaddr` structures through every address API (`GetSocketAddr`, `GetNameFromAddr`, `GetAddrFromName`, `AddrCompare`, etc.). The vnet driver in `net_ws_vnet.c` synthesizes these structures so the rest of the engine works without modification:
 
 #### Server addresses: 
-Built from listen port number and unique client connection port number. The IP portion is generated from the 16 bytes of the server's listen port by assigning each of the two bytes to the last two octets of an IP address; so a server listening on port `26000` would be assigned IP `13.37.101.144` on the client. This ensures that even after a client has connected to a game server and been redirected by that server to a unique port, the client can continue to "know" which server in its hostcache it's connected to, enabling features like rcon. However, only the port field matters for routing and when Quake asks for an address string (e.g. for the server list or the `connect` status line), the driver returns just the port number.
+Built from listen port number and unique client connection port number. The IP portion is generated from the 16 bytes of the server's listen port by assigning each of the two bytes to the last two octets of an IP address; so a server listening on port `26000` would be assigned IP `13.37.101.144` on the client. This ensures that even after a client has connected to a game server and been redirected by that server to a unique port, the client can continue to "know" which server in its hostcache it's connected to, enabling features like rcon and join codes. However, only the port field matters for routing and when Quake asks for an address string (e.g. for the server list or the `connect` status line), the driver returns just the port number.
 
 #### Local client addresses:
 To keep stock Quake server behavior, Nexus assigns each WebSocket client a stable virtual loopback "NQIP" and binds that client's UDP relay socket to it. NQIPs are deterministic `127.A.B.C` addresses allocated from a normalized client source key (for example trusted header IP or remote address), so reconnects from the same source key keep a stable identity while still avoiding collisions. This way, the server sees each client as a (practically) unique IP address, so features like per-IP bans, per-IP rate limiting, and the status command's address display all work unmodified. On WebSocket open, Nexus sends a small control frame so the browser client can set its local NQIP for the vnet driver. The vnet driver stores this and returns it when Quake calls `GetSocketAddr` on the local socket. This gives each browser client a stable identity that the server sees as a unique IP. Routing still remains port-only on the tunnel itself.
@@ -206,7 +248,7 @@ Stage 3: WASM builder  -> index.html + shell.css + index.js + index.wasm
 Stage 4: Runtime       -> chainguard/wolfi-base + all artifacts
 ```
 
-The final image contains only the runtime: no compilers, no source code, no build tools.
+The final ~4 MB image contains only the runtime: no compilers, no source code, no build tools.
 
 ### 64-Bit Server with QuakeC Patches
 
@@ -246,6 +288,12 @@ On first run, Nexus loads the quickstart catalog from `${CFG_DIR}/game.json`. If
 Shareware extraction is handled by the [`quake106` package](../nexus/quake106/README.md), which extracts `pak0.pak` directly from the original id Software shareware distribution with SHA256 verification at every stage.
 
 All of this allows a fresh NexQuake instance to be a multiplayer, multi-server Quake experience with a single `docker compose up`.
+
+### Client Asset Prefetch
+
+Without prefetch, connecting to a server triggers sequential downloads of every model and sound in the map's precache list — dozens of assets fetched one at a time over HTTP, producing multi-second connect times on a cold cache.
+
+`CL_Prefetch()` is called from `CL_ParseServerInfo()` with the full model and sound precache lists. It enqueues all paths into JavaScript via `EM_ASM` calls to `nexquakePrefetchEnqueue()`, then kicks off concurrent fetching (`nexquakePrefetchStart()`). The C side blocks with an `emscripten_sleep(1)` loop for up to 30 seconds waiting for `nexquakePrefetchBusy` to clear. JavaScript fetches up to `CL_CONCURRENCY` (default 16) assets in parallel; connect time drops to roughly the cost of the single slowest asset. Assets that fail during prefetch are logged and fall back to lazy per-file fetch during gameplay. On non-WASM builds the function is a no-op stub.
 
 ## What's Next
 

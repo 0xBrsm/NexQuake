@@ -195,6 +195,14 @@
       keyEv.stopImmediatePropagation();
     }, true);
 
+    ['keydown', 'keyup'].forEach(function(eventName) {
+      document.addEventListener(eventName, function(ev) {
+        if (!ctx.editor.classList.contains('open'))
+          return;
+        ev.stopImmediatePropagation();
+      }, true);
+    });
+
     ctx.panel.addEventListener('mousedown', preventOverlayControlFocus, true);
     ctx.editor.addEventListener('mousedown', preventOverlayControlFocus, true);
     function blurNonTextFocusin(ev) {

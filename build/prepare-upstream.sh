@@ -160,10 +160,33 @@ fi
 
 if [[ "${kind}" == "client" ]]; then
   echo "Applying client (WASM) overlays + patches ..."
+  client_shell_src_dir="${ROOT}/client/shell"
+  client_shell_css_parts=(
+    "shell-nq.css"
+    "shell-loader.css"
+    "shell-ui.css"
+    "shell-touch.css"
+  )
+
   cp "${ROOT}/client/net_bsd.c" "${ROOT}/client/net_ws_transport.c" "${ROOT}/client/net_ws_vnet.c" "${ROOT}/client/net_slist.c" "${ROOT}/client/cmd_rcon.c" "${ROOT}/client/net_ws_transport.h" "${ROOT}/client/net_ws_vnet.h" "${OUT_DIR}/"
   cp "${ROOT}/client/sys_wasm.c" "${ROOT}/client/vid_wasm.c" "${ROOT}/client/in_wasm.c" "${ROOT}/client/snd_wasm.c" "${ROOT}/client/cd_wasm.c" "${OUT_DIR}/"
   cp "${ROOT}/client/com_gameswitch.c" "${ROOT}/client/com_gameswitch.h" "${ROOT}/client/cl_prefetch.c" "${ROOT}/client/cl_prefetch.h" "${OUT_DIR}/"
-  cp "${ROOT}/client/Makefile.emscripten" "${ROOT}/client/shell/shell.html" "${ROOT}/client/shell/shell.css" "${ROOT}/client/shell/favicon.svg" "${OUT_DIR}/"
+  cp "${ROOT}/client/Makefile.emscripten" "${client_shell_src_dir}/shell.html" "${client_shell_src_dir}/favicon.svg" "${OUT_DIR}/"
+
+  : > "${OUT_DIR}/shell.css"
+  for css_name in "${client_shell_css_parts[@]}"; do
+    css_path="${client_shell_src_dir}/${css_name}"
+    if [[ ! -f "${css_path}" ]]; then
+      echo "missing shell stylesheet: ${css_path}" >&2
+      exit 1
+    fi
+    printf '/* %s */\n' "${css_name}" >> "${OUT_DIR}/shell.css"
+    cat "${css_path}" >> "${OUT_DIR}/shell.css"
+    printf '\n' >> "${OUT_DIR}/shell.css"
+  done
+  sed -i '/href="shell-loader.css"/d;/href="shell-ui.css"/d;/href="shell-touch.css"/d' "${OUT_DIR}/shell.html"
+  sed -i 's|<link rel="stylesheet" href="shell-nq.css">|<link rel="stylesheet" href="shell.css">|' "${OUT_DIR}/shell.html"
+
   resolve_nq_version
   client_version="${resolved_nq_version}"
   if [[ "${NQ_REQUIRE_VERSION:-0}" == "1" ]]; then

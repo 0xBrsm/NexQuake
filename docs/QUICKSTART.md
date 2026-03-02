@@ -33,7 +33,7 @@ To use retail PAK files, custom mods, or your own server configuration, bind-mou
 docker run -p 1337:1337 -v ./game:/app/game ghcr.io/0xbrsm/nexquake
 ```
 
-See the [Usage Guide](USAGE.md) for data directory layout, mod installation, and server configuration.
+See the [Setup Guide](SETUP.md) for data directory layout, mod installation, and server configuration.
 
 ## Docker Compose
 
@@ -55,4 +55,4 @@ services:
 
 See [`compose.yml`](../compose.yml) for an expanded version.
 
-For full environment variable reference, see [Configuration](CONFIGURATION.md). For data/mod layout and `servers.ini`, see [Usage Guide](USAGE.md).
+For full environment variable reference, see [Environment](ENVIRONMENT.md). For data/mod layout and `servers.ini`, see [Setup Guide](SETUP.md).

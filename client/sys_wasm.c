@@ -25,10 +25,9 @@ EM_JS(void, js_syncfs, (), {
 });
 
 EM_JS(void, js_on_quit, (), {
-	if (typeof FS !== 'undefined')
-		try { FS.syncfs(false, function(err) { if (err) console.warn('syncfs:', err); }); } catch(e) {}
-	if (Module.nqOverlayRefreshVFS) try { Module.nqOverlayRefreshVFS(); } catch(e2) {}
-	if (Module.nqShowReloadScreen) try { Module.nqShowReloadScreen(); } catch(e3) {}
+	_js_syncfs();
+	if (Module.nqOverlayRefreshVFS) try { Module.nqOverlayRefreshVFS(); } catch(e) {}
+	if (Module.nqShowReloadScreen) try { Module.nqShowReloadScreen(); } catch(e2) {}
 });
 
 EM_JS(void, js_on_bootstrap_ready, (), {

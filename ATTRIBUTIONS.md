@@ -44,7 +44,8 @@ This file records upstream sources that NexQuake derives from or incorporates.
 
 - **DpQuake font**
   - Creator metadata embedded in original TTF: `Dead Pete [deadpete@iname.com - http://deadpete.tripod.com]`
-  - Notes: NexQuake embeds this font directly in `client/shell/shell.css` via `@font-face` data URI for the UI branding treatment.
+  - Source: `https://dl.dafont.com/dl/?f=quake`
+  - Notes: NexQuake embeds a compact subset directly in `client/shell/shell-nq.css` for the runtime shell and ships the full upstream TTF in `site/assets/fonts/` for the documentation site. The upstream `dpquake.txt` redistribution notice is included alongside the staged site font.
 
 ## Acknowledgements
 

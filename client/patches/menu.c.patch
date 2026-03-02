@@ -99,6 +99,20 @@
  
  	if (vid_menudrawfn)
  		M_Print (16, 128, "         Video Options");
+@@ -2191,12 +2209,7 @@
+ 	m_state = m_lanconfig;
+ 	m_entersound = true;
+ 	if (lanConfig_cursor == -1)
+-	{
+-		if (JoiningGame && TCPIPConfig)
+-			lanConfig_cursor = 2;
+-		else
+-			lanConfig_cursor = 1;
+-	}
++		lanConfig_cursor = 1;
+ 	if (StartingGame && lanConfig_cursor == 2)
+ 		lanConfig_cursor = 1;
+ 	lanConfig_port = DEFAULTnet_hostport;
 @@ -2841,6 +2859,10 @@
  
  void M_Menu_Search_f (void)

@@ -4,8 +4,10 @@ The files in `src/etc` define Nexus startup defaults:
 
 - `game.json`: quickstart catalog for downloadable mod data
 - `servers.ini`: default launch template copied on first run
-- `autoexec.cfg` + `nexquake.cfg`: default client cfg seed files (first browser load)
-- `server.cfg`: simple server config for the default ffa server
+- `client/autoexec.cfg` + `client/nexquake.cfg`: default client cfg files bundled into `index.data` and seeded on first browser load
+- `arena/server.cfg`: Rocket Arena server config, referenced as a local path in `game.json`
+- `ffa/server.cfg` + `ffa/ffa.txt`: ffa server config and map rotation list, referenced as local paths in `game.json`
+- `fvf/server.cfg`: Future vs Fantasy server config, referenced as a local path in `game.json`
 
 Use `QUICKSTART=<name[,name...]>` to include extra catalog entries at startup.
 If `QUICKSTART` is unset, Nexus uses `QUICKSTART=ffa`.
@@ -20,7 +22,7 @@ Any catalog entry with a `base` field is always included.
 5. A non-empty layer directory is skipped unless that catalog entry sets `"force": true`.
 
 Client cfg seed flow:
-- During client build, `autoexec.cfg` and `nexquake.cfg` are bundled into `index.data`.
+- During client build, `client/autoexec.cfg` and `client/nexquake.cfg` are bundled into `index.data`.
 - On the first browser launch only, the client copies them into `/NexQuake/game/<base-game>/` and writes a marker so this never repeats.
 
 ## Built-In Catalog Entries
@@ -71,7 +73,7 @@ Client cfg seed flow:
 
 At least one of `common`, `client`, or `server` must be non-empty.
 URLs/paths can point to `.zip` files (extracted into the layer) or direct files (copied by source filename).
-Local paths without a URI scheme are resolved relative to `CFG_DIR` (for example `server.cfg`).
+Local paths without a URI scheme are resolved relative to `CFG_DIR` (for example `ffa/server.cfg`).
 
 ## Asset Repository
 

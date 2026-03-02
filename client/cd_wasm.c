@@ -132,6 +132,7 @@ EM_JS(int, js_cd_init, (), {
 		notify: notify,
 		revokeBlob: revokeBlob,
 		fadeToSilence: fadeToSilence,
+		cancelFade: function() { if (s.fadeToken) { cqf(s.fadeToken); s.fadeToken = 0; } },
 		rqf: rqf,
 		cqf: cqf
 	};
@@ -139,7 +140,7 @@ EM_JS(int, js_cd_init, (), {
 	s.audio.preload = 'auto';
 	s.audio.onplaying = function() { s.status = 'playing'; notify(); };
 	s.audio.onended = s.audio.onerror = function() {
-		if (s.fadeToken) { cqf(s.fadeToken); s.fadeToken = 0; }
+		s.cancelFade();
 		revokeBlob(s.blobURL);
 		s.blobURL = "";
 		s.status = 'stopped';
@@ -188,7 +189,7 @@ EM_JS(int, js_cd_play, (int track, int looping), {
 		if (entry.url !== s.blobURL) s.revokeBlob(entry.url);
 		try { s.audio.loop = !!looping; } catch(e) {}
 		if (s.status === 'paused') {
-			if (s.fadeToken) { s.cqf(s.fadeToken); s.fadeToken = 0; }
+			s.cancelFade();
 			try { s.audio.volume = s.targetVolume; } catch(e2) {}
 			s.status = 'loading';
 			s.notify();
@@ -200,7 +201,7 @@ EM_JS(int, js_cd_play, (int track, int looping), {
 	}
 
 	// Switch to new track: stop current immediately
-	if (s.fadeToken) { s.cqf(s.fadeToken); s.fadeToken = 0; }
+	s.cancelFade();
 	try { s.audio.pause(); s.audio.currentTime = 0; } catch(e) {}
 	s.revokeBlob(s.blobURL);
 	s.sourcePath = entry.path;
@@ -218,7 +219,7 @@ EM_JS(int, js_cd_play, (int track, int looping), {
 EM_JS(void, js_cd_stop, (), {
 	var s = Module._nq_cdaudio;
 	if (!s) return;
-	if (s.fadeToken) { s.cqf(s.fadeToken); s.fadeToken = 0; }
+	s.cancelFade();
 	s.status = 'stopped';
 	s.sourcePath = "";
 	s.fadeToSilence(s, function() {
@@ -234,7 +235,7 @@ EM_JS(void, js_cd_stop, (), {
 EM_JS(void, js_cd_pause, (), {
 	var s = Module._nq_cdaudio;
 	if (!s || s.status !== 'playing') return;
-	if (s.fadeToken) { s.cqf(s.fadeToken); s.fadeToken = 0; }
+	s.cancelFade();
 	s.status = 'paused';
 	s.notify();
 	s.fadeToSilence(s, function() {
@@ -245,7 +246,7 @@ EM_JS(void, js_cd_pause, (), {
 EM_JS(void, js_cd_resume, (), {
 	var s = Module._nq_cdaudio;
 	if (!s || s.status !== 'paused') return;
-	if (s.fadeToken) { s.cqf(s.fadeToken); s.fadeToken = 0; }
+	s.cancelFade();
 	try { s.audio.volume = s.targetVolume; } catch(e) {}
 	s.status = 'loading';
 	s.notify();
@@ -269,7 +270,7 @@ EM_JS(void, js_cd_get_source, (char *out, int outlen), {
 EM_JS(void, js_cd_shutdown, (), {
 	var s = Module._nq_cdaudio;
 	if (!s) return;
-	if (s.fadeToken) { s.cqf(s.fadeToken); s.fadeToken = 0; }
+	s.cancelFade();
 	if (s.cleanup) s.cleanup();
 	try { s.audio.pause(); } catch(e) {}
 	s.revokeBlob(s.blobURL);
@@ -283,18 +284,13 @@ EM_JS(void, js_cd_shutdown, (), {
 		try { Module.nqOverlayOnCdStateChange(); } catch(e3) {}
 });
 
-static float CDAudio_ClampVolume(float volume)
-{
-	if (volume < 0.0f) return 0.0f;
-	if (volume > 1.0f) return 1.0f;
-	return volume;
-}
-
 static void CDAudio_UpdateVolume(void)
 {
 	float	newVolume;
 
-	newVolume = CDAudio_ClampVolume(bgmvolume.value);
+	newVolume = bgmvolume.value;
+	if (newVolume < 0.0f) newVolume = 0.0f;
+	if (newVolume > 1.0f) newVolume = 1.0f;
 	if (newVolume == cdvolume)
 		return;
 
