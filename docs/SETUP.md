@@ -98,7 +98,7 @@ nqserver @def -game id1 +hostname "FragFest"
 
 `-port 0` tells the OS to assign a random free port. Nexus detects this, groups all instances launched from that line into a pool, and presents the pool as a single server in the browser list.
 
-Set `POOL_SIZE` to the maximum number of backend instances Nexus will spawn (default `1`, which disables scale-out):
+Set `POOL_SIZE` to the maximum number of backend instances Nexus will spawn (default `1`, which disables autoscaling for `-port 0` entries and shows them in `slist` like ordinary single servers):
 
 ```env
 POOL_SIZE=10
@@ -106,7 +106,7 @@ POOL_SIZE=10
 
 ### How It Works
 
-The pool shows up as one row in the server list with aggregate player counts and an instance count. The port shown to players is one of the running backends, selected by least-loaded round-robin at browse time. Connecting directly to that port connects to that specific backend.
+When autoscaling is enabled, the pool shows up as one row in the server list with aggregate player counts and an instance count. The port shown to players is one of the running backends, selected by least-loaded round-robin at browse time. Connecting directly to that port connects to that specific backend.
 
 Nexus tracks how often players browse the pool (`slist` poll hits) over a 30-second window to estimate demand. When free slots across the pool fall below the headroom target — `max(4, ceil(joinRPS × 12s × 1.5))` — and the pool is below `POOL_SIZE`, a new backend instance is spawned.
 
@@ -125,7 +125,7 @@ Backends move to `draining` only when at least two active backends remain and to
 
 ### Observing Pools
 
-`slist` in the console shows one row per pool with the instance count appended to the users column (e.g. `2/16 ×3` means 2 players across 3 instances with a 16-player aggregate cap).
+`slist` in the console shows one row per autoscaled pool with the instance count appended to the users column (e.g. `2/16 ×3` means 2 players across 3 instances with a 16-player aggregate cap). Entries that are not autoscaling omit the instance suffix.
 
 `rcon` on a pool entry works only when the pool has exactly one running backend. With multiple backends, target a specific instance by its listen port instead.
 

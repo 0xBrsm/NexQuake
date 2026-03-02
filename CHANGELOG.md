@@ -4,6 +4,12 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.7.6
+
+### Fixed
+- WASM touch tap detection now uses event timestamps and guarded async key pulses, improving tap reliability and avoiding stray gameplay input while the overlay editor is open.
+- `POOL_SIZE=1` entries now behave as ordinary non-autoscaled servers in Nexus and `slist`, without demand tracking or pool instance-count suffixes.
+
 ## 1.7.5
 
 ### Changed

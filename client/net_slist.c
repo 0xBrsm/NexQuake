@@ -165,7 +165,7 @@ static int slist_users_width(qboolean show_pool)
 	{
 		if (!hostcache[i].maxusers)
 			continue;
-		if (show_pool)
+		if (show_pool && hostcache[i].instances > 0)
 			w = sprintf(users, "%u/%u (%u)", hostcache[i].users,
 				hostcache[i].maxusers, hostcache[i].instances);
 		else
@@ -222,10 +222,15 @@ static void NET_SlistBuildLayout(int budget, slist_layout_t *layout)
 
 	Q_memset(layout, 0, sizeof(*layout));
 
-	layout->show_pool = true;
-	users_w = slist_users_width(true);
+	for (i = 0; i < hostCacheCount; i++)
+		if (hostcache[i].instances > 0)
+		{
+			layout->show_pool = true;
+			break;
+		}
+	users_w = slist_users_width(layout->show_pool);
 	layout->ncols = slist_cols_for_budget(budget, users_w);
-	if (!layout->ncols)
+	if (layout->show_pool && !layout->ncols)
 	{
 		layout->show_pool = false;
 		users_w = slist_users_width(false);
@@ -359,7 +364,7 @@ static int NET_SlistFormatEntry(const slist_layout_t *layout, const hostcache_t 
 	// Pre-format Users string.
 	if (!host->maxusers)
 		Q_strcpy(users, "");
-	else if (layout->show_pool)
+	else if (layout->show_pool && host->instances > 0)
 	{
 		users_w = sprintf(users, "%u/%u", host->users, host->maxusers);
 		inst_w = sprintf(inst, "(%u)", host->instances);

@@ -134,13 +134,15 @@ func (m *ServerManager) registerPoolSeed(rec *serverRecord) error {
 	if listenPort < 1 || listenPort > 65535 {
 		listenPort = 0
 	}
+	configuredPort, hasConfiguredPort := launchConfiguredPort(rec.Launch)
+	autoscales := hasConfiguredPort && configuredPort == 0 && max(1, m.poolMaxSize) > 1
 
 	pool := &serverPool{
-		PoolID:          m.nextPoolID,
-		Line:            rec.Launch.Line,
-		TemplateLaunch:  cloneServerLaunch(rec.Launch),
-		Autoscales:      true,
-		ListenPort:      listenPort,
+		PoolID:           m.nextPoolID,
+		Line:             rec.Launch.Line,
+		TemplateLaunch:   cloneServerLaunch(rec.Launch),
+		Autoscales:       autoscales,
+		ListenPort:       listenPort,
 		BackendServerIDs: []int{rec.id},
 		backendState: map[int]*poolBackendState{
 			rec.id: newPoolBackendState(poolBackendLifecycleWarming),

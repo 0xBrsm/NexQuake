@@ -200,7 +200,7 @@ This replaces NetQuake's UDP broadcast, which never worked well and doesn't work
 
 Standard NetQuake server browsing (`slist`) sends a UDP broadcast `CCREQ_SERVER_INFO` and waits for individual server replies. NexQuake runs on loopback, where broadcast never reaches game servers, so Nexus intercepts the request and replies with a single aggregated `CCREP_SERVER_INFO` packet containing the full server list.
 
-`net_slist.c` parses this batch response: a count byte followed by per-server fields (port, name, map, gamedir, users, maxusers, backend instance count). Parsed entries are written directly into `hostcache[]` and the `slist_agg_done` flag short-circuits the normal poll loop so the client does not wait for individual server replies that will never come. A dynamic column layout adapts the console output width to the terminal, adding a gamedir column so players can see which mod each server runs.
+`net_slist.c` parses this batch response: a count byte followed by per-server fields (port, name, map, gamedir, users, maxusers, backend instance count). An instance count of `0` means "display as a normal non-pooled row"; positive values mean an autoscaled pool row and are shown in the users column. Parsed entries are written directly into `hostcache[]` and the `slist_agg_done` flag short-circuits the normal poll loop so the client does not wait for individual server replies that will never come. A dynamic column layout adapts the console output width to the terminal, adding a gamedir column so players can see which mod each server runs.
 
 ## Port-Only Relay Addressing
 

@@ -126,7 +126,7 @@ func TestBuildCCREPServerListEncodesU16Fields(t *testing.T) {
 	}
 }
 
-func TestBuildCCREPServerListDefaultsInstancesToOne(t *testing.T) {
+func TestBuildCCREPServerListPreservesZeroInstances(t *testing.T) {
 	packet, count := buildCCREPServerList([]serverListEntry{{
 		ListenPort: 26000,
 		Hostname:   "fragfest",
@@ -151,7 +151,7 @@ func TestBuildCCREPServerListDefaultsInstancesToOne(t *testing.T) {
 		t.Fatalf("missing numeric fields")
 	}
 	instances := uint16(packet[i+4]) | uint16(packet[i+5])<<8
-	if instances != 1 {
-		t.Fatalf("instances = %d, want 1", instances)
+	if instances != 0 {
+		t.Fatalf("instances = %d, want 0", instances)
 	}
 }

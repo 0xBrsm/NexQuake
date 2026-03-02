@@ -8,6 +8,7 @@
 #include "quakedef.h"
 #include <emscripten.h>
 #include <emscripten/html5.h>
+#include <stdint.h>
 #include <string.h>
 #include <math.h>
 
@@ -361,6 +362,11 @@ EM_JS(int, js_overlay_modal_open, (), {
 	return Module.nqOverlayModalOpen ? 1 : 0;
 });
 
+EM_JS(int, js_overlay_editor_open, (), {
+	var ctx = Module.nqOverlayCtx;
+	return (ctx && ctx.editor && ctx.editor.classList.contains('open')) ? 1 : 0;
+});
+
 EM_JS(int, js_touch_active, (), {
 	return Module.nqTouchActive ? 1 : 0;
 });
@@ -494,6 +500,9 @@ static EM_BOOL on_key(int type, const EmscriptenKeyboardEvent *e, void *ud)
 {
 	int k;
 
+	if (js_overlay_editor_open())
+		return 0;
+
 	if (e->keyCode == 27 && emscripten_get_now() - ptrlock_lost_at < 50)
 		return 1;
 
@@ -545,13 +554,49 @@ static EM_BOOL on_mouse_btn(int type, const EmscriptenMouseEvent *e, void *ud)
 	return 1;
 }
 
+// ---------------------------------------------------------------------------
+// Async key pulse — press a key and release it after a delay.
+// A generation counter ensures that rapid re-presses are not cut short
+// by a stale release callback from an earlier pulse.
+// ---------------------------------------------------------------------------
+enum {
+	PULSE_MWHEEL_UP,
+	PULSE_MWHEEL_DOWN,
+	PULSE_TAP1,
+	PULSE_TAP2,
+	PULSE_COUNT
+};
+
+static const int pulse_key[PULSE_COUNT] = {
+	K_MWHEELUP, K_MWHEELDOWN, K_TOUCH_TAP1, K_TOUCH_TAP2
+};
+
+static int pulse_gen[PULSE_COUNT];
+
+static void pulse_release(void *arg)
+{
+	int idx = (int)(intptr_t)arg;
+
+	if (pulse_gen[idx] <= 0)
+		return;
+	if (--pulse_gen[idx] > 0)
+		return;
+	Key_Event(pulse_key[idx], false);
+}
+
+static void key_pulse(int idx, int ms)
+{
+	int key = pulse_key[idx];
+
+	pulse_gen[idx]++;
+	Key_Event(key, false);
+	Key_Event(key, true);
+	emscripten_async_call(pulse_release, (void *)(intptr_t)idx, ms);
+}
+
 static void emit_wheel_key(int dir)
 {
-	int key;
-
-	key = (dir < 0) ? K_MWHEELUP : K_MWHEELDOWN;
-	Key_Event(key, 1);
-	Key_Event(key, 0);
+	key_pulse(dir < 0 ? PULSE_MWHEEL_UP : PULSE_MWHEEL_DOWN, 100);
 }
 
 static EM_BOOL on_wheel(int t, const EmscriptenWheelEvent *e, void *ud)
@@ -620,8 +665,8 @@ static EM_BOOL on_ptrlock(int t, const EmscriptenPointerlockChangeEvent *e, void
 		ptrlock_lost_at = emscripten_get_now();
 		if (!touch_active && key_dest == key_game)
 		{
-			Key_Event(K_ESCAPE, 1);
-			Key_Event(K_ESCAPE, 0);
+			Key_Event(K_ESCAPE, true);
+			Key_Event(K_ESCAPE, false);
 		}
 	}
 	return 1;
@@ -659,7 +704,7 @@ static int touch_find_look_point(long identifier)
 	return -1;
 }
 
-static qboolean touch_add_look_point(long identifier, float px, float py)
+static qboolean touch_add_look_point(long identifier, float px, float py, double startMs)
 {
 	int j;
 
@@ -676,7 +721,7 @@ static qboolean touch_add_look_point(long identifier, float px, float py)
 		touch_look_points[j].lastY = py;
 		touch_look_points[j].startX = px;
 		touch_look_points[j].startY = py;
-		touch_look_points[j].startMs = emscripten_get_now();
+		touch_look_points[j].startMs = startMs;
 		return true;
 	}
 
@@ -763,11 +808,15 @@ static float touch_look_units_per_pixel(void)
 	return TOUCH_TARGET_SWIPE_TURN / (w * TOUCH_TARGET_SWIPE_FRAC * DEFAULT_SENSITIVITY * DEFAULT_M_YAW);
 }
 
-static qboolean touch_is_tap(float startX, float startY, double startMs, float endX, float endY, double max_ms, float max_px)
+static qboolean touch_is_tap(float startX, float startY, double startMs, float endX, float endY, double endMs, double max_ms, float max_px)
 {
 	float dx, dy, max_dist_sq;
+	double elapsed_ms;
 
-	if (emscripten_get_now() - startMs > max_ms)
+	elapsed_ms = endMs - startMs;
+	if (elapsed_ms < 0.0 || endMs <= 0.0)
+		elapsed_ms = emscripten_get_now() - startMs;
+	if (elapsed_ms > max_ms)
 		return false;
 	dx = endX - startX;
 	dy = endY - startY;
@@ -775,7 +824,7 @@ static qboolean touch_is_tap(float startX, float startY, double startMs, float e
 	return (dx * dx + dy * dy) <= max_dist_sq;
 }
 
-static void touch_try_zone_tap(int zone, float startX, float startY, double startMs, float endX, float endY)
+static void touch_try_zone_tap(int zone, float startX, float startY, double startMs, float endX, float endY, double endMs)
 {
 	double tap_ms;
 	float tap_px;
@@ -791,16 +840,18 @@ static void touch_try_zone_tap(int zone, float startX, float startY, double star
 	if (tap_px < 1.0f)
 		tap_px = 1.0f;
 
-	if (!touch_is_tap(startX, startY, startMs, endX, endY, tap_ms, tap_px))
+	if (!touch_is_tap(startX, startY, startMs, endX, endY, endMs, tap_ms, tap_px))
 		return;
 
 	if (key_dest == key_menu)
+	{
 		key = (zone == 0) ? K_ESCAPE : menu_accept_key();
-	else
-		key = (zone == 0) ? K_TOUCH_TAP1 : K_TOUCH_TAP2;
+		Key_Event(key, true);
+		Key_Event(key, false);
+		return;
+	}
 
-	Key_Event(key, 1);
-	Key_Event(key, 0);
+	key_pulse(zone == 0 ? PULSE_TAP1 : PULSE_TAP2, 100);
 }
 
 static float touch_zone_split(qboolean in_menu)
@@ -877,7 +928,7 @@ static EM_BOOL on_touchstart(int type, const EmscriptenTouchEvent *e, void *ud)
 			else
 				emit_virtual_control(CTRL_TOUCH_SLOT_BASE + slot, touch_button_gameplay_key(slot), 0, true);
 			if (slot < TOUCH_SLOT_COUNT && !in_menu && zone == 1)
-				touch_add_look_point(tp->identifier, px, py);
+				touch_add_look_point(tp->identifier, px, py, e->timestamp);
 			handled = true;
 			continue;
 		}
@@ -890,14 +941,14 @@ static EM_BOOL on_touchstart(int type, const EmscriptenTouchEvent *e, void *ud)
 			touch_move.originY = py;
 			touch_move.startX = px;
 			touch_move.startY = py;
-			touch_move.startMs = emscripten_get_now();
+			touch_move.startMs = e->timestamp;
 			touch_move.axisX = touch_move.axisY = 0.0f;
 			js_joy_show(touch_move.originX, touch_move.originY);
 			handled = true;
 			continue;
 		}
 
-		if (zone == 1 && touch_add_look_point(tp->identifier, px, py))
+		if (zone == 1 && touch_add_look_point(tp->identifier, px, py, e->timestamp))
 			handled = true;
 	}
 
@@ -1004,7 +1055,7 @@ static EM_BOOL on_touchend(int type, const EmscriptenTouchEvent *e, void *ud)
 
 		if (touch_move.active && tp->identifier == touch_move.identifier)
 		{
-			touch_try_zone_tap(0, touch_move.startX, touch_move.startY, touch_move.startMs, px, py);
+			touch_try_zone_tap(0, touch_move.startX, touch_move.startY, touch_move.startMs, px, py, e->timestamp);
 			touch_clear_move();
 			handled = true;
 			continue;
@@ -1016,7 +1067,7 @@ static EM_BOOL on_touchend(int type, const EmscriptenTouchEvent *e, void *ud)
 
 		touch_try_zone_tap(touch_zone_for_point(touch_look_points[look_slot].startX, zone_split),
 			touch_look_points[look_slot].startX, touch_look_points[look_slot].startY,
-			touch_look_points[look_slot].startMs, px, py);
+			touch_look_points[look_slot].startMs, px, py, e->timestamp);
 		touch_look_points[look_slot].active = false;
 		handled = true;
 	}

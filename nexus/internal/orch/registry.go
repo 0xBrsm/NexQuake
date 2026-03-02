@@ -224,22 +224,23 @@ func forceLaunchPortZero(args []string) []string {
 
 func (m *ServerManager) registerPoolLaunch(launch serverLaunch) (*serverRecord, error) {
 	configuredPort, hasConfiguredPort := launchConfiguredPort(launch)
-	autoscales := hasConfiguredPort && configuredPort == 0
 	listenPort := 0
-	if !autoscales && hasConfiguredPort && configuredPort > 0 {
-		listenPort = configuredPort
-	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	autoscales := hasConfiguredPort && configuredPort == 0 && max(1, m.poolMaxSize) > 1
+	if !autoscales && hasConfiguredPort && configuredPort > 0 {
+		listenPort = configuredPort
+	}
+
 	pool := &serverPool{
-		PoolID:          m.nextPoolID,
-		Line:            launch.Line,
-		TemplateLaunch:  cloneServerLaunch(launch),
-		Autoscales: autoscales,
-		ListenPort:      listenPort,
-		backendState:    make(map[int]*poolBackendState),
+		PoolID:         m.nextPoolID,
+		Line:           launch.Line,
+		TemplateLaunch: cloneServerLaunch(launch),
+		Autoscales:     autoscales,
+		ListenPort:     listenPort,
+		backendState:   make(map[int]*poolBackendState),
 	}
 	m.nextPoolID++
 	m.poolsByID[pool.PoolID] = pool

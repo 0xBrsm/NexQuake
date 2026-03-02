@@ -89,6 +89,27 @@ func TestRegisterPoolSeed_OnlyPortZeroLaunches(t *testing.T) {
 	}
 }
 
+func TestRegisterPoolSeed_DisablesAutoscalingWhenPoolSizeOne(t *testing.T) {
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(1)
+	t.Cleanup(m.closePoolRegistry)
+
+	rec := m.registerServerLaunch(serverLaunch{Line: 0, Binary: "nqserver", Args: []string{"-dedicated", "-port", "0"}})
+	if err := m.registerPoolSeed(rec); err != nil {
+		t.Fatalf("register dynamic seed: %v", err)
+	}
+
+	m.mu.RLock()
+	pool := m.poolByServerID[rec.id]
+	m.mu.RUnlock()
+	if pool == nil {
+		t.Fatalf("expected dynamic server to be pooled")
+	}
+	if pool.Autoscales {
+		t.Fatalf("expected POOL_SIZE=1 seed to disable autoscaling")
+	}
+}
+
 func TestPoolRouting_PicksLeastLoadedBackend(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 	t.Cleanup(m.closePoolRegistry)
@@ -259,6 +280,7 @@ func TestPoolRouting_SkipsWarmingBackendForNewSessions(t *testing.T) {
 
 func TestPoolRouting_RecordsDemandOnSlist(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(10)
 	t.Cleanup(m.closePoolRegistry)
 
 	seed := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 4, 16)
@@ -287,6 +309,80 @@ func TestPoolRouting_RecordsDemandOnSlist(t *testing.T) {
 	m.mu.RUnlock()
 	if afterDemand != 1 {
 		t.Fatalf("demand after slist = %d, want 1", afterDemand)
+	}
+}
+
+func TestPoolRouting_PoolSizeOneHidesInstancesAndSkipsDemand(t *testing.T) {
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(1)
+	t.Cleanup(m.closePoolRegistry)
+
+	seed := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 4, 16)
+	if err := m.registerPoolSeed(seed); err != nil {
+		t.Fatalf("register pool seed: %v", err)
+	}
+
+	m.mu.RLock()
+	pool := m.poolByServerID[seed.id]
+	m.mu.RUnlock()
+	if pool == nil {
+		t.Fatalf("expected pool for dynamic seed")
+	}
+	if pool.Autoscales {
+		t.Fatalf("expected POOL_SIZE=1 to disable autoscaling")
+	}
+
+	entries := snapshotForSlist(m)
+	if len(entries) != 1 {
+		t.Fatalf("slist entries = %d, want 1", len(entries))
+	}
+	if entries[0].Instances != 0 {
+		t.Fatalf("instances = %d, want 0 when autoscaling disabled", entries[0].Instances)
+	}
+
+	m.mu.RLock()
+	demandCount := len(pool.joinDemandAt)
+	m.mu.RUnlock()
+	if demandCount != 0 {
+		t.Fatalf("disabled autoscaling should not record demand, got %d", demandCount)
+	}
+}
+
+func TestSnapshotForSlist_StaticPortHidesInstances(t *testing.T) {
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	t.Cleanup(m.closePoolRegistry)
+
+	rec, err := m.registerPoolLaunch(serverLaunch{
+		Line:   0,
+		Binary: "nqserver",
+		Args:   []string{"-dedicated", "-port", "26000"},
+	})
+	if err != nil {
+		t.Fatalf("register fixed-port launch: %v", err)
+	}
+	m.updatePort(rec, 26000)
+	m.updateSearchPath(rec, []string{"id1"})
+	m.SetServerRunningForTest(rec, NewTestServer(26000))
+	m.SetServerInfoForTest(rec, "fixed", "dm6", 3, 16)
+	m.mu.Lock()
+	rec.LastSeen = time.Now()
+	pool := m.poolByServerID[rec.id]
+	m.setPoolBackendLifecycleLocked(pool, rec.id, poolBackendLifecycleActive, true)
+	m.mu.Unlock()
+
+	if pool == nil {
+		t.Fatalf("expected fixed-port launch to have a pool record")
+	}
+	if pool.Autoscales {
+		t.Fatalf("expected fixed-port launch to stay non-autoscaling")
+	}
+
+	entries := snapshotForSlist(m)
+	if len(entries) != 1 {
+		t.Fatalf("slist entries = %d, want 1", len(entries))
+	}
+	if entries[0].Instances != 0 {
+		t.Fatalf("instances = %d, want 0 for fixed-port launch", entries[0].Instances)
 	}
 }
 
@@ -557,4 +653,3 @@ func TestPoolDemand_DecaysOutsideWindow(t *testing.T) {
 		t.Fatalf("expected all old demand events pruned, got %d", remaining)
 	}
 }
-

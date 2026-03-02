@@ -106,7 +106,7 @@ type serverListEntry struct {
 	GameDir    string // active game directory (truncated to hostcacheFieldMax)
 	Users      uint16 // current player count
 	MaxUsers   uint16 // server capacity
-	Instances  uint16 // backend instance count (≥1)
+	Instances  uint16 // backend instance count for autoscaled pools; 0 hides the pool suffix
 }
 
 // buildCCREPServerList builds an aggregated CCREP_SERVER_INFO response
@@ -144,11 +144,6 @@ func buildCCREPServerList(entries []serverListEntry) ([]byte, int) {
 		mapName = truncateSlistField(mapName, hostcacheFieldMax)
 		gameDir = truncateSlistField(gameDir, hostcacheFieldMax)
 
-		instances := e.Instances
-		if instances == 0 {
-			instances = 1
-		}
-
 		entrySize := len(serverPortText) + 1 + len(hostname) + 1 + len(mapName) + 1 + len(gameDir) + 1 + 7
 		if len(buf)+entrySize > maxNetDatagramSize {
 			break
@@ -160,7 +155,7 @@ func buildCCREPServerList(entries []serverListEntry) ([]byte, int) {
 		buf = appendSlistCString(buf, gameDir)
 		buf = append(buf, byte(e.Users&0xff), byte(e.Users>>8))
 		buf = append(buf, byte(e.MaxUsers&0xff), byte(e.MaxUsers>>8))
-		buf = append(buf, byte(instances&0xff), byte(instances>>8))
+		buf = append(buf, byte(e.Instances&0xff), byte(e.Instances>>8))
 		buf = append(buf, netProtocolVersion)
 		count++
 	}
@@ -348,7 +343,11 @@ func snapshotForSlist(mgr *ServerManager) []serverListEntry {
 		if !ok {
 			continue
 		}
-		notePoolDemandLocked(pool, now)
+		instances := uint16(0)
+		if pool.Autoscales {
+			notePoolDemandLocked(pool, now)
+			instances = pool.AggregateInstances
+		}
 		out = append(out, serverListEntry{
 			ListenPort: backendPort,
 			Hostname:   pool.DisplayHostname,
@@ -356,7 +355,7 @@ func snapshotForSlist(mgr *ServerManager) []serverListEntry {
 			GameDir:    pool.DisplayGameDir,
 			Users:      pool.AggregateUsers,
 			MaxUsers:   pool.AggregateMaxUsers,
-			Instances:  pool.AggregateInstances,
+			Instances:  instances,
 		})
 	}
 
@@ -382,7 +381,7 @@ func snapshotForSlist(mgr *ServerManager) []serverListEntry {
 			GameDir:    activeGameDir(rec.spec.SearchPath),
 			Users:      uint16(rec.Players),
 			MaxUsers:   uint16(rec.MaxPlayers),
-			Instances:  1,
+			Instances:  0,
 		})
 	}
 	mgr.mu.Unlock()
