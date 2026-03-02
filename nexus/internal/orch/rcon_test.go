@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestExecServerCmd_CapturesConsoleOutput(t *testing.T) {
+func TestDispatchServerCmd_CapturesConsoleOutput(t *testing.T) {
 	oldMaxWait := serverCommandCaptureMaxWait
 	oldIdleWait := serverCommandCaptureIdleWait
 	t.Cleanup(func() {
@@ -42,9 +43,9 @@ func TestExecServerCmd_CapturesConsoleOutput(t *testing.T) {
 	rec.Running = srv
 	globalMgr := mgr
 
-	reply, err := globalMgr.ExecServerCmd(26000, "sv_maxspeed", "")
+	reply, err := globalMgr.DispatchServerCmd(strconv.Itoa(26000), "sv_maxspeed", "")
 	if err != nil {
-		t.Fatalf("ExecServerCmd error = %v", err)
+		t.Fatalf("DispatchServerCmd error = %v", err)
 	}
 	if !strings.Contains(reply, "sv_maxspeed is \"320\"") {
 		t.Fatalf("expected captured server output, got %q", reply)
@@ -54,7 +55,7 @@ func TestExecServerCmd_CapturesConsoleOutput(t *testing.T) {
 	}
 }
 
-func TestExecServerCmd_FiltersNoisyConsoleOutput(t *testing.T) {
+func TestDispatchServerCmd_FiltersNoisyConsoleOutput(t *testing.T) {
 	oldMaxWait := serverCommandCaptureMaxWait
 	oldIdleWait := serverCommandCaptureIdleWait
 	t.Cleanup(func() {
@@ -87,9 +88,9 @@ func TestExecServerCmd_FiltersNoisyConsoleOutput(t *testing.T) {
 	mgr.updatePort(rec, 26000)
 	rec.Running = srv
 
-	reply, err := mgr.ExecServerCmd(26000, "sv_maxspeed", "")
+	reply, err := mgr.DispatchServerCmd(strconv.Itoa(26000), "sv_maxspeed", "")
 	if err != nil {
-		t.Fatalf("ExecServerCmd error = %v", err)
+		t.Fatalf("DispatchServerCmd error = %v", err)
 	}
 	if strings.Contains(reply, "FindFile: maps/e1m1.bsp") {
 		t.Fatalf("expected FindFile noise filtered from reply, got %q", reply)
@@ -107,7 +108,7 @@ func TestAppendServerCommandAuditEcho_TrimsTrailingSemicolon(t *testing.T) {
 	}
 }
 
-func TestExecServerCmd_AppendsAuditEcho(t *testing.T) {
+func TestDispatchServerCmd_AppendsAuditEcho(t *testing.T) {
 	oldMaxWait := serverCommandCaptureMaxWait
 	oldIdleWait := serverCommandCaptureIdleWait
 	t.Cleanup(func() {
@@ -141,9 +142,9 @@ func TestExecServerCmd_AppendsAuditEcho(t *testing.T) {
 	mgr.updatePort(rec, 26000)
 	rec.Running = srv
 
-	reply, err := mgr.ExecServerCmd(26000, "status;", "alice@example.com")
+	reply, err := mgr.DispatchServerCmd(strconv.Itoa(26000), "status;", "alice@example.com")
 	if err != nil {
-		t.Fatalf("ExecServerCmd error = %v", err)
+		t.Fatalf("DispatchServerCmd error = %v", err)
 	}
 	if !strings.Contains(reply, "host: ok") {
 		t.Fatalf("expected command output reply, got %q", reply)
@@ -160,7 +161,7 @@ func TestExecServerCmd_AppendsAuditEcho(t *testing.T) {
 	}
 }
 
-func TestExecServerCmd_SuppressesEchoAndCapturesDelayedOutput(t *testing.T) {
+func TestDispatchServerCmd_SuppressesEchoAndCapturesDelayedOutput(t *testing.T) {
 	oldMaxWait := serverCommandCaptureMaxWait
 	oldIdleWait := serverCommandCaptureIdleWait
 	t.Cleanup(func() {
@@ -194,9 +195,9 @@ func TestExecServerCmd_SuppressesEchoAndCapturesDelayedOutput(t *testing.T) {
 	mgr.updatePort(rec, 26000)
 	rec.Running = srv
 
-	reply, err := mgr.ExecServerCmd(26000, "status", "")
+	reply, err := mgr.DispatchServerCmd(strconv.Itoa(26000), "status", "")
 	if err != nil {
-		t.Fatalf("ExecServerCmd error = %v", err)
+		t.Fatalf("DispatchServerCmd error = %v", err)
 	}
 	if strings.Contains(reply, "status;") {
 		t.Fatalf("expected echoed command to be suppressed, got %q", reply)
@@ -206,7 +207,7 @@ func TestExecServerCmd_SuppressesEchoAndCapturesDelayedOutput(t *testing.T) {
 	}
 }
 
-func TestExecServerCmd_AuditEchoCapturesOutputAfterWaitGap(t *testing.T) {
+func TestDispatchServerCmd_AuditEchoCapturesOutputAfterWaitGap(t *testing.T) {
 	oldMaxWait := serverCommandCaptureMaxWait
 	oldIdleWait := serverCommandCaptureIdleWait
 	t.Cleanup(func() {
@@ -240,16 +241,16 @@ func TestExecServerCmd_AuditEchoCapturesOutputAfterWaitGap(t *testing.T) {
 	mgr.updatePort(rec, 26000)
 	rec.Running = srv
 
-	reply, err := mgr.ExecServerCmd(26000, "timelimit", "alice@example.com")
+	reply, err := mgr.DispatchServerCmd(strconv.Itoa(26000), "timelimit", "alice@example.com")
 	if err != nil {
-		t.Fatalf("ExecServerCmd error = %v", err)
+		t.Fatalf("DispatchServerCmd error = %v", err)
 	}
 	if !strings.Contains(reply, `"timelimit" is "20"`) {
 		t.Fatalf("expected delayed cvar reply to be captured, got %q", reply)
 	}
 }
 
-func TestExecServerCmd_TailDefaultsToLastTenLines(t *testing.T) {
+func TestDispatchServerCmd_TailDefaultsToLastTenLines(t *testing.T) {
 	process, err := os.FindProcess(os.Getpid())
 	if err != nil {
 		t.Fatalf("FindProcess(self): %v", err)
@@ -264,9 +265,9 @@ func TestExecServerCmd_TailDefaultsToLastTenLines(t *testing.T) {
 	mgr.updatePort(rec, 26000)
 	rec.Running = srv
 
-	reply, err := mgr.ExecServerCmd(26000, "tail", "")
+	reply, err := mgr.DispatchServerCmd(strconv.Itoa(26000), "tail", "")
 	if err != nil {
-		t.Fatalf("ExecServerCmd(tail) error = %v", err)
+		t.Fatalf("DispatchServerCmd(tail) error = %v", err)
 	}
 	if strings.Contains(reply, "line 01") || strings.Contains(reply, "line 02") {
 		t.Fatalf("expected tail to skip first two lines, got %q", reply)
@@ -276,7 +277,7 @@ func TestExecServerCmd_TailDefaultsToLastTenLines(t *testing.T) {
 	}
 }
 
-func TestExecServerCmd_TailUsesFilteredOutput(t *testing.T) {
+func TestDispatchServerCmd_TailUsesFilteredOutput(t *testing.T) {
 	process, err := os.FindProcess(os.Getpid())
 	if err != nil {
 		t.Fatalf("FindProcess(self): %v", err)
@@ -293,9 +294,9 @@ func TestExecServerCmd_TailUsesFilteredOutput(t *testing.T) {
 	mgr.updatePort(rec, 26000)
 	rec.Running = srv
 
-	reply, err := mgr.ExecServerCmd(26000, "tail", "")
+	reply, err := mgr.DispatchServerCmd(strconv.Itoa(26000), "tail", "")
 	if err != nil {
-		t.Fatalf("ExecServerCmd(tail) error = %v", err)
+		t.Fatalf("DispatchServerCmd(tail) error = %v", err)
 	}
 	if strings.Contains(reply, "FindFile: maps/e1m1.bsp") || strings.Contains(reply, "PackFile: id1/pak0.pak") {
 		t.Fatalf("expected noisy lines filtered from tail reply, got %q", reply)
@@ -305,7 +306,7 @@ func TestExecServerCmd_TailUsesFilteredOutput(t *testing.T) {
 	}
 }
 
-func TestExecServerCmd_TailUsageError(t *testing.T) {
+func TestDispatchServerCmd_TailUsageError(t *testing.T) {
 	process, err := os.FindProcess(os.Getpid())
 	if err != nil {
 		t.Fatalf("FindProcess(self): %v", err)
@@ -316,16 +317,16 @@ func TestExecServerCmd_TailUsageError(t *testing.T) {
 	mgr.updatePort(rec, 26000)
 	rec.Running = srv
 
-	_, err = mgr.ExecServerCmd(26000, "tail 5", "")
+	_, err = mgr.DispatchServerCmd(strconv.Itoa(26000), "tail 5", "")
 	if err == nil {
 		t.Fatalf("expected tail usage error")
 	}
-	if !strings.Contains(err.Error(), "usage: rcon <host|port> tail") {
+	if !strings.Contains(err.Error(), "usage: rcon <host|port|idx> tail") {
 		t.Fatalf("expected tail usage error, got %q", err.Error())
 	}
 }
 
-func TestExecServerCmd_NoOutputUsesSuccessFallback(t *testing.T) {
+func TestDispatchServerCmd_NoOutputUsesSuccessFallback(t *testing.T) {
 	oldMaxWait := serverCommandCaptureMaxWait
 	oldIdleWait := serverCommandCaptureIdleWait
 	t.Cleanup(func() {
@@ -350,9 +351,9 @@ func TestExecServerCmd_NoOutputUsesSuccessFallback(t *testing.T) {
 	mgr.updatePort(rec, 26000)
 	rec.Running = &managedServer{Cmd: &exec.Cmd{Process: process}, Console: newServerConsole(ptyWrite)}
 
-	reply, err := mgr.ExecServerCmd(26000, "status", "")
+	reply, err := mgr.DispatchServerCmd(strconv.Itoa(26000), "status", "")
 	if err != nil {
-		t.Fatalf("ExecServerCmd error = %v", err)
+		t.Fatalf("DispatchServerCmd error = %v", err)
 	}
 	if reply != "Command executed successfully.\n" {
 		t.Fatalf("expected success fallback reply, got %q", reply)

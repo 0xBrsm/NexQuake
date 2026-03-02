@@ -59,7 +59,7 @@ nqserver @def -game ctf +hostname %game
 | Argument | Purpose |
 |-----|---------|
 | `-dedicated <N>` | Maximum client count. Stock NetQuake caps at 16. Use higher values only with custom binaries that actually support them. Lower the visible limit with `maxplayers <M>` in config (`M` cannot exceed `N`). |
-| `-port 0` | Bind to a random open port. On startup entries, this enables Nexus dynamic scaling for that server line: `slist` shows one pool row with aggregate player counts, and the port shown is a real backend port selected by least-loaded round-robin at browse time. `connect <port>` connects directly to that specific backend. Scaling lifecycle/autoscale keeps one backend routable while draining/despawning idle replicas. |
+| `-port 0` | Bind to a random open port. On startup entries, this enables Nexus dynamic scaling for that server line: `rcon nexus slist` shows one pool row with aggregate player counts, and the candidate port shown is a real backend port selected by least-loaded round-robin at browse time. `connect <port>` connects directly to that specific backend. Scaling lifecycle/autoscale keeps one backend routable while draining/despawning idle replicas. |
 | `-mem <MB>` | Specifies the RAM to reserve for game server memory. Default is 8 MB for Linux Quake, which may not be enough for some mods. Generally, `16` is a safe number.
 | `+hostname "Name"` | Set a unique server name. Critical when multiple servers share a game directory, since they share `config.cfg` and may end up with identical hostnames. |
 | `@groupname ...` | Define a reusable macro for common flags like `-dedicated 16 -port 0`. |
@@ -127,7 +127,7 @@ Backends move to `draining` only when at least two active backends remain and to
 
 `slist` in the console shows one row per autoscaled pool with the instance count appended to the users column (e.g. `2/16 ×3` means 2 players across 3 instances with a 16-player aggregate cap). Entries that are not autoscaling omit the instance suffix.
 
-`rcon` on a pool entry works only when the pool has exactly one running backend. With multiple backends, target a specific instance by its listen port instead.
+`rcon` on a pool entry fans the command out to every running backend in that pool. Target a pool by hostname or the pool index shown in `rcon nexus slist`, or target a specific instance by listen port when you want only one backend to receive the command.
 
 ## Background Music (BGM)
 

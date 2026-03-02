@@ -124,7 +124,7 @@
 -					break;
 -				}
 -			if (n < hostCacheCount)
-+			n = NET_ResolveHostcacheName(host, resolved, sizeof(resolved));
++			n = NET_ResolveHostcacheName(host, resolved, sizeof(resolved), false);
 +			if (n < 0) { Con_Printf("Ambiguous host \"%s\"\n", host); return NULL; }
 +			if (n > 0) {
 +				host = resolved;
@@ -157,7 +157,7 @@
 -				break;
 -			}
 +	{
-+		n = NET_ResolveHostcacheName(host, resolved, sizeof(resolved));
++		n = NET_ResolveHostcacheName(host, resolved, sizeof(resolved), false);
 +		if (n < 0) { Con_Printf("Ambiguous host \"%s\"\n", host); return NULL; }
 +		if (n > 0)
 +			host = resolved;

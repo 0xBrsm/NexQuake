@@ -10,11 +10,12 @@
  	int		users;
  	int		maxusers;
 +	int		instances;
-@@ -237,6 +238,14 @@
+@@ -237,6 +238,15 @@
  
  extern int hostCacheCount;
  extern hostcache_t hostcache[HOSTCACHESIZE];
-+int NET_ResolveHostcacheName(char *token, char *out, int out_size);
++int NET_ResolveHostcacheName(char *token, char *out, int out_size, qboolean exact);
++void NET_InvalidateHostCache(void);
 +void NET_SlistParseAggregatedList(int ldriver);
 +void NET_SlistPrintHeader(int budget);
 +void NET_SlistPrintEntry(int budget, const hostcache_t *host);

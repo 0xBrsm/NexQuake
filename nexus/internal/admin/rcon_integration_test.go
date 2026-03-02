@@ -10,6 +10,7 @@ import (
 func integrationEnv() *Env {
 	return &Env{
 		ServerSnapshots:   func() []ServerInfo { return nil },
+		BackendSnapshots:  func(int) ([]ServerInfo, error) { return nil, nil },
 		StartServer:       func(int) error { return nil },
 		StartServersAll:   func() error { return nil },
 		StopServer:        func(context.Context, int, time.Duration) error { return nil },
@@ -18,7 +19,7 @@ func integrationEnv() *Env {
 		RestartServersAll: func(context.Context, time.Duration) error { return nil },
 		RemoveServer:      func(int) error { return nil },
 		LaunchServer:      func(string, []string) error { return nil },
-		ExecServerCmd:     func(int, string, string) (string, error) { return "", nil },
+		DispatchServerCmd: func(string, string, string) (string, error) { return "", nil },
 		TailNexusLog:      func(int) []string { return nil },
 		Auditf:            func(string, ...any) {},
 		SessionSnapshots:  func() []SessionInfo { return nil },
@@ -31,21 +32,21 @@ func execNexusCommandThroughFrame(t *testing.T, env *Env, cmd string) string {
 	t.Helper()
 
 	r := newMockSession(true)
-	HandleAdminFrame(r, []byte("\x000\x00"+cmd), nil, env)
+	HandleAdminFrameWithIdentityAndPromotionHook(r, []byte("\x000\x00"+cmd), nil, env, "", nil)
 	return r.reply()
 }
 
 func TestAdminIntegration_HandleAdminFrame_ServerCommandReturnsOutput(t *testing.T) {
 	env := integrationEnv()
-	env.ExecServerCmd = func(port int, cmd, actorID string) (string, error) {
-		if port != 26000 || cmd != "hostname" {
+	env.DispatchServerCmd = func(target, cmd, actorID string) (string, error) {
+		if target != "26000" || cmd != "hostname" {
 			return "", nil
 		}
 		return "hostname is \"fragfest\"\n", nil
 	}
 
 	r := newMockSession(true)
-	HandleAdminFrame(r, []byte("\x0026000\x00hostname"), &Auth{}, env)
+	HandleAdminFrameWithIdentityAndPromotionHook(r, []byte("\x0026000\x00hostname"), &Auth{}, env, "", nil)
 	reply := r.reply()
 	if !strings.Contains(reply, "hostname is \"fragfest\"") {
 		t.Fatalf("expected server console output reply, got %q", reply)
@@ -59,9 +60,9 @@ func TestAdminIntegration_HandleAdminFrame_TargetPortZeroRunsNexusCommand(t *tes
 	env := integrationEnv()
 
 	r := newMockSession(true)
-	HandleAdminFrame(r, []byte("\x000\x00slist"), &Auth{}, env)
+	HandleAdminFrameWithIdentityAndPromotionHook(r, []byte("\x000\x00slist"), &Auth{}, env, "", nil)
 	reply := r.reply()
-	if !strings.HasPrefix(reply, "\n") || !strings.Contains(reply, "No Quake servers found.") {
+	if !strings.HasPrefix(reply, "\n") || !strings.Contains(reply, "No Quake pools found.") {
 		t.Fatalf("expected nexus slist reply, got %q", reply)
 	}
 }
@@ -162,7 +163,7 @@ func TestAdminIntegration_HandleAdminFrame_SessionBanAdminRejected(t *testing.T)
 	if !strings.Contains(reply, "cannot ban admin sessions") {
 		t.Fatalf("expected admin-ban rejection detail, got %q", reply)
 	}
-	if !strings.Contains(reply, "\nusage: rcon session ban <idx>") {
+	if !strings.Contains(reply, "\nusage: rcon nexus session ban <idx>") {
 		t.Fatalf("expected ban usage helper text, got %q", reply)
 	}
 	if adminMock.closed {

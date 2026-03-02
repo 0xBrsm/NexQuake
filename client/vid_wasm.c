@@ -20,17 +20,12 @@ extern viddef_t vid;
 #define VID_MAX_HEIGHT 1024
 //
 #define VID_ASPECT_RATIO (4.0 / 3.0)
-#define VID_DEFAULT_MODE "0"
-#define VID_DEFAULT_MODE_INDEX 0
+#define VID_DEFAULT_MODE "1"
 #define VID_NUM_MODES 6
 #define VID_ROW_SIZE 3
-#define MODE_SECTION_GAP_ROWS 2
-#define VID_FOV_MIN 10.0
-#define VID_FOV_MAX 170.0
 
 
 static int clamp_int(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
-static double clamp_double(double v, double lo, double hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 EM_JS(void, js_update_canvas_ar, (double ar), {
 	var c = document.getElementById('canvas');
@@ -60,7 +55,7 @@ typedef struct { int width, height; char desc[32]; } vid_mode_t;
 static vid_mode_t modelist[VID_NUM_MODES];
 static int        vid_nummodes;
 static cvar_t     vid_mode = {"vid_mode", VID_DEFAULT_MODE, true};
-static int        startup_vid_mode = VID_DEFAULT_MODE_INDEX;
+static int        startup_vid_mode;
 static int        vid_modenum = -1;
 static int        vid_hunkmark = 0;
 static int        vid_line = 0;
@@ -78,7 +73,6 @@ char *VID_GetModeDescription(int n);
 
 #define MAX_COLUMN_SIZE 5
 #define MODE_AREA_HEIGHT (MAX_COLUMN_SIZE + 6)
-#define VID_COL_WIDTH (13 * 8)
 
 static qboolean mode_is_widescreen(int modenum)
 {
@@ -106,10 +100,9 @@ static void update_mode_fov(int old_w, int old_h, int new_w, int new_h)
 	if (old_aspect <= 0.0 || new_aspect <= 0.0 || fabs(new_aspect - old_aspect) < 0.0001)
 		return;
 
-	old_fov = clamp_double(fovvar->value, VID_FOV_MIN, VID_FOV_MAX);
+	old_fov = fovvar->value;
 	old_half = old_fov * (M_PI / 360.0);
 	new_fov = atan(tan(old_half) * (new_aspect / old_aspect)) * (360.0 / M_PI);
-	new_fov = clamp_double(new_fov, VID_FOV_MIN, VID_FOV_MAX);
 	if (fabs(new_fov - old_fov) > 0.01)
 		Cvar_SetValue("fov", (float)new_fov);
 }
@@ -180,7 +173,7 @@ static void draw_mode_grid(int start, int count, int base_y)
 			M_PrintWhite(col, row, desc);
 		else
 			M_Print(col, row, desc);
-		col += VID_COL_WIDTH;
+			col += 13 * 8;
 		if ((i % VID_ROW_SIZE) == (VID_ROW_SIZE - 1)) {
 			col = 16;
 			row += 8;
@@ -193,7 +186,7 @@ static void grid_cursor_pos(int line, int fixed, int classic_y, int fs_y,
 {
 	int in_classic = (line < fixed);
 	int local = in_classic ? line : line - fixed;
-	*cx = 8 + (local % VID_ROW_SIZE) * VID_COL_WIDTH;
+	*cx = 8 + (local % VID_ROW_SIZE) * 13 * 8;
 	*cy = (in_classic ? classic_y : fs_y) + (local / VID_ROW_SIZE) * 8;
 }
 
@@ -252,9 +245,9 @@ static void VID_MenuDraw(void)
 	vid_wmodes = vid_nummodes;
 	fixed_modes = clamp_int(vid_fixedmodes, 0, vid_wmodes);
 	fullscreen_modes = vid_wmodes - fixed_modes;
-	fixed_rows = (fixed_modes + VID_ROW_SIZE - 1) / VID_ROW_SIZE;
+	fixed_rows = (fixed_modes + (VID_ROW_SIZE - 1)) / VID_ROW_SIZE;
 	classic_y = 36 + 2 * 8;
-	fs_label_y = 36 + (2 + fixed_rows + MODE_SECTION_GAP_ROWS) * 8;
+	fs_label_y = 36 + (fixed_rows + 4) * 8;
 	fs_modes_y = fs_label_y + 2 * 8;
 
 	if (vid_line < 0 || vid_line >= vid_wmodes)

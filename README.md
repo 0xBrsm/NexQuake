@@ -35,7 +35,7 @@ Browser Client  --WebSocket-->  Nexus  --UDP-->  NetQuake Server
 
 The result is the original Quake multiplayer experience (software rendered, original physics, original UI) with no plugins, no user installs, and no compromise on the classic experience.
 
-**The Browser Client** is the Quake engine compiled to WebAssembly with Emscripten. It uses WebGL2 for rendering (GPU-side palette conversion from the original 8-bit framebuffer), WebAudio for sound, and HTML5 events for input. Controllers and touch devices supported. Game files and background music are streamed on demand from the server through a virtual filesystem.
+**The Browser Client** is the Quake engine compiled to WebAssembly with Emscripten. It uses WebGL2 for rendering (GPU-side palette conversion from the original 8-bit framebuffer), WebAudio for sound, and HTML5 events for input. Both gamepad and touch devices are supported. Game files and background music are streamed on demand from the server through a virtual filesystem.
 
 **Nexus** is a Go orchestration server that serves client files, serves game data, manages servers, and tunnels multiplayer traffic. Each WebSocket frame carries a small routing header plus a raw NetQuake `protocol 15` datagram. Nexus acts as a transparent relay with multi-server routing; it never parses game packets.
 

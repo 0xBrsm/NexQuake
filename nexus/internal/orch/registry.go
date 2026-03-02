@@ -41,8 +41,9 @@ type poolBackendState struct {
 }
 
 // serverPool groups one or more backend server processes behind a single
-// virtual listen port (or autoscaling identity). Fixed-port pools have exactly
-// one backend; "-port 0" pools may have multiple dynamically spawned replicas.
+// configured server line. Fixed-port pools have exactly one backend and a
+// stable candidate port; "-port 0" pools may have multiple dynamically spawned
+// replicas.
 type serverPool struct {
 	// PoolID is the unique identifier assigned at registration.
 	PoolID int
@@ -55,8 +56,8 @@ type serverPool struct {
 	// BackendServerIDs lists the IDs of all backend records in this pool.
 	BackendServerIDs []int
 
-	// ListenPort is the stable UDP port for fixed-port pools; 0 for autoscaling pools.
-	ListenPort int
+	// CandidatePort is the stable UDP port for fixed-port pools; 0 for autoscaling pools.
+	CandidatePort int
 
 	// RoundRobinCursor advances each time a backend is selected for routing.
 	RoundRobinCursor int
@@ -65,12 +66,14 @@ type serverPool struct {
 	// ScaleUpInFlight is true while a replica launch is in progress.
 	ScaleUpInFlight bool
 
-	// AggregateUsers is the total player count across all running backends.
-	AggregateUsers uint16
-	// AggregateMaxUsers is the total capacity across all running backends.
-	AggregateMaxUsers uint16
-	// AggregateInstances is the number of currently running backends.
-	AggregateInstances uint16
+	// aggregateUsers is the total player count across all running backends.
+	aggregateUsers uint16
+	// aggregateMaxUsers is the total capacity across all running backends.
+	aggregateMaxUsers uint16
+	// joinableInstances is the number of running backends currently accepting joins.
+	joinableInstances uint16
+	// aggregateInstances is the number of currently running backends.
+	aggregateInstances uint16
 
 	// DisplayHostname, DisplayMap, DisplayGameDir are cached from the most
 	// recently observed CCREP and shown in slist responses and snapshots.
@@ -175,7 +178,7 @@ func (m *ServerManager) setPoolBackendLifecycleLocked(pool *serverPool, serverID
 
 func (m *ServerManager) resetPoolRegistryLocked() {
 	m.poolsByID = make(map[int]*serverPool)
-	m.poolByListenPort = make(map[int]*serverPool)
+	m.poolByCandidatePort = make(map[int]*serverPool)
 	m.poolByServerID = make(map[int]*serverPool)
 	m.nextPoolID = 1
 }
@@ -224,14 +227,14 @@ func forceLaunchPortZero(args []string) []string {
 
 func (m *ServerManager) registerPoolLaunch(launch serverLaunch) (*serverRecord, error) {
 	configuredPort, hasConfiguredPort := launchConfiguredPort(launch)
-	listenPort := 0
+	candidatePort := 0
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	autoscales := hasConfiguredPort && configuredPort == 0 && max(1, m.poolMaxSize) > 1
 	if !autoscales && hasConfiguredPort && configuredPort > 0 {
-		listenPort = configuredPort
+		candidatePort = configuredPort
 	}
 
 	pool := &serverPool{
@@ -239,13 +242,13 @@ func (m *ServerManager) registerPoolLaunch(launch serverLaunch) (*serverRecord, 
 		Line:           launch.Line,
 		TemplateLaunch: cloneServerLaunch(launch),
 		Autoscales:     autoscales,
-		ListenPort:     listenPort,
+		CandidatePort:  candidatePort,
 		backendState:   make(map[int]*poolBackendState),
 	}
 	m.nextPoolID++
 	m.poolsByID[pool.PoolID] = pool
-	if pool.ListenPort > 0 {
-		m.poolByListenPort[pool.ListenPort] = pool
+	if pool.CandidatePort > 0 {
+		m.poolByCandidatePort[pool.CandidatePort] = pool
 	}
 
 	rec := m.appendPoolBackendRecordLocked(pool, launch, poolBackendLifecycleWarming)
@@ -256,21 +259,21 @@ func (m *ServerManager) registerPoolLaunch(launch serverLaunch) (*serverRecord, 
 	return rec, nil
 }
 
-func (m *ServerManager) updatePoolListenPortLocked(pool *serverPool, listenPort int) {
-	if pool == nil || pool.Autoscales || listenPort < 1 || listenPort > 65535 {
+func (m *ServerManager) updatePoolCandidatePortLocked(pool *serverPool, port int) {
+	if pool == nil || pool.Autoscales || port < 1 || port > 65535 {
 		return
 	}
-	if pool.ListenPort == listenPort {
+	if pool.CandidatePort == port {
 		return
 	}
-	if pool.ListenPort > 0 {
-		delete(m.poolByListenPort, pool.ListenPort)
+	if pool.CandidatePort > 0 {
+		delete(m.poolByCandidatePort, pool.CandidatePort)
 	}
-	pool.ListenPort = listenPort
-	m.poolByListenPort[listenPort] = pool
+	pool.CandidatePort = port
+	m.poolByCandidatePort[port] = pool
 }
 
-func (m *ServerManager) updatePoolListenPortForRecordLocked(rec *serverRecord) {
+func (m *ServerManager) updatePoolCandidatePortForRecordLocked(rec *serverRecord) {
 	if rec == nil {
 		return
 	}
@@ -278,7 +281,7 @@ func (m *ServerManager) updatePoolListenPortForRecordLocked(rec *serverRecord) {
 	if pool == nil {
 		return
 	}
-	m.updatePoolListenPortLocked(pool, recordListenPort(rec))
+	m.updatePoolCandidatePortLocked(pool, recordListenPort(rec))
 }
 
 func (m *ServerManager) resetPoolBackendState(serverID int) {
@@ -347,9 +350,10 @@ func (m *ServerManager) refreshPoolSnapshotLocked(pool *serverPool) {
 		applyPoolDisplayFromRecord(pool, rec)
 	}
 
-	pool.AggregateUsers = clampUint16(users)
-	pool.AggregateMaxUsers = clampUint16(maxUsers)
-	pool.AggregateInstances = clampUint16(instances)
+	pool.aggregateUsers = clampUint16(users)
+	pool.aggregateMaxUsers = clampUint16(maxUsers)
+	pool.joinableInstances = clampUint16(m.poolRoutableCandidateCountLocked(pool, false))
+	pool.aggregateInstances = clampUint16(instances)
 }
 
 func (m *ServerManager) removeServerRecordLocked(serverID int) {

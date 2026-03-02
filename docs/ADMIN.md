@@ -10,23 +10,23 @@ Authentication is handled either by connection-level OIDC JWT auth or by in-game
 |------|----------|
 | `rcon <cmd>` | If connected to a server, sends to that server. If disconnected, sends to Nexus (`port 0`). |
 | `rcon nexus <cmd>` | Forces a Nexus command even while connected to a game server. |
-| `rcon <host> <cmd>` | Targets a server by `slist` hostname cache entry. For scaled pools, this succeeds only when the pool has one routable backend; otherwise Nexus returns an ambiguous-target error. |
-| `rcon <port> <cmd>` | Targets a server by listen port. |
+| `rcon <host> <cmd>` | Targets a server by `slist` hostname cache entry. For scaled pools, Nexus fans the command out to every running backend in that pool. |
+| `rcon <port\|idx> <cmd>` | Targets a specific backend by listen port, or a managed pool by slot index. Pool targets fan the command out to every running backend in that pool. |
 
 ## Nexus Command Reference
 
 | Command | Usage | Description |
 |---------|-------|-------------|
 | **help** | `rcon nexus help` | Show the list of Nexus rcon commands. |
-| **tail** | `rcon nexus tail` | Show the last 10 Nexus log lines. Server tail is `rcon <host\|port> tail`. |
-| **slist** | `rcon nexus slist` | List all managed game servers and their current status (running, stopped, crashed). Displays server name, port, game directory, player count, and state. |
+| **tail** | `rcon nexus tail` | Show the last 10 Nexus log lines. Server tail is `rcon <host\|port\|idx> tail`. |
+| **slist** | `rcon nexus slist [<all\|idx\|host>]` | With no argument, list managed pools. Displays the pool name, candidate connect port, game directory, player count, and state. With `all`, a pool index, or a pool hostname, list backend servers in the existing grouped format for every pool or one selected pool. |
 | **session list** | `rcon nexus session list` | List all connected client sessions. Displays role, user identity, server, and port. If no authenticated user identity is available, shows the public source IP in parentheses. |
 | **session info** | `rcon nexus session info <idx>` | Show details for one session index from `session list`, including NQIP/source identity and status-derived player slot/address when connected to a server. |
 | **session ban** | `rcon nexus session ban <idx>` | Ban one session index from all servers and disconnect it immediately. Nexus issues server `kick` by status slot first (best effort), then closes session sockets and blocks route identity until Nexus restart. Admin sessions cannot be banned. |
-| **start** | `rcon nexus start <idx\|port\|all>` | Start a specific server by slot index (1-based from `slist`) or listen port. Use `all` to start every server defined in `servers.ini`. |
-| **stop** | `rcon nexus stop <idx\|port\|all>` | Stop a specific server or all servers. Sends a graceful `quit` command first, then terminates if it doesn't exit. |
-| **restart** | `rcon nexus restart <idx\|port\|all>` | Restart a specific server or all servers. Equivalent to `stop` followed by `start`. |
-| **remove** | `rcon nexus remove <idx\|port>` | Remove a **stopped** server from the runtime registry. Useful for cleaning up temporary `launch` instances. |
+| **start** | `rcon nexus start <idx\|host\|all>` | Start a specific pool by the pool index shown in `rcon nexus slist`, or by pool hostname. Use `all` to start every server defined in `servers.ini`. |
+| **stop** | `rcon nexus stop <idx\|host\|all>` | Stop a specific pool or all pools. Sends a graceful `quit` command first, then terminates if it doesn't exit. |
+| **restart** | `rcon nexus restart <idx\|host\|all>` | Restart a specific pool or all pools. Equivalent to `stop` followed by `start`. |
+| **remove** | `rcon nexus remove <idx\|host>` | Remove a **stopped** pool from the runtime registry. Useful for cleaning up temporary `launch` instances. |
 | **launch** | `rcon nexus launch <binary> [args...]` | Launch and register a new server instance dynamically. Example: `rcon nexus launch nqserver -dedicated -game ctf +map ctf2m3`. |
 
 ## Privileged Gameplay Commands (`please`)
@@ -37,8 +37,8 @@ Usage flow:
 
 1. Enable the feature on the target server (`idgods 1` in config, or launch with `+idgods 1`).
 2. As a global Nexus rcon admin:
-    1. Run `rcon <host|port> status` (if not connected) or just `status` if connected to the target server.
+    1. Run `rcon <host|port|idx> status` (if not connected) or just `status` if connected to the target server.
     2. Note the number of the player you want to promote.
-    3. Run `rcon <host|port> please # <player number>`.
+    3. Run `rcon <host|port|idx> please # <player number>`.
 3. That player is promoted to admin on that server only.
 4. The promoted player can then use `cmd <server command>` from their client console, and can also run privileged gameplay commands directly (`god`, `notarget`, `noclip`, `fly`, `give`, `kick`, `ban`). Note that `ban` in this case is only for that particular game server. To ban a player from the entire NexQuake instance, you must be a global admin and use `rcon session ban`.

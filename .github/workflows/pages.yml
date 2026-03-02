@@ -1,0 +1,60 @@
+name: Deploy Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/*.md'
+      - site/**
+      - client/shell/shell-nq.css
+      - client/shell/favicon.svg
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build site
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p _site/client/shell _site/data
+          cp -r site/. _site/
+          find . \
+            -path './.git' -prune -o \
+            -path './.github' -prune -o \
+            -path './_site' -prune -o \
+            -type f -name '*.md' -print | while read -r file; do
+              rel="${file#./}"
+              mkdir -p "_site/$(dirname "$rel")"
+              cp "$file" "_site/$rel"
+            done
+          cp client/shell/shell-nq.css _site/client/shell/
+          cp client/shell/favicon.svg _site/client/shell/
+          node site/extract-home-features.js README.md _site/data/home-features.json
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

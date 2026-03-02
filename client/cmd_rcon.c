@@ -17,6 +17,8 @@ static qboolean rcon_commands_registered = false;
 
 static cvar_t rcon_password = {"rcon_password", ""};
 
+extern int NQWasm_GetConnectedServerListenPort(void);
+
 static void Rcon_f(void)
 {
 	char *target;
@@ -33,7 +35,7 @@ static void Rcon_f(void)
 	argc = Cmd_Argc();
 	if (argc < 2)
 	{
-		Con_Printf("usage: rcon <cmd> | rcon <host|port> <cmd>\n");
+		Con_Printf("usage: rcon <cmd> | rcon nexus <cmd> | rcon <host|port|idx> <cmd>\n");
 		return;
 	}
 
@@ -51,23 +53,24 @@ static void Rcon_f(void)
 			targetbuf[sizeof(targetbuf) - 1] = 0;
 		}
 
-		// First, treat arg1 as a hostcache token and resolve to its port target.
+		// First, treat arg1 as an exact hostcache token and let Nexus resolve
+		// any duplicate visible hostname ambiguity.
 		if (!targetbuf[0])
 		{
-			resolved = NET_ResolveHostcacheName(arg1, targetbuf, sizeof(targetbuf));
-			if (resolved < 0)
+			resolved = NET_ResolveHostcacheName(arg1, targetbuf, sizeof(targetbuf), true);
+			if (resolved > 0)
 			{
-				Con_Printf("rcon: ambiguous host \"%s\"\n", arg1);
-				return;
+				Q_strncpy(targetbuf, hostcache[resolved - 1].name, sizeof(targetbuf) - 1);
+				targetbuf[sizeof(targetbuf) - 1] = 0;
 			}
 		}
 
-		// Otherwise, accept direct numeric port targets.
+		// Otherwise, accept direct numeric port or pool-index targets.
 		if (!targetbuf[0] && arg1[0] >= '0' && arg1[0] <= '9')
 		{
 			char *end;
 			long port = strtol(arg1, &end, 10);
-			if (end != arg1 && *end == '\0' && port >= 0 && port <= 65535)
+			if (end != arg1 && *end == '\0' && port > 0)
 			{
 				Q_strncpy(targetbuf, arg1, sizeof(targetbuf) - 1);
 				targetbuf[sizeof(targetbuf) - 1] = 0;
@@ -84,8 +87,14 @@ static void Rcon_f(void)
 
 	if (!targetbuf[0] && cls.state == ca_connected && cls.netcon)
 	{
+		int listen_port = NQWasm_GetConnectedServerListenPort();
 		int ld = cls.netcon->landriver;
 		int i;
+
+		if (listen_port > 0 && listen_port <= 65535)
+		{
+			snprintf(targetbuf, sizeof(targetbuf), "%d", listen_port);
+		}
 
 		if (ld >= 0 && ld < net_numlandrivers && net_landrivers[ld].initialized)
 			for (i = 0; i < hostCacheCount; i++)

@@ -351,7 +351,7 @@ func (g *HashedAssetGateway) resolveVFSAsset(assetURL, fallbackName string) (has
 		}
 
 		pakPath := filepath.Join(g.gameDir, mod, layer, pakName)
-		idx, err := g.pakCache.Get(pakPath)
+		idx, err := g.pakCache.get(pakPath)
 		if err != nil {
 			return hashedAsset{}, err
 		}
@@ -366,7 +366,7 @@ func (g *HashedAssetGateway) resolveVFSAsset(assetURL, fallbackName string) (has
 			return hashedAsset{}, err
 		}
 
-		entryName := path.Base(entry.Name)
+		entryName := path.Base(entry.name)
 		if entryName == "" {
 			entryName = fallbackName
 		}
@@ -380,7 +380,7 @@ func (g *HashedAssetGateway) resolveVFSAsset(assetURL, fallbackName string) (has
 				if openErr != nil {
 					return nil, openErr
 				}
-				section := io.NewSectionReader(f, entry.Offset, entry.Size)
+				section := io.NewSectionReader(f, entry.offset, entry.size)
 				return &sectionReadSeekCloser{
 					ReadSeeker: section,
 					closeFn:    f.Close,

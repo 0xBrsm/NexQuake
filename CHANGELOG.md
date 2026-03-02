@@ -4,6 +4,16 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.7.7
+
+### Fixed
+- Browser `connect` and `rcon` target resolution now stay aligned across reconnects and scaled server pools, including exact hostname targeting for RCON and host-cache invalidation after WebSocket reconnects.
+- Nexus now chunks oversized admin replies and preserves joinable candidate ports in pooled server listings, avoiding silent client-side drops and broken joins from `slist`.
+
+### Changed
+- `rcon nexus slist` now shows pool summaries by default and can drill into grouped backend details with `all`, a pool index, or a pool hostname.
+- Nexus pool admin commands and server-targeted `rcon` usage now consistently accept pool indices/hostnames, with pool-targeted RCON fan-out to every running backend in that pool.
+
 ## 1.7.6
 
 ### Fixed

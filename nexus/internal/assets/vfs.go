@@ -55,8 +55,8 @@ type vfsManifestBundle struct {
 // headerVFSPrefetchConcurrency is the HTTP header name for VFS prefetch concurrency.
 const headerVFSPrefetchConcurrency = "X-NQ-VFS-Prefetch-Concurrency"
 
-// NewGameManifestBundleHandler returns all mod manifests in one response.
-func NewGameManifestBundleHandler(gameDir string, pakCache *PakIndexCache, prefetchConcurrency int) http.HandlerFunc {
+// newGameManifestBundleHandler returns all mod manifests in one response.
+func newGameManifestBundleHandler(gameDir string, pakCache *PakIndexCache, prefetchConcurrency int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -250,21 +250,21 @@ func explodePakIntoManifest(byKey map[string]vfsManifestEntry, mod, layer, pakPa
 	if pakCache == nil {
 		pakCache = NewPakIndexCache()
 	}
-	idx, err := pakCache.Get(pakPath)
+	idx, err := pakCache.get(pakPath)
 	if err != nil {
 		return err
 	}
 
 	for _, entry := range idx.entries {
 		// idx.entries are keyed by normalized names, but keep the original entry for URL path.
-		key := normalizeVFSKey(entry.Name)
+		key := normalizeVFSKey(entry.name)
 		if key == "" {
 			continue
 		}
 		byKey[key] = vfsManifestEntry{
 			Path: key,
-			URL:  "/pak-extract/" + escapeURLPathPreserveSlashes(mod) + "/" + escapeURLPathPreserveSlashes(layer) + "/" + escapeURLPathPreserveSlashes(pakRel) + "/" + escapeURLPathPreserveSlashes(entry.Name),
-			Size: entry.Size,
+			URL:  "/pak-extract/" + escapeURLPathPreserveSlashes(mod) + "/" + escapeURLPathPreserveSlashes(layer) + "/" + escapeURLPathPreserveSlashes(pakRel) + "/" + escapeURLPathPreserveSlashes(entry.name),
+			Size: entry.size,
 		}
 	}
 	return nil

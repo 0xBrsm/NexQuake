@@ -93,10 +93,16 @@ void NET_SlistParseAggregatedList(int ldriver)
 }
 
 // -----------------------------------------------------------------------
-// Hostcache name resolution
+// Hostcache name resolution. Callers can require exact matches for explicit
+// rcon targeting or allow fuzzy prefix matching for connect-style UX.
 // -----------------------------------------------------------------------
 
-int NET_ResolveHostcacheName(char *token, char *out, int out_size)
+void NET_InvalidateHostCache(void)
+{
+	hostCacheCount = 0;
+}
+
+int NET_ResolveHostcacheName(char *token, char *out, int out_size, qboolean exact)
 {
 	int i, match = -1;
 	int token_len;
@@ -107,13 +113,15 @@ int NET_ResolveHostcacheName(char *token, char *out, int out_size)
 	token_len = Q_strlen(token);
 
 	for (i = 0; i < hostCacheCount; i++)
+	{
 		if (!Q_strcasecmp(token, hostcache[i].name))
 		{
 			match = i;
 			break;
 		}
+	}
 
-	if (match < 0)
+	if (match < 0 && !exact)
 	{
 		for (i = 0; i < hostCacheCount; i++)
 		{
@@ -149,7 +157,7 @@ static const int slist_col_max[SLIST_NUM_COLS] = {
 
 // Minimum useful widths for narrow layouts.
 static const int slist_col_min[SLIST_NUM_COLS] = {
-	10, 8, 10, 3
+	10, 8, 10, 5
 };
 
 // Prefer preserving columns by shrinking Server to this width before fallback.

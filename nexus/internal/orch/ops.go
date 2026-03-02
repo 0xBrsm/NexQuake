@@ -16,11 +16,7 @@ var (
 	errAlreadyStopped = errors.New("already stopped")
 )
 
-func (m *ServerManager) findPoolByPortOrIndexLocked(target int) (*serverPool, error) {
-	if pool := m.poolByListenPort[target]; pool != nil {
-		return pool, nil
-	}
-
+func (m *ServerManager) findPoolByIndexLocked(target int) (*serverPool, error) {
 	pools := make([]*serverPool, 0, len(m.poolsByID))
 	for _, pool := range m.poolsByID {
 		if pool == nil {
@@ -119,16 +115,15 @@ func (m *ServerManager) LaunchServer(binary string, args []string) error {
 	return m.startRecord(rec)
 }
 
-// StartServer starts the server pool identified by target, which may be either
-// a listen port or a 1-based line index. Returns [errAlreadyRunning] if the
-// server is already up.
+// StartServer starts the server pool identified by 1-based pool index.
+// Returns [errAlreadyRunning] if the server is already up.
 func (m *ServerManager) StartServer(target int) error {
 	if target <= 0 {
 		return fmt.Errorf("invalid target %d", target)
 	}
 
 	m.mu.RLock()
-	pool, err := m.findPoolByPortOrIndexLocked(target)
+	pool, err := m.findPoolByIndexLocked(target)
 	if err != nil {
 		m.mu.RUnlock()
 		return err
@@ -193,16 +188,16 @@ func (m *ServerManager) StartServersAll() error {
 	)
 }
 
-// StopServer stops all backends in the pool identified by target (port or
-// 1-based index), removes their records, and returns [errAlreadyStopped] if
-// no backend was running. killAfter is the grace period before SIGKILL.
+// StopServer stops all backends in the pool identified by 1-based pool
+// index, removes their records, and returns [errAlreadyStopped] if no backend
+// was running. killAfter is the grace period before SIGKILL.
 func (m *ServerManager) StopServer(ctx context.Context, target int, killAfter time.Duration) error {
 	if target <= 0 {
 		return fmt.Errorf("invalid target %d", target)
 	}
 
 	m.mu.RLock()
-	pool, err := m.findPoolByPortOrIndexLocked(target)
+	pool, err := m.findPoolByIndexLocked(target)
 	if err != nil {
 		m.mu.RUnlock()
 		return err
@@ -244,9 +239,9 @@ func (m *ServerManager) StopServersAll(ctx context.Context, killAfter time.Durat
 	)
 }
 
-// RestartServer stops then starts the pool identified by target. A pool that
-// is not running is started directly without treating the missing stop as an
-// error.
+// RestartServer stops then starts the pool identified by 1-based pool index.
+// A pool that is not running is started directly without treating the missing
+// stop as an error.
 func (m *ServerManager) RestartServer(ctx context.Context, target int, killAfter time.Duration) error {
 	if target <= 0 {
 		return fmt.Errorf("invalid target %d", target)
@@ -265,9 +260,9 @@ func (m *ServerManager) RestartServersAll(ctx context.Context, killAfter time.Du
 	)
 }
 
-// RemoveServer unregisters the pool identified by target and deletes all its
-// backend records. Returns an error if any backend process is still alive;
-// call [ServerManager.StopServer] first.
+// RemoveServer unregisters the pool identified by 1-based pool index and
+// deletes all its backend records. Returns an error if any backend process is
+// still alive; call [ServerManager.StopServer] first.
 func (m *ServerManager) RemoveServer(target int) error {
 	if target <= 0 {
 		return fmt.Errorf("invalid target %d", target)
@@ -276,7 +271,7 @@ func (m *ServerManager) RemoveServer(target int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	pool, err := m.findPoolByPortOrIndexLocked(target)
+	pool, err := m.findPoolByIndexLocked(target)
 	if err != nil {
 		return err
 	}
@@ -297,8 +292,8 @@ func (m *ServerManager) RemoveServer(target int) error {
 		m.removeServerRecordLocked(rec.id)
 	}
 
-	if pool.ListenPort > 0 {
-		delete(m.poolByListenPort, pool.ListenPort)
+	if pool.CandidatePort > 0 {
+		delete(m.poolByCandidatePort, pool.CandidatePort)
 	}
 	delete(m.poolsByID, pool.PoolID)
 	return nil

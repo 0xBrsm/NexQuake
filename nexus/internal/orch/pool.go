@@ -36,9 +36,11 @@ func (m *ServerManager) poolRoutableCandidatesLocked(pool *serverPool, allowDrai
 		if !m.serverRecordRunningLocked(rec) {
 			continue
 		}
-		state := pool.backendState[serverID]
-		if !backendAllowsPoolRouting(state, allowDraining) {
-			continue
+		if pool.Autoscales {
+			state := pool.backendState[serverID]
+			if !backendAllowsPoolRouting(state, allowDraining) {
+				continue
+			}
 		}
 
 		port := recordListenPort(rec)
@@ -203,14 +205,14 @@ func (m *ServerManager) decidePoolActionsLocked(pool *serverPool, now time.Time)
 	m.refreshPoolSnapshotLocked(pool)
 
 	freeSlots := 0
-	if pool.AggregateMaxUsers > 0 {
-		freeSlots = int(pool.AggregateMaxUsers) - int(pool.AggregateUsers)
+	if pool.aggregateMaxUsers > 0 {
+		freeSlots = int(pool.aggregateMaxUsers) - int(pool.aggregateUsers)
 		if freeSlots < 0 {
 			freeSlots = 0
 		}
 	}
 	neededHeadroom := poolNeededHeadroomLocked(pool, now)
-	runningCount := int(pool.AggregateInstances)
+	runningCount := int(pool.aggregateInstances)
 	activeRoutableCount := m.poolRoutableCandidateCountLocked(pool, false)
 
 	for _, serverID := range pool.BackendServerIDs {
@@ -273,7 +275,7 @@ func (m *ServerManager) decidePoolActionsLocked(pool *serverPool, now time.Time)
 		}
 	}
 
-	if pool.AggregateMaxUsers > 0 &&
+	if pool.aggregateMaxUsers > 0 &&
 		freeSlots < neededHeadroom &&
 		!pool.ScaleUpInFlight &&
 		runningCount < max(1, m.poolMaxSize) &&

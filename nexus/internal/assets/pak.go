@@ -15,9 +15,9 @@ import (
 
 // pakFileEntry describes a single file inside a Quake .pak archive.
 type pakFileEntry struct {
-	Name   string
-	Offset int64
-	Size   int64
+	name   string
+	offset int64
+	size   int64
 }
 
 // readPakContents reads a Quake .pak file and returns directory entries.
@@ -93,7 +93,7 @@ func readPakContents(pakPath string) ([]pakFileEntry, error) {
 			return nil, fmt.Errorf("entry out of bounds for %q: off=%d size=%d file=%d", name, off, sz, fileSize)
 		}
 
-		out = append(out, pakFileEntry{Name: name, Offset: off, Size: sz})
+		out = append(out, pakFileEntry{name: name, offset: off, size: sz})
 	}
 
 	return out, nil
@@ -116,8 +116,8 @@ func NewPakIndexCache() *PakIndexCache {
 	return &PakIndexCache{byPath: make(map[string]*pakIndex)}
 }
 
-// Get returns a cached pak index, re-reading the pak if the file has changed.
-func (c *PakIndexCache) Get(pakPath string) (*pakIndex, error) {
+// get returns a cached pak index, re-reading the pak if the file has changed.
+func (c *PakIndexCache) get(pakPath string) (*pakIndex, error) {
 	st, err := os.Stat(pakPath)
 	if err != nil {
 		return nil, err
@@ -138,7 +138,7 @@ func (c *PakIndexCache) Get(pakPath string) (*pakIndex, error) {
 	}
 	m := make(map[string]pakFileEntry, len(contents))
 	for _, e := range contents {
-		key := normalizeVFSKey(e.Name)
+		key := normalizeVFSKey(e.name)
 		if key == "" {
 			continue
 		}
@@ -157,9 +157,9 @@ func (c *PakIndexCache) Get(pakPath string) (*pakIndex, error) {
 	return idx, nil
 }
 
-// NewPakExtractHandler returns an HTTP handler that extracts single files
+// newPakExtractHandler returns an HTTP handler that extracts single files
 // from pak archives on demand.
-func NewPakExtractHandler(gameDir string, pakCache *PakIndexCache) http.HandlerFunc {
+func newPakExtractHandler(gameDir string, pakCache *PakIndexCache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -199,7 +199,7 @@ func NewPakExtractHandler(gameDir string, pakCache *PakIndexCache) http.HandlerF
 		}
 
 		pakPath := filepath.Join(gameDir, mod, layer, pakName)
-		idx, err := pakCache.Get(pakPath)
+		idx, err := pakCache.get(pakPath)
 		if err != nil {
 			http.NotFound(w, r)
 			return
@@ -225,7 +225,7 @@ func NewPakExtractHandler(gameDir string, pakCache *PakIndexCache) http.HandlerF
 		}
 
 		w.Header().Set("Content-Type", "application/octet-stream")
-		section := io.NewSectionReader(f, entry.Offset, entry.Size)
-		http.ServeContent(w, r, path.Base(entry.Name), st.ModTime(), section)
+		section := io.NewSectionReader(f, entry.offset, entry.size)
+		http.ServeContent(w, r, path.Base(entry.name), st.ModTime(), section)
 	}
 }

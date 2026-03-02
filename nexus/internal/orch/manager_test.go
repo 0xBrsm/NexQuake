@@ -144,7 +144,7 @@ func TestLaunchServer_RegistersNewEntry(t *testing.T) {
 	}
 }
 
-func TestRemoveServer_RemovesStoppedRecordAndPortIndex(t *testing.T) {
+func TestRemoveServer_RemovesStoppedRecordByIndex(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 
 	recA, err := m.registerPoolLaunch(serverLaunch{
@@ -169,8 +169,8 @@ func TestRemoveServer_RemovesStoppedRecordAndPortIndex(t *testing.T) {
 	m.updatePort(recB, 26002)
 	m.updateSearchPath(recB, []string{"ctf", "id1"})
 
-	if err := m.RemoveServer(26001); err != nil {
-		t.Fatalf("RemoveServer(port) error = %v", err)
+	if err := m.RemoveServer(1); err != nil {
+		t.Fatalf("RemoveServer(index) error = %v", err)
 	}
 
 	if _, ok := m.serversByID[recA.id]; ok {

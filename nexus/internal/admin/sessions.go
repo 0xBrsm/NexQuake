@@ -25,12 +25,12 @@ type BanTarget struct {
 }
 
 type nexusClientRow struct {
-	NQIP    string
-	Source  string
-	UserID  string
-	IsAdmin bool
-	Port    int
-	Server  string
+	nqip    string
+	source  string
+	userID  string
+	isAdmin bool
+	port    int
+	server  string
 }
 
 func hostnameByListenPort(snapshots []ServerInfo) map[int]string {
@@ -42,11 +42,7 @@ func hostnameByListenPort(snapshots []ServerInfo) map[int]string {
 		if _, exists := out[snap.ListenPort]; exists {
 			continue
 		}
-		hostname := strings.TrimSpace(snap.Hostname)
-		if hostname == "" {
-			hostname = "UNNAMED"
-		}
-		out[snap.ListenPort] = hostname
+		out[snap.ListenPort] = displayHostname(strings.TrimSpace(snap.Hostname))
 	}
 	return out
 }
@@ -67,6 +63,11 @@ func queryNexusClientRows(env *Env) []nexusClientRow {
 	}
 
 	serverByPort := hostnameByListenPort(env.ServerSnapshots())
+	if env.BackendSnapshots != nil {
+		if snaps, err := env.BackendSnapshots(0); err == nil && len(snaps) > 0 {
+			serverByPort = hostnameByListenPort(snaps)
+		}
+	}
 	out := make([]nexusClientRow, 0, len(sessions))
 	for _, session := range sessions {
 		nqip := strings.TrimSpace(session.VirtualIP)
@@ -86,26 +87,26 @@ func queryNexusClientRows(env *Env) []nexusClientRow {
 		}
 
 		out = append(out, nexusClientRow{
-			NQIP:    nqip,
-			Source:  strings.TrimSpace(session.SourceIP),
-			UserID:  strings.TrimSpace(session.UserID),
-			IsAdmin: session.IsAdmin,
-			Port:    port,
-			Server:  server,
+			nqip:    nqip,
+			source:  strings.TrimSpace(session.SourceIP),
+			userID:  strings.TrimSpace(session.UserID),
+			isAdmin: session.IsAdmin,
+			port:    port,
+			server:  server,
 		})
 	}
 
 	slices.SortFunc(out, func(a, b nexusClientRow) int {
-		if c := compareClientIPText(a.NQIP, b.NQIP); c != 0 {
+		if c := compareClientIPText(a.nqip, b.nqip); c != 0 {
 			return c
 		}
-		if c := compareClientIPText(a.Source, b.Source); c != 0 {
+		if c := compareClientIPText(a.source, b.source); c != 0 {
 			return c
 		}
-		if c := cmp.Compare(a.Server, b.Server); c != 0 {
+		if c := cmp.Compare(a.server, b.server); c != 0 {
 			return c
 		}
-		return cmp.Compare(a.Port, b.Port)
+		return cmp.Compare(a.port, b.port)
 	})
 
 	return out
@@ -147,12 +148,12 @@ func formatNexusClientList(rows []nexusClientRow) string {
 	b.WriteString("#   Role   User                     Server          Port\n")
 	b.WriteString("--- ------ ------------------------ --------------- -----\n")
 	for i, row := range rows {
-		server := strings.TrimSpace(row.Server)
+		server := strings.TrimSpace(row.server)
 		if server == "" {
 			server = "-"
 		}
 		fmt.Fprintf(&b, "%-3d %-6.6s %-24.24s %-15.15s %5s\n",
-			i+1, sessionRole(row.IsAdmin), formatSessionUser(row.UserID, row.Source), server, formatSessionPort(row.Port))
+			i+1, sessionRole(row.isAdmin), formatSessionUser(row.userID, row.source), server, formatSessionPort(row.port))
 	}
 	b.WriteString("== end list ==\n\n")
 	return b.String()
@@ -173,18 +174,18 @@ func applyServerKickTargets(targets []BanTarget, env *Env) (applied int, errs []
 }
 
 func kickServerTargetByVirtualIP(target BanTarget, env *Env) error {
-	statusReply, err := env.ExecServerCmd(target.Port, "status", "")
+	statusReply, err := env.DispatchServerCmd(strconv.Itoa(target.Port), "status", "")
 	if err != nil {
 		return fmt.Errorf("status lookup failed: %w", err)
 	}
 
-	match, ok := StatusPlayerForVirtualIP(statusReply, target.VirtualIP)
+	match, ok := statusPlayerForVirtualIP(statusReply, target.VirtualIP)
 	if !ok {
 		return fmt.Errorf("no active player with nqip %q", target.VirtualIP)
 	}
 
-	kickCmd := fmt.Sprintf("kick # %d Nexus ban", match.Slot)
-	if _, err := env.ExecServerCmd(target.Port, kickCmd, ""); err != nil {
+	kickCmd := fmt.Sprintf("kick # %d Nexus ban", match.slot)
+	if _, err := env.DispatchServerCmd(strconv.Itoa(target.Port), kickCmd, ""); err != nil {
 		return fmt.Errorf("kick failed: %w", err)
 	}
 	return nil
@@ -233,42 +234,42 @@ func executeSessionInfoCommand(rawIndex string, env *Env) (string, error) {
 		return "", err
 	}
 
-	server := strings.TrimSpace(row.Server)
+	server := strings.TrimSpace(row.server)
 	if server == "" {
 		server = "-"
 	}
-	source := strings.TrimSpace(row.Source)
+	source := strings.TrimSpace(row.source)
 	if source == "" {
 		source = "unknown"
 	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "session #%d\n", idx)
-	fmt.Fprintf(&b, "role: %s\n", sessionRole(row.IsAdmin))
-	fmt.Fprintf(&b, "user: %s\n", formatSessionUser(row.UserID, row.Source))
+	fmt.Fprintf(&b, "role: %s\n", sessionRole(row.isAdmin))
+	fmt.Fprintf(&b, "user: %s\n", formatSessionUser(row.userID, row.source))
 	fmt.Fprintf(&b, "source ip: %s\n", source)
-	fmt.Fprintf(&b, "nqip: %s\n", row.NQIP)
+	fmt.Fprintf(&b, "nqip: %s\n", row.nqip)
 	fmt.Fprintf(&b, "server: %s\n", server)
-	fmt.Fprintf(&b, "port: %s\n", formatSessionPort(row.Port))
+	fmt.Fprintf(&b, "port: %s\n", formatSessionPort(row.port))
 
-	if row.Port < 1 || row.Port > 65535 {
+	if row.port < 1 || row.port > 65535 {
 		b.WriteString("status: not connected to a server\n")
 		return b.String(), nil
 	}
 
-	statusReply, err := env.ExecServerCmd(row.Port, "status", "")
+	statusReply, err := env.DispatchServerCmd(strconv.Itoa(row.port), "status", "")
 	if err != nil {
 		return "", fmt.Errorf("status lookup failed: %w", err)
 	}
 
-	match, ok := StatusPlayerForVirtualIP(statusReply, row.NQIP)
+	match, ok := statusPlayerForVirtualIP(statusReply, row.nqip)
 	if !ok {
 		b.WriteString("status: player not present in server status output\n")
 		return b.String(), nil
 	}
-	fmt.Fprintf(&b, "status slot: %d\n", match.Slot)
-	fmt.Fprintf(&b, "status line: %s\n", match.Summary)
-	fmt.Fprintf(&b, "status addr: %s\n", match.Address)
+	fmt.Fprintf(&b, "status slot: %d\n", match.slot)
+	fmt.Fprintf(&b, "status line: %s\n", match.summary)
+	fmt.Fprintf(&b, "status addr: %s\n", match.address)
 	return b.String(), nil
 }
 
@@ -277,7 +278,7 @@ func executeSessionBanCommand(rawIndex string, env *Env) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return executeBanByVirtualIP(row.NQIP, env)
+	return executeBanByVirtualIP(row.nqip, env)
 }
 
 func executeBanByVirtualIP(virtualIP string, env *Env) (string, error) {
@@ -321,9 +322,13 @@ func executeBanByVirtualIP(virtualIP string, env *Env) (string, error) {
 }
 
 func execSessionCommand(cmdArgs []string, env *Env) (string, error) {
-	form := "session <list|info|ban>"
+	usage := adminUsageAlternatives(
+		"session list",
+		"session info <idx>",
+		"session ban <idx>",
+	)
 	if len(cmdArgs) < 1 {
-		return "", adminUsage(form)
+		return "", usage
 	}
 	subcmd := strings.ToLower(cmdArgs[0])
 	subArgs := cmdArgs[1:]
@@ -355,28 +360,28 @@ func execSessionCommand(cmdArgs []string, env *Env) (string, error) {
 		}
 		return reply, nil
 	default:
-		return "", adminUsage(form)
+		return "", usage
 	}
 }
 
-// StatusPlayer holds the server-reported slot information for a single player,
+// statusPlayer holds the server-reported slot information for a single player,
 // as extracted from a Quake `status` command reply.
-type StatusPlayer struct {
-	Slot    int    // Player slot number from the status line (e.g. "#1").
-	Summary string // Full "#N ..." status line for the player.
-	Address string // Address line following the slot line, e.g. "127.x.x.x:port".
+type statusPlayer struct {
+	slot    int    // Player slot number from the status line (e.g. "#1").
+	summary string // Full "#N ..." status line for the player.
+	address string // Address line following the slot line, e.g. "127.x.x.x:port".
 }
 
-// StatusPlayerForVirtualIP scans a Quake `status` reply for the player whose
-// address line starts with virtualIP. It returns the matching [StatusPlayer]
+// statusPlayerForVirtualIP scans a Quake `status` reply for the player whose
+// address line starts with virtualIP. It returns the matching statusPlayer
 // and true, or the zero value and false if no match is found.
-func StatusPlayerForVirtualIP(statusReply, virtualIP string) (StatusPlayer, bool) {
+func statusPlayerForVirtualIP(statusReply, virtualIP string) (statusPlayer, bool) {
 	virtualIP = strings.TrimSpace(virtualIP)
 	if virtualIP == "" {
-		return StatusPlayer{}, false
+		return statusPlayer{}, false
 	}
 
-	current := StatusPlayer{}
+	current := statusPlayer{}
 	for _, line := range strings.Split(strings.ReplaceAll(statusReply, "\r", ""), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
@@ -385,7 +390,7 @@ func StatusPlayerForVirtualIP(statusReply, virtualIP string) (StatusPlayer, bool
 
 		if strings.HasPrefix(trimmed, "#") {
 			fields := strings.Fields(strings.TrimPrefix(trimmed, "#"))
-			current = StatusPlayer{}
+			current = statusPlayer{}
 			if len(fields) == 0 {
 				continue
 			}
@@ -393,22 +398,22 @@ func StatusPlayerForVirtualIP(statusReply, virtualIP string) (StatusPlayer, bool
 			if err != nil || slot <= 0 {
 				continue
 			}
-			current.Slot = slot
-			current.Summary = trimmed
+			current.slot = slot
+			current.summary = trimmed
 			continue
 		}
 
-		if current.Slot <= 0 {
+		if current.slot <= 0 {
 			continue
 		}
 		if strings.HasPrefix(trimmed, virtualIP) {
 			if len(trimmed) == len(virtualIP) || trimmed[len(virtualIP)] == ':' {
-				current.Address = trimmed
+				current.address = trimmed
 				return current, true
 			}
 		}
-		current = StatusPlayer{}
+		current = statusPlayer{}
 	}
 
-	return StatusPlayer{}, false
+	return statusPlayer{}, false
 }

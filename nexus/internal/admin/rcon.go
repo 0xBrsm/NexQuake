@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/subtle"
 	"fmt"
-	"strconv"
 	"strings"
 )
 
@@ -31,25 +30,6 @@ type Session interface {
 
 const defaultServerTailLines = 10
 
-// HandleAdminFrame processes an incoming admin (port 0) frame from a WebSocket client.
-// It is a convenience wrapper around [HandleAdminFrameWithIdentityAndPromotionHook]
-// with no identity label and no promotion callback.
-func HandleAdminFrame(r Session, payload []byte, auth *Auth, env *Env) {
-	HandleAdminFrameWithIdentityAndPromotionHook(r, payload, auth, env, "", nil)
-}
-
-// HandleAdminFrameWithPromotionHook is [HandleAdminFrame] plus an optional callback
-// fired when a non-admin session is first promoted via a valid rcon_password.
-func HandleAdminFrameWithPromotionHook(
-	r Session,
-	payload []byte,
-	auth *Auth,
-	env *Env,
-	onPromoted func(Session),
-) {
-	HandleAdminFrameWithIdentityAndPromotionHook(r, payload, auth, env, "", onPromoted)
-}
-
 // HandleAdminFrameWithIdentityAndPromotionHook is the primary admin-frame handler.
 // identity is an optional actor label (e.g. email from OIDC) used in audit logs;
 // onPromoted is called once when a session is promoted to admin via rcon_password.
@@ -61,7 +41,7 @@ func HandleAdminFrameWithIdentityAndPromotionHook(
 	identity string,
 	onPromoted func(Session),
 ) {
-	pw, targetPort, args := splitAdminPayload(payload)
+	pw, targetText, args := splitAdminPayload(payload)
 
 	// Authorize either at connection time (OIDC / shared token) or per-frame
 	// via rcon_password (traditional Quake rcon-style shared secret).
@@ -82,19 +62,26 @@ func HandleAdminFrameWithIdentityAndPromotionHook(
 
 	args = strings.TrimSpace(args)
 	if args == "" {
-		r.SendAdminReply("usage: rcon <cmd> | rcon <host|port> <cmd>\n")
+		r.SendAdminReply(topLevelRconUsage)
 		return
 	}
+
+	target := routeAdminTarget(targetText)
+
 	actorID := resolveAdminActorID(identity, r)
-	targetLabel := adminTargetLabel(targetPort)
+	targetLabel := target.label
 	adminAuditf(env, "admin-rcon request actor=%q target=%s command=%q", actorID, targetLabel, sanitizeAdminAuditText(args))
 
 	var reply string
 	var err error
-	if targetPort == 0 {
+	if target.nexus {
 		reply, err = execNexusCommand(args, env)
 	} else {
-		reply, err = env.ExecServerCmd(targetPort, args, actorID)
+		if env == nil || env.DispatchServerCmd == nil {
+			err = fmt.Errorf("server manager not available")
+		} else {
+			reply, err = env.DispatchServerCmd(target.label, args, actorID)
+		}
 	}
 	if err != nil {
 		adminAuditf(env, "admin-rcon response actor=%q target=%s error=%q", actorID, targetLabel, sanitizeAdminAuditText(err.Error()))
@@ -142,11 +129,18 @@ func sanitizeAdminAuditText(text string) string {
 	return text
 }
 
-func adminTargetLabel(targetPort int) string {
-	if targetPort == 0 {
-		return "nexus"
+type adminTarget struct {
+	label string
+	nexus bool
+}
+
+func routeAdminTarget(targetText string) adminTarget {
+	targetText = strings.TrimSpace(targetText)
+	if targetText == "" || targetText == "0" || strings.EqualFold(targetText, "nexus") {
+		return adminTarget{label: "nexus", nexus: true}
 	}
-	return strconv.Itoa(targetPort)
+	// Non-Nexus targets stay opaque here; orch owns host/port/index resolution.
+	return adminTarget{label: targetText}
 }
 
 func adminAuditf(env *Env, format string, args ...any) {
@@ -157,14 +151,11 @@ func adminAuditf(env *Env, format string, args ...any) {
 }
 
 // splitAdminPayload parses a binary admin frame into its three NUL-delimited
-// fields: password, target port (0 = Nexus, 1-65535 = a game server port), and
-// the command argument string.
-func splitAdminPayload(payload []byte) (password string, targetPort int, args string) {
-	var targetText string
-
+// fields: password, target text, and command argument string.
+func splitAdminPayload(payload []byte) (password, targetText, args string) {
 	i := bytes.IndexByte(payload, 0)
 	if i < 0 {
-		return string(payload), 0, ""
+		return string(payload), "", ""
 	}
 
 	password = string(payload[:i])
@@ -178,11 +169,5 @@ func splitAdminPayload(payload []byte) (password string, targetPort int, args st
 		args = string(rest[j+1:])
 	}
 
-	if targetText != "" {
-		if parsed, err := strconv.Atoi(targetText); err == nil && parsed >= 0 && parsed <= 65535 {
-			targetPort = parsed
-		}
-	}
-
-	return password, targetPort, args
+	return password, targetText, args
 }

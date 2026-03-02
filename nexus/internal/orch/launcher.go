@@ -308,7 +308,7 @@ func (m *ServerManager) stopServer(ctx context.Context, rec *serverRecord, s *ma
 	}
 
 	if sendSignal && s.Cmd != nil && s.Cmd.Process != nil && isProcessAlive(s.Cmd.Process) {
-		_ = s.writeConsole("quit")
+		_, _ = execManagedServerCommand(s, "quit", serverCommandOptions{})
 
 		quitGrace := 750 * time.Millisecond
 		if killAfter > 0 && killAfter < quitGrace {

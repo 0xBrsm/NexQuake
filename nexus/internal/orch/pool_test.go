@@ -1,6 +1,7 @@
 package orch
 
 import (
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -59,7 +60,7 @@ func attachPoolBackendForTest(t *testing.T, m *ServerManager, seedID int, backen
 		backendState.ZeroPollStreak = 0
 	}
 	m.refreshPoolSnapshotLocked(pool)
-	return pool.ListenPort
+	return pool.CandidatePort
 }
 
 func TestRegisterPoolSeed_OnlyPortZeroLaunches(t *testing.T) {
@@ -110,8 +111,33 @@ func TestRegisterPoolSeed_DisablesAutoscalingWhenPoolSizeOne(t *testing.T) {
 	}
 }
 
+func TestRegisterPoolSeed_EnablesAutoscalingWhenPoolSizeAboveOne(t *testing.T) {
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(8)
+	t.Cleanup(m.closePoolRegistry)
+
+	rec := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 0, 16)
+	if err := m.registerPoolSeed(rec); err != nil {
+		t.Fatalf("register dynamic seed: %v", err)
+	}
+
+	m.mu.RLock()
+	pool := m.poolByServerID[rec.id]
+	m.mu.RUnlock()
+	if pool == nil {
+		t.Fatalf("expected dynamic server to be pooled")
+	}
+	if !pool.Autoscales {
+		t.Fatalf("expected POOL_SIZE>1 seed to enable autoscaling")
+	}
+	if pool.CandidatePort != 26000 {
+		t.Fatalf("candidate port = %d, want 26000", pool.CandidatePort)
+	}
+}
+
 func TestPoolRouting_PicksLeastLoadedBackend(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(10)
 	t.Cleanup(m.closePoolRegistry)
 
 	// seed has 8/16 players, replica has 1/16 — replica is less loaded.
@@ -151,6 +177,7 @@ func TestPoolRouting_PicksLeastLoadedBackend(t *testing.T) {
 
 func TestPoolRouting_UsesDrainingBackendWhenOnlyFreeSlotsRemain(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(10)
 	t.Cleanup(m.closePoolRegistry)
 
 	seed := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 16, 16)
@@ -185,6 +212,7 @@ func TestPoolRouting_UsesDrainingBackendWhenOnlyFreeSlotsRemain(t *testing.T) {
 
 func TestPoolRouting_PrefersActiveLowerLoadOverDraining(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(10)
 	t.Cleanup(m.closePoolRegistry)
 
 	// seed active with 8/16, replica draining with 0/16.
@@ -217,6 +245,7 @@ func TestPoolRouting_PrefersActiveLowerLoadOverDraining(t *testing.T) {
 
 func TestPoolRouting_AllDrainingBackendsRemainRoutable(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(10)
 	t.Cleanup(m.closePoolRegistry)
 
 	seed := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 0, 16)
@@ -250,6 +279,7 @@ func TestPoolRouting_AllDrainingBackendsRemainRoutable(t *testing.T) {
 
 func TestPoolRouting_SkipsWarmingBackendForNewSessions(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(10)
 	t.Cleanup(m.closePoolRegistry)
 
 	seed := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 4, 16)
@@ -348,6 +378,52 @@ func TestPoolRouting_PoolSizeOneHidesInstancesAndSkipsDemand(t *testing.T) {
 	}
 }
 
+func TestSnapshotForSlist_PoolSizeOnePortZeroLaunchUsesObservedBackend(t *testing.T) {
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(1)
+	t.Cleanup(m.closePoolRegistry)
+
+	rec, err := m.registerPoolLaunch(serverLaunch{
+		Line:   0,
+		Binary: "nqserver",
+		Args:   []string{"-dedicated", "-port", "0"},
+	})
+	if err != nil {
+		t.Fatalf("register pool launch: %v", err)
+	}
+
+	m.updatePort(rec, 26000)
+	m.updateSearchPath(rec, []string{"ffa", "id1"})
+	m.SetServerRunningForTest(rec, NewTestServer(26000))
+	m.SetServerInfoForTest(rec, "ffa", "start", 3, 16)
+	m.mu.Lock()
+	rec.LastSeen = time.Now()
+	pool := m.poolByServerID[rec.id]
+	m.refreshPoolSnapshotLocked(pool)
+	m.mu.Unlock()
+
+	if pool == nil {
+		t.Fatalf("expected pool for dynamic launch")
+	}
+	if pool.Autoscales {
+		t.Fatalf("expected POOL_SIZE=1 launch to disable autoscaling")
+	}
+
+	entries := snapshotForSlist(m)
+	if len(entries) != 1 {
+		t.Fatalf("slist entries = %d, want 1", len(entries))
+	}
+	if entries[0].ListenPort != 26000 {
+		t.Fatalf("listen port = %d, want 26000", entries[0].ListenPort)
+	}
+	if entries[0].GameDir != "ffa" {
+		t.Fatalf("game dir = %q, want ffa", entries[0].GameDir)
+	}
+	if entries[0].Instances != 0 {
+		t.Fatalf("instances = %d, want 0 when autoscaling disabled", entries[0].Instances)
+	}
+}
+
 func TestSnapshotForSlist_StaticPortHidesInstances(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 	t.Cleanup(m.closePoolRegistry)
@@ -367,7 +443,7 @@ func TestSnapshotForSlist_StaticPortHidesInstances(t *testing.T) {
 	m.mu.Lock()
 	rec.LastSeen = time.Now()
 	pool := m.poolByServerID[rec.id]
-	m.setPoolBackendLifecycleLocked(pool, rec.id, poolBackendLifecycleActive, true)
+	m.refreshPoolSnapshotLocked(pool)
 	m.mu.Unlock()
 
 	if pool == nil {
@@ -420,25 +496,215 @@ func TestResolveRCONTargetPort_DirectBackendPort(t *testing.T) {
 	}
 
 	// RCON to the actual backend port works directly — no proxy resolution.
-	_, err := m.ExecServerCmd(26000, "status", "")
+	_, err := m.DispatchServerCmd("26000", "status", "")
 	// Server has no real console so we expect "server console unavailable", not "unknown server".
 	if err == nil {
 		t.Fatalf("expected error (no console), got nil")
 	}
 	if strings.Contains(err.Error(), "unknown server") {
-		t.Fatalf("ExecServerCmd should find backend 26000, got: %v", err)
+		t.Fatalf("DispatchServerCmd should find backend 26000, got: %v", err)
 	}
 
 	// Out-of-range port should return unknown server.
-	if _, err := m.ExecServerCmd(0, "status", ""); err == nil || !strings.Contains(err.Error(), "unknown server") {
-		t.Fatalf("ExecServerCmd invalid port = %v, want unknown server", err)
+	if _, err := m.DispatchServerCmd("0", "status", ""); err == nil || !strings.Contains(err.Error(), "unknown server") {
+		t.Fatalf("DispatchServerCmd invalid port = %v, want unknown server", err)
 	}
 
 	// Unknown valid port should return unknown server.
-	if _, err := m.ExecServerCmd(9999, "status", ""); err == nil || !strings.Contains(err.Error(), "unknown server") {
-		t.Fatalf("ExecServerCmd unknown port = %v, want unknown server", err)
+	if _, err := m.DispatchServerCmd("9999", "status", ""); err == nil || !strings.Contains(err.Error(), "unknown server") {
+		t.Fatalf("DispatchServerCmd unknown port = %v, want unknown server", err)
 	}
 
+}
+
+func TestResolveServerTarget_UsesVisibleMultiInstancePoolHostname(t *testing.T) {
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(10)
+	t.Cleanup(m.closePoolRegistry)
+
+	seed := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 0, 16)
+	if err := m.registerPoolSeed(seed); err != nil {
+		t.Fatalf("register pool seed: %v", err)
+	}
+	m.updateGameState(26000, "fragfest", seed.MapName, seed.Players, seed.MaxPlayers)
+	replica := newRunningPoolTestRecord(t, m, 1, 26001, []string{"-dedicated", "-port", "0"}, 12, 16)
+	m.updateGameState(26001, "fragfest", replica.MapName, replica.Players, replica.MaxPlayers)
+	attachPoolBackendForTest(t, m, seed.id, replica)
+
+	port, ok, err := m.resolveServerTarget("fragfest")
+	if err != nil {
+		t.Fatalf("resolveServerTarget() error = %v", err)
+	}
+	if !ok || port != 26000 {
+		t.Fatalf("resolveServerTarget() = port %d ok %t, want port 26000 ok true", port, ok)
+	}
+}
+
+func TestDispatchServerCmd_PoolHostnameFansOutToRunningBackends(t *testing.T) {
+	oldMaxWait := serverCommandCaptureMaxWait
+	oldIdleWait := serverCommandCaptureIdleWait
+	t.Cleanup(func() {
+		serverCommandCaptureMaxWait = oldMaxWait
+		serverCommandCaptureIdleWait = oldIdleWait
+	})
+	serverCommandCaptureMaxWait = 120 * time.Millisecond
+	serverCommandCaptureIdleWait = 10 * time.Millisecond
+
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(10)
+	t.Cleanup(m.closePoolRegistry)
+
+	seed := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 0, 16)
+	if err := m.registerPoolSeed(seed); err != nil {
+		t.Fatalf("register pool seed: %v", err)
+	}
+	replica := newRunningPoolTestRecord(t, m, 1, 26001, []string{"-dedicated", "-port", "0"}, 0, 16)
+	m.SetServerInfoForTest(replica, "fragfest", replica.MapName, replica.Players, replica.MaxPlayers)
+	attachPoolBackendForTest(t, m, seed.id, replica)
+	m.updateGameState(26000, "fragfest", seed.MapName, seed.Players, seed.MaxPlayers)
+	m.updateGameState(26001, "fragfest", replica.MapName, replica.Players, replica.MaxPlayers)
+
+	seedRead, seedWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe(seed): %v", err)
+	}
+	replicaRead, replicaWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe(replica): %v", err)
+	}
+	t.Cleanup(func() {
+		_ = seedRead.Close()
+		_ = seedWrite.Close()
+		_ = replicaRead.Close()
+		_ = replicaWrite.Close()
+	})
+
+	m.SetServerRunningForTest(seed, NewTestServerWithPTY(26000, seedWrite))
+	m.SetServerRunningForTest(replica, NewTestServerWithPTY(26001, replicaWrite))
+
+	go func() {
+		buf := make([]byte, 128)
+		_, _ = seedRead.Read(buf)
+		seed.Running.PublishConsoleLineForTest("seed ok\n")
+	}()
+	go func() {
+		buf := make([]byte, 128)
+		_, _ = replicaRead.Read(buf)
+		replica.Running.PublishConsoleLineForTest("replica ok\n")
+	}()
+
+	reply, err := m.DispatchServerCmd("fragfest", "status", "")
+	if err != nil {
+		t.Fatalf("DispatchServerCmd() error = %v", err)
+	}
+	if !strings.Contains(reply, "[1-fragfest-26000]") || !strings.Contains(reply, "seed ok") {
+		t.Fatalf("expected first backend output, got %q", reply)
+	}
+	if !strings.Contains(reply, "[1-fragfest-26001]") || !strings.Contains(reply, "replica ok") {
+		t.Fatalf("expected second backend output, got %q", reply)
+	}
+}
+
+func TestBackendSnapshots_AllIncludesPoolLinePerBackend(t *testing.T) {
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(10)
+	t.Cleanup(m.closePoolRegistry)
+
+	seed := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 1, 16)
+	if err := m.registerPoolSeed(seed); err != nil {
+		t.Fatalf("register pool seed: %v", err)
+	}
+	replica := newRunningPoolTestRecord(t, m, 1, 26001, []string{"-dedicated", "-port", "0"}, 0, 16)
+	attachPoolBackendForTest(t, m, seed.id, replica)
+
+	snaps, err := m.BackendSnapshots(0)
+	if err != nil {
+		t.Fatalf("BackendSnapshots(all) error = %v", err)
+	}
+	if len(snaps) != 2 {
+		t.Fatalf("BackendSnapshots(all) len = %d, want 2", len(snaps))
+	}
+	if snaps[0].Line != 0 || snaps[0].ListenPort != 26000 {
+		t.Fatalf("first backend snapshot = %+v, want line 0 port 26000", snaps[0])
+	}
+	if snaps[1].Line != 0 || snaps[1].ListenPort != 26001 {
+		t.Fatalf("second backend snapshot = %+v, want line 0 port 26001", snaps[1])
+	}
+}
+
+func TestResolveServerTarget_UsesSlistVisibleHostname(t *testing.T) {
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(10)
+	t.Cleanup(m.closePoolRegistry)
+
+	seed := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 0, 16)
+	if err := m.registerPoolSeed(seed); err != nil {
+		t.Fatalf("register pool seed: %v", err)
+	}
+	longName := "this-hostname-is-way-too-long"
+	m.updateGameState(26000, longName, seed.MapName, seed.Players, seed.MaxPlayers)
+
+	port, ok, err := m.resolveServerTarget(longName[:hostcacheNameMax])
+	if err != nil {
+		t.Fatalf("resolveServerTarget() error = %v", err)
+	}
+	if !ok || port != 26000 {
+		t.Fatalf("resolveServerTarget(%q) = port %d ok %t, want port 26000 ok true", longName[:hostcacheNameMax], port, ok)
+	}
+}
+
+func TestResolveServerTarget_RequiresExactMatch(t *testing.T) {
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(10)
+	t.Cleanup(m.closePoolRegistry)
+
+	alpha := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 0, 16)
+	if err := m.registerPoolSeed(alpha); err != nil {
+		t.Fatalf("register alpha seed: %v", err)
+	}
+	m.updateGameState(26000, "alpha", alpha.MapName, alpha.Players, alpha.MaxPlayers)
+
+	alpine := newRunningPoolTestRecord(t, m, 1, 26001, []string{"-dedicated", "-port", "0"}, 0, 16)
+	if err := m.registerPoolSeed(alpine); err != nil {
+		t.Fatalf("register alpine seed: %v", err)
+	}
+	m.updateGameState(26001, "alpine", alpine.MapName, alpine.Players, alpine.MaxPlayers)
+
+	port, ok, err := m.resolveServerTarget("alpha")
+	if err != nil {
+		t.Fatalf("resolveServerTarget(alpha) error = %v", err)
+	}
+	if !ok || port != 26000 {
+		t.Fatalf("resolveServerTarget(alpha) = port %d ok %t, want port 26000 ok true", port, ok)
+	}
+
+	_, ok, err = m.resolveServerTarget("alp")
+	if ok || err != nil {
+		t.Fatalf("resolveServerTarget(alp) = ok %t err %v, want no exact match", ok, err)
+	}
+}
+
+func TestResolveServerTarget_AmbiguousExactMatch(t *testing.T) {
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m.SetPoolMaxSize(10)
+	t.Cleanup(m.closePoolRegistry)
+
+	alphaA := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 0, 16)
+	if err := m.registerPoolSeed(alphaA); err != nil {
+		t.Fatalf("register alphaA seed: %v", err)
+	}
+	m.updateGameState(26000, "alpha", alphaA.MapName, alphaA.Players, alphaA.MaxPlayers)
+
+	alphaB := newRunningPoolTestRecord(t, m, 1, 26001, []string{"-dedicated", "-port", "0"}, 0, 16)
+	if err := m.registerPoolSeed(alphaB); err != nil {
+		t.Fatalf("register alphaB seed: %v", err)
+	}
+	m.updateGameState(26001, "alpha", alphaB.MapName, alphaB.Players, alphaB.MaxPlayers)
+
+	_, ok, err := m.resolveServerTarget("alpha")
+	if !ok || err == nil || !strings.Contains(err.Error(), `ambiguous host "alpha"`) {
+		t.Fatalf("resolveServerTarget(alpha) = ok %t err %v, want ambiguous host error", ok, err)
+	}
 }
 
 func setPoolDemandEventsForTest(t *testing.T, m *ServerManager, seedServerID int, count int, now time.Time) {

@@ -43,13 +43,13 @@ type ServerManager struct {
 	serversByID     map[int]*serverRecord
 	serverIDsByPort map[int][]int
 
-	poolsByID        map[int]*serverPool
-	poolByListenPort map[int]*serverPool
-	poolByServerID   map[int]*serverPool
-	nextPoolID       int
-	poolMaxSize      int
-	nextServerID   int
-	runtimeBasedir string
+	poolsByID           map[int]*serverPool
+	poolByCandidatePort map[int]*serverPool
+	poolByServerID      map[int]*serverPool
+	nextPoolID          int
+	poolMaxSize         int
+	nextServerID        int
+	runtimeBasedir      string
 }
 
 func (m *ServerManager) serverConsoleLabel(rec *serverRecord) string {
@@ -205,20 +205,20 @@ func NewServerManager(
 		formatLogLine = identityLogLine
 	}
 	return &ServerManager{
-		gameDir:           gameDir,
-		logsDir:           logsDir,
-		infof:             infof,
-		debugf:            debugf,
-		warnf:             warnf,
-		errorf:            errorf,
-		consoleInfof:      consoleInfof,
-		formatLogLine:     formatLogLine,
-		serversByID:       make(map[int]*serverRecord),
-		serverIDsByPort:   make(map[int][]int),
-		poolsByID:         make(map[int]*serverPool),
-		poolByListenPort:  make(map[int]*serverPool),
-		poolByServerID:    make(map[int]*serverPool),
-		nextPoolID:        1,
-		poolMaxSize:       defaultPoolSize,
+		gameDir:             gameDir,
+		logsDir:             logsDir,
+		infof:               infof,
+		debugf:              debugf,
+		warnf:               warnf,
+		errorf:              errorf,
+		consoleInfof:        consoleInfof,
+		formatLogLine:       formatLogLine,
+		serversByID:         make(map[int]*serverRecord),
+		serverIDsByPort:     make(map[int][]int),
+		poolsByID:           make(map[int]*serverPool),
+		poolByCandidatePort: make(map[int]*serverPool),
+		poolByServerID:      make(map[int]*serverPool),
+		nextPoolID:          1,
+		poolMaxSize:         defaultPoolSize,
 	}
 }

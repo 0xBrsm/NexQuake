@@ -253,14 +253,26 @@ func (r *Relay) sendControlReply(payload []byte) {
 	if len(payload) == 0 {
 		return
 	}
-	r.sendWS(buildWSFrame(controlPort, payload), true)
+	// Admin/control replies must not be silently dropped behind game traffic.
+	r.sendWS(buildWSFrame(controlPort, payload), false)
 }
 
-// SendAdminReply sends msg as a control-channel (port 0) payload to the client.
-// Empty strings are ignored.
+// maxAdminReplyChunk is the maximum payload size for a single admin-reply
+// control frame. The client enforces MAX_WS_MESSAGE_SIZE = NET_DATAGRAMSIZE+2
+// (1034 bytes) and silently drops larger WebSocket messages. We chunk at 1000
+// to leave comfortable headroom for the 2-byte port header.
+const maxAdminReplyChunk = 1000
+
+// SendAdminReply sends msg as one or more control-channel (port 0) payloads to
+// the client. Messages longer than [maxAdminReplyChunk] are split into multiple
+// frames so the client does not silently drop them. Empty strings are ignored.
 func (r *Relay) SendAdminReply(msg string) {
 	if msg == "" {
 		return
+	}
+	for len(msg) > maxAdminReplyChunk {
+		r.sendControlReply([]byte(msg[:maxAdminReplyChunk]))
+		msg = msg[maxAdminReplyChunk:]
 	}
 	r.sendControlReply([]byte(msg))
 }

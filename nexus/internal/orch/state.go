@@ -75,13 +75,16 @@ type serverStateUpdate struct {
 	hasObservedInfo    bool
 }
 
-// ServerSnapshot is a point-in-time view of a server pool, used for display
-// and admin API responses.
+// ServerSnapshot is a point-in-time view of a managed pool or backend server,
+// used for display and admin API responses.
 type ServerSnapshot struct {
 	// Line is the 0-based index of the servers.ini entry that owns this pool.
 	Line int
+	// CandidatePort is the suggested connect port for a pool snapshot.
+	// Zero if no backend port is currently available.
+	CandidatePort int
 	// ListenPort is the UDP port the server is (or was last) listening on.
-	// Zero if the port has not yet been resolved.
+	// Set for backend snapshots; zero for pool snapshots.
 	ListenPort int
 	// GameDir is the active game directory (first entry in the search path).
 	GameDir string
@@ -93,6 +96,9 @@ type ServerSnapshot struct {
 	Players byte
 	// MaxPlayers is the server capacity from the last CCREP.
 	MaxPlayers byte
+	// Instances is the visible backend instance count for pool snapshots.
+	// Zero hides the pool suffix and is always zero for backend snapshots.
+	Instances uint16
 	// State is one of "stopped", "starting", "running", or "crashed".
 	State string
 	// PID is the OS process ID of the running server.
@@ -227,7 +233,7 @@ func (m *ServerManager) updateServerState(update serverStateUpdate) {
 			rec.resolvedSearchPath = append([]string(nil), update.resolvedSearchPath...)
 		}
 		m.applyResolvedSpecLocked(rec)
-		m.updatePoolListenPortForRecordLocked(rec)
+		m.updatePoolCandidatePortForRecordLocked(rec)
 	}
 
 	if !update.hasObservedInfo || update.observedPort < 1 || update.observedPort > 65535 {
@@ -298,30 +304,8 @@ func (m *ServerManager) updateSearchPathNormalized(rec *serverRecord, searchPath
 	})
 }
 
-// ServerByListenPort returns the running server on a given port.
-func (m *ServerManager) serverByListenPort(port int) *managedServer {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	for _, serverID := range m.serverIDsByPort[port] {
-		rec := m.serversByID[serverID]
-		if rec == nil {
-			continue
-		}
-		s := rec.Running
-		if s == nil {
-			continue
-		}
-		if s.Cmd == nil || s.Cmd.Process == nil || !isProcessAlive(s.Cmd.Process) {
-			continue
-		}
-		return s
-	}
-	return nil
-}
-
-// IsManagedListenPort reports whether a listen port belongs to any managed pool
-// entry or backend at this instant.
+// IsManagedListenPort reports whether a listen port belongs to any managed
+// backend, or to the current candidate port for a fixed-port pool.
 func (m *ServerManager) IsManagedListenPort(port int) bool {
 	if port < 1 || port > 65535 {
 		return false
@@ -330,7 +314,7 @@ func (m *ServerManager) IsManagedListenPort(port int) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if m.poolByListenPort[port] != nil {
+	if m.poolByCandidatePort[port] != nil {
 		return true
 	}
 	for _, serverID := range m.serverIDsByPort[port] {
@@ -377,14 +361,18 @@ func (m *ServerManager) buildPoolSnapshotLocked(pool *serverPool) ServerSnapshot
 	}
 
 	snap := ServerSnapshot{
-		Line:       pool.Line,
-		ListenPort: pool.ListenPort,
-		GameDir:    pool.DisplayGameDir,
-		Hostname:   pool.DisplayHostname,
-		MapName:    pool.DisplayMap,
-		Players:    byte(min(int(pool.AggregateUsers), 0xff)),
-		MaxPlayers: byte(min(int(pool.AggregateMaxUsers), 0xff)),
-		State:      "stopped",
+		Line:          pool.Line,
+		CandidatePort: pool.CandidatePort,
+		GameDir:       pool.DisplayGameDir,
+		Hostname:      pool.DisplayHostname,
+		MapName:       pool.DisplayMap,
+		Players:       byte(min(int(pool.aggregateUsers), 0xff)),
+		MaxPlayers:    byte(min(int(pool.aggregateMaxUsers), 0xff)),
+		Instances:     0,
+		State:         "stopped",
+	}
+	if pool.Autoscales {
+		snap.Instances = pool.joinableInstances
 	}
 
 	runningCount := 0
@@ -410,8 +398,8 @@ func (m *ServerManager) buildPoolSnapshotLocked(pool *serverPool) ServerSnapshot
 		if snap.PID == 0 && rec.Running != nil && rec.Running.Cmd != nil && rec.Running.Cmd.Process != nil {
 			snap.PID = rec.Running.Cmd.Process.Pid
 		}
-		if snap.ListenPort == 0 {
-			snap.ListenPort = recordListenPort(rec)
+		if snap.CandidatePort == 0 {
+			snap.CandidatePort = recordListenPort(rec)
 		}
 		if snap.GameDir == "" {
 			snap.GameDir = recordGameDir(rec)
@@ -442,6 +430,46 @@ func (m *ServerManager) buildPoolSnapshotLocked(pool *serverPool) ServerSnapshot
 	return snap
 }
 
+func (m *ServerManager) buildBackendSnapshotLocked(pool *serverPool, rec *serverRecord) ServerSnapshot {
+	snap := ServerSnapshot{
+		Line:       rec.Launch.Line,
+		ListenPort: recordListenPort(rec),
+		GameDir:    recordGameDir(rec),
+		Hostname:   strings.TrimSpace(rec.Hostname),
+		MapName:    strings.TrimSpace(rec.MapName),
+		Players:    rec.Players,
+		MaxPlayers: rec.MaxPlayers,
+		State:      "stopped",
+		LastError:  rec.lastError,
+	}
+	if pool != nil {
+		snap.Line = pool.Line
+		if snap.Hostname == "" {
+			snap.Hostname = pool.DisplayHostname
+		}
+		if snap.MapName == "" {
+			snap.MapName = pool.DisplayMap
+		}
+		if snap.GameDir == "" {
+			snap.GameDir = pool.DisplayGameDir
+		}
+	}
+	if !m.serverRecordRunningLocked(rec) {
+		if snap.LastError != "" {
+			snap.State = "crashed"
+		}
+		return snap
+	}
+	snap.State = "running"
+	if rec.awaitingServerInfo {
+		snap.State = "starting"
+	}
+	if running := rec.Running; running != nil && running.Cmd != nil && running.Cmd.Process != nil {
+		snap.PID = running.Cmd.Process.Pid
+	}
+	return snap
+}
+
 // Snapshots returns a point-in-time view of all managed servers.
 func (m *ServerManager) Snapshots() []ServerSnapshot {
 	m.mu.RLock()
@@ -456,4 +484,37 @@ func (m *ServerManager) Snapshots() []ServerSnapshot {
 	}
 	slices.SortFunc(out, func(a, b ServerSnapshot) int { return cmp.Compare(a.Line, b.Line) })
 	return out
+}
+
+// BackendSnapshots returns a point-in-time view of backend servers.
+// target=0 includes every pool; positive targets resolve as a pool index.
+func (m *ServerManager) BackendSnapshots(target int) ([]ServerSnapshot, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var pools []*serverPool
+	if target > 0 {
+		pool, err := m.findPoolByIndexLocked(target)
+		if err != nil {
+			return nil, err
+		}
+		pools = []*serverPool{pool}
+	} else {
+		pools = make([]*serverPool, 0, len(m.poolsByID))
+		for _, pool := range m.poolsByID {
+			if pool == nil {
+				continue
+			}
+			pools = append(pools, pool)
+		}
+		slices.SortFunc(pools, func(a, b *serverPool) int { return cmp.Compare(a.Line, b.Line) })
+	}
+
+	out := make([]ServerSnapshot, 0, len(m.serversByID))
+	for _, pool := range pools {
+		for _, rec := range m.poolBackendsLocked(pool) {
+			out = append(out, m.buildBackendSnapshotLocked(pool, rec))
+		}
+	}
+	return out, nil
 }

@@ -30,25 +30,43 @@ func (app *nexusApp) buildFrameDispatch(userIdentity string) nqrelay.FrameDispat
 	}
 }
 
+func convertServerSnapshot(s orch.ServerSnapshot) admin.ServerInfo {
+	return admin.ServerInfo{
+		Line:          s.Line,
+		Hostname:      s.Hostname,
+		MapName:       s.MapName,
+		CandidatePort: s.CandidatePort,
+		ListenPort:    s.ListenPort,
+		GameDir:       s.GameDir,
+		Players:       int(s.Players),
+		MaxPlayers:    int(s.MaxPlayers),
+		Instances:     int(s.Instances),
+		State:         s.State,
+	}
+}
+
+func convertServerSnapshots(snaps []orch.ServerSnapshot) []admin.ServerInfo {
+	out := make([]admin.ServerInfo, len(snaps))
+	for i, s := range snaps {
+		out[i] = convertServerSnapshot(s)
+	}
+	return out
+}
+
 // buildAdminEnv constructs the admin.Env, wiring server manager and session
 // registry capabilities via conversion closures that translate between
 // orch/nqrelay types and admin-local types.
 func buildAdminEnv(serverMgr *orch.ServerManager, sessionReg *nqrelay.SessionRegistry, ipAlloc *nqrelay.IPAllocator) *admin.Env {
 	return &admin.Env{
 		ServerSnapshots: func() []admin.ServerInfo {
-			snaps := serverMgr.Snapshots()
-			out := make([]admin.ServerInfo, len(snaps))
-			for i, s := range snaps {
-				out[i] = admin.ServerInfo{
-					Hostname:   s.Hostname,
-					ListenPort: s.ListenPort,
-					GameDir:    s.GameDir,
-					Players:    int(s.Players),
-					MaxPlayers: int(s.MaxPlayers),
-					State:      s.State,
-				}
+			return convertServerSnapshots(serverMgr.Snapshots())
+		},
+		BackendSnapshots: func(target int) ([]admin.ServerInfo, error) {
+			snaps, err := serverMgr.BackendSnapshots(target)
+			if err != nil {
+				return nil, err
 			}
-			return out
+			return convertServerSnapshots(snaps), nil
 		},
 		StartServer:         serverMgr.StartServer,
 		StartServersAll:     serverMgr.StartServersAll,
@@ -58,7 +76,7 @@ func buildAdminEnv(serverMgr *orch.ServerManager, sessionReg *nqrelay.SessionReg
 		RestartServersAll:   serverMgr.RestartServersAll,
 		RemoveServer:        serverMgr.RemoveServer,
 		LaunchServer:        serverMgr.LaunchServer,
-		ExecServerCmd:       serverMgr.ExecServerCmd,
+		DispatchServerCmd:   serverMgr.DispatchServerCmd,
 		IsManagedListenPort: serverMgr.IsManagedListenPort,
 		TailNexusLog:        tailNexusLogLines,
 		Auditf:              auditf,

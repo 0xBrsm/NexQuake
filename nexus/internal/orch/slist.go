@@ -109,6 +109,22 @@ type serverListEntry struct {
 	Instances  uint16 // backend instance count for autoscaled pools; 0 hides the pool suffix
 }
 
+func normalizeServerListEntry(e serverListEntry) serverListEntry {
+	if e.Hostname == "" {
+		e.Hostname = "UNNAMED"
+	}
+	if e.MapName == "" {
+		e.MapName = "?"
+	}
+	if e.GameDir == "" {
+		e.GameDir = "id1"
+	}
+	e.Hostname = truncateSlistField(e.Hostname, hostcacheNameMax)
+	e.MapName = truncateSlistField(e.MapName, hostcacheFieldMax)
+	e.GameDir = truncateSlistField(e.GameDir, hostcacheFieldMax)
+	return e
+}
+
 // buildCCREPServerList builds an aggregated CCREP_SERVER_INFO response
 // containing multiple server entries. Returns the datagram and entry count.
 func buildCCREPServerList(entries []serverListEntry) ([]byte, int) {
@@ -122,37 +138,21 @@ func buildCCREPServerList(entries []serverListEntry) ([]byte, int) {
 
 	count := 0
 	for _, e := range entries {
+		e = normalizeServerListEntry(e)
 		serverPort := e.ListenPort
 		if serverPort <= 0 || serverPort > 65535 {
 			continue
 		}
-		hostname := e.Hostname
-		mapName := e.MapName
-		gameDir := e.GameDir
-		if hostname == "" {
-			hostname = "UNNAMED"
-		}
-		if mapName == "" {
-			mapName = "?"
-		}
-		if gameDir == "" {
-			gameDir = "id1"
-		}
-
 		serverPortText := strconv.Itoa(serverPort)
-		hostname = truncateSlistField(hostname, hostcacheNameMax)
-		mapName = truncateSlistField(mapName, hostcacheFieldMax)
-		gameDir = truncateSlistField(gameDir, hostcacheFieldMax)
-
-		entrySize := len(serverPortText) + 1 + len(hostname) + 1 + len(mapName) + 1 + len(gameDir) + 1 + 7
+		entrySize := len(serverPortText) + 1 + len(e.Hostname) + 1 + len(e.MapName) + 1 + len(e.GameDir) + 1 + 7
 		if len(buf)+entrySize > maxNetDatagramSize {
 			break
 		}
 
 		buf = appendSlistCString(buf, serverPortText)
-		buf = appendSlistCString(buf, hostname)
-		buf = appendSlistCString(buf, mapName)
-		buf = appendSlistCString(buf, gameDir)
+		buf = appendSlistCString(buf, e.Hostname)
+		buf = appendSlistCString(buf, e.MapName)
+		buf = appendSlistCString(buf, e.GameDir)
 		buf = append(buf, byte(e.Users&0xff), byte(e.Users>>8))
 		buf = append(buf, byte(e.MaxUsers&0xff), byte(e.MaxUsers>>8))
 		buf = append(buf, byte(e.Instances&0xff), byte(e.Instances>>8))
@@ -176,6 +176,75 @@ func truncateSlistField(s string, maxBytes int) string {
 func appendSlistCString(buf []byte, s string) []byte {
 	buf = append(buf, s...)
 	return append(buf, 0)
+}
+
+func serverListEntriesLocked(mgr *ServerManager, now time.Time, notePoolDemand bool) []serverListEntry {
+	ports := fillRunningPortsLocked(mgr, nil)
+	staleAfter := staleAfterForTargets(len(ports))
+	out := make([]serverListEntry, 0, len(ports)+len(mgr.poolsByID))
+
+	pools := make([]*serverPool, 0, len(mgr.poolsByID))
+	for _, pool := range mgr.poolsByID {
+		if pool != nil {
+			pools = append(pools, pool)
+		}
+	}
+	sort.Slice(pools, func(i, j int) bool {
+		return pools[i].Line < pools[j].Line
+	})
+	for _, pool := range pools {
+		if pool.aggregateInstances == 0 {
+			continue
+		}
+		backendPort, ok := mgr.pickPoolBackendLocked(pool)
+		if !ok {
+			continue
+		}
+		instances := uint16(0)
+		if pool.Autoscales {
+			if notePoolDemand {
+				notePoolDemandLocked(pool, now)
+			}
+			instances = pool.joinableInstances
+		}
+		out = append(out, normalizeServerListEntry(serverListEntry{
+			ListenPort: backendPort,
+			Hostname:   pool.DisplayHostname,
+			MapName:    pool.DisplayMap,
+			GameDir:    pool.DisplayGameDir,
+			Users:      pool.aggregateUsers,
+			MaxUsers:   pool.aggregateMaxUsers,
+			Instances:  instances,
+		}))
+	}
+
+	for _, port := range ports {
+		ids := mgr.serverIDsByPort[port]
+		var rec *serverRecord
+		for _, serverID := range ids {
+			r := mgr.serversByID[serverID]
+			if !mgr.serverRecordRunningLocked(r) || mgr.poolByServerID[r.id] != nil {
+				continue
+			}
+			rec = r
+			break
+		}
+		if rec == nil || now.Sub(rec.LastSeen) > staleAfter || rec.spec == nil {
+			continue
+		}
+
+		out = append(out, normalizeServerListEntry(serverListEntry{
+			ListenPort: port,
+			Hostname:   rec.Hostname,
+			MapName:    rec.MapName,
+			GameDir:    activeGameDir(rec.spec.SearchPath),
+			Users:      uint16(rec.Players),
+			MaxUsers:   uint16(rec.MaxPlayers),
+			Instances:  0,
+		}))
+	}
+
+	return out
 }
 
 // IsSlistRequest reports whether payload is a valid CCREQ_SERVER_INFO datagram.
@@ -322,81 +391,12 @@ func snapshotForSlist(mgr *ServerManager) []serverListEntry {
 	now := time.Now()
 
 	mgr.mu.Lock()
-	ports := fillRunningPortsLocked(mgr, nil)
-	staleAfter := staleAfterForTargets(len(ports))
-	out := make([]serverListEntry, 0, len(ports)+len(mgr.poolsByID))
-
-	pools := make([]*serverPool, 0, len(mgr.poolsByID))
-	for _, pool := range mgr.poolsByID {
-		if pool != nil {
-			pools = append(pools, pool)
-		}
-	}
-	sort.Slice(pools, func(i, j int) bool {
-		return pools[i].Line < pools[j].Line
-	})
-	for _, pool := range pools {
-		if pool.AggregateInstances == 0 {
-			continue
-		}
-		backendPort, ok := mgr.pickPoolBackendLocked(pool)
-		if !ok {
-			continue
-		}
-		instances := uint16(0)
-		if pool.Autoscales {
-			notePoolDemandLocked(pool, now)
-			instances = pool.AggregateInstances
-		}
-		out = append(out, serverListEntry{
-			ListenPort: backendPort,
-			Hostname:   pool.DisplayHostname,
-			MapName:    pool.DisplayMap,
-			GameDir:    pool.DisplayGameDir,
-			Users:      pool.AggregateUsers,
-			MaxUsers:   pool.AggregateMaxUsers,
-			Instances:  instances,
-		})
-	}
-
-	for _, port := range ports {
-		ids := mgr.serverIDsByPort[port]
-		var rec *serverRecord
-		for _, serverID := range ids {
-			r := mgr.serversByID[serverID]
-			if !mgr.serverRecordRunningLocked(r) || mgr.poolByServerID[r.id] != nil {
-				continue
-			}
-			rec = r
-			break
-		}
-		if rec == nil || now.Sub(rec.LastSeen) > staleAfter || rec.spec == nil {
-			continue
-		}
-
-		out = append(out, serverListEntry{
-			ListenPort: port,
-			Hostname:   rec.Hostname,
-			MapName:    rec.MapName,
-			GameDir:    activeGameDir(rec.spec.SearchPath),
-			Users:      uint16(rec.Players),
-			MaxUsers:   uint16(rec.MaxPlayers),
-			Instances:  0,
-		})
-	}
+	out := serverListEntriesLocked(mgr, now, true)
 	mgr.mu.Unlock()
 
 	sort.Slice(out, func(i, j int) bool {
-		hi := out[i].Hostname
-		hj := out[j].Hostname
-		if hi == "" {
-			hi = "UNNAMED"
-		}
-		if hj == "" {
-			hj = "UNNAMED"
-		}
-		hi = strings.ToLower(hi)
-		hj = strings.ToLower(hj)
+		hi := strings.ToLower(out[i].Hostname)
+		hj := strings.ToLower(out[j].Hostname)
 		if hi != hj {
 			return hi < hj
 		}

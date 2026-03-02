@@ -203,7 +203,7 @@ func TestNewGameManifestBundleHandler_ReturnsDirectModManifests(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	handler := NewGameManifestBundleHandler(gameDir, NewPakIndexCache(), 7)
+	handler := newGameManifestBundleHandler(gameDir, NewPakIndexCache(), 7)
 
 	req := httptest.NewRequest(http.MethodGet, "/game-manifest", nil)
 	rec := httptest.NewRecorder()
@@ -250,7 +250,7 @@ func TestNewGameManifestBundleHandler_ReturnsDirectModManifests(t *testing.T) {
 
 func TestNewGameManifestBundleHandler_NoModsReturnsNotFound(t *testing.T) {
 	gameDir := t.TempDir()
-	handler := NewGameManifestBundleHandler(gameDir, NewPakIndexCache(), 4)
+	handler := newGameManifestBundleHandler(gameDir, NewPakIndexCache(), 4)
 	req := httptest.NewRequest(http.MethodGet, "/game-manifest", nil)
 	rec := httptest.NewRecorder()
 

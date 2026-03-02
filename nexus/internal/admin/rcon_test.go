@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-
 )
 
 type mockSession struct {
@@ -53,24 +52,40 @@ func (m *mockSession) Close() { m.closed = true }
 func (m *mockSession) reply() string { return m.replies.String() }
 
 func TestSplitAdminPayload_AcceptsPortZero(t *testing.T) {
-	pw, targetPort, args := splitAdminPayload([]byte("pw\x000\x00nexus status"))
+	pw, targetText, args := splitAdminPayload([]byte("pw\x000\x00nexus status"))
 	if pw != "pw" {
 		t.Fatalf("expected password pw, got %q", pw)
 	}
-	if targetPort != 0 {
-		t.Fatalf("expected target port 0, got %d", targetPort)
+	if targetText != "0" {
+		t.Fatalf("expected target text %q, got %q", "0", targetText)
 	}
 	if args != "nexus status" {
 		t.Fatalf("expected args %q, got %q", "nexus status", args)
 	}
 }
 
+func TestRouteAdminTarget_NexusAliases(t *testing.T) {
+	for _, raw := range []string{"", "0", "nexus"} {
+		target := routeAdminTarget(raw)
+		if !target.nexus || target.label != "nexus" {
+			t.Fatalf("routeAdminTarget(%q) = %+v, want nexus target", raw, target)
+		}
+	}
+}
+
+func TestRouteAdminTarget_PreservesServerToken(t *testing.T) {
+	target := routeAdminTarget("26000")
+	if target.nexus || target.label != "26000" {
+		t.Fatalf("routeAdminTarget() = %+v, want raw server token", target)
+	}
+}
+
 func TestHandleAdminFrame_UsageIncludesImplicitTargetForm(t *testing.T) {
 	r := newMockSession(true)
 	auth := &Auth{}
-	HandleAdminFrame(r, []byte("\x000\x00"), auth, &Env{})
+	HandleAdminFrameWithIdentityAndPromotionHook(r, []byte("\x000\x00"), auth, &Env{}, "", nil)
 	reply := r.reply()
-	if !strings.Contains(reply, "usage: rcon <cmd> | rcon <host|port> <cmd>") {
+	if !strings.Contains(reply, "usage: rcon <cmd> | rcon nexus <cmd> | rcon <host|port|idx> <cmd>") {
 		t.Fatalf("expected updated usage text, got %q", reply)
 	}
 }
@@ -83,7 +98,7 @@ func TestHandleAdminFrame_PromotesSessionAfterValidPassword(t *testing.T) {
 		t.Fatalf("expected client session before auth")
 	}
 
-	HandleAdminFrame(r, []byte("pw\x000\x00help"), auth, &Env{})
+	HandleAdminFrameWithIdentityAndPromotionHook(r, []byte("pw\x000\x00help"), auth, &Env{}, "", nil)
 	reply := r.reply()
 	if !strings.Contains(reply, "Nexus commands:") {
 		t.Fatalf("expected help reply after auth, got %q", reply)
@@ -98,7 +113,7 @@ func TestHandleAdminFrameWithPromotionHook_FiresOnPromotion(t *testing.T) {
 	auth := &Auth{rconPassword: "pw"}
 
 	hookCalls := 0
-	HandleAdminFrameWithPromotionHook(r, []byte("pw\x000\x00help"), auth, &Env{}, func(Session) {
+	HandleAdminFrameWithIdentityAndPromotionHook(r, []byte("pw\x000\x00help"), auth, &Env{}, "", func(Session) {
 		hookCalls++
 	})
 
@@ -115,14 +130,14 @@ func TestHandleAdminFrameWithIdentityAndPromotionHook_UsesActorAwareExec(t *test
 	r := newMockSession(true)
 
 	called := false
-	var gotPort int
+	var gotTarget string
 	var gotArgs string
 	var gotActor string
 	var auditLogs []string
 	env := &Env{
-		ExecServerCmd: func(port int, cmd, actorID string) (string, error) {
+		DispatchServerCmd: func(target, cmd, actorID string) (string, error) {
 			called = true
-			gotPort = port
+			gotTarget = target
 			gotArgs = cmd
 			gotActor = actorID
 			return "ok\n", nil
@@ -138,10 +153,10 @@ func TestHandleAdminFrameWithIdentityAndPromotionHook_UsesActorAwareExec(t *test
 		t.Fatalf("expected actor-aware command reply, got %q", reply)
 	}
 	if !called {
-		t.Fatalf("expected ExecServerCmd call")
+		t.Fatalf("expected DispatchServerCmd call")
 	}
-	if gotPort != 26000 {
-		t.Fatalf("expected port 26000, got %d", gotPort)
+	if gotTarget != "26000" {
+		t.Fatalf("expected target 26000, got %q", gotTarget)
 	}
 	if gotArgs != "status" {
 		t.Fatalf("expected raw command args preserved, got %q", gotArgs)
@@ -186,6 +201,28 @@ func TestHandleAdminFrameWithIdentityAndPromotionHook_AuditsNexusCommand(t *test
 	}
 }
 
+func TestHandleAdminFrameWithIdentityAndPromotionHook_ResolvesHostnameTarget(t *testing.T) {
+	r := newMockSession(true)
+
+	var gotTarget string
+	var gotCmd string
+	env := &Env{
+		DispatchServerCmd: func(target, cmd, actorID string) (string, error) {
+			gotTarget = target
+			gotCmd = cmd
+			return "ok\n", nil
+		},
+	}
+
+	HandleAdminFrameWithIdentityAndPromotionHook(r, []byte("\x00fragfest\x00status"), &Auth{}, env, "alice@example.com", nil)
+	if reply := r.reply(); reply != "ok\n" {
+		t.Fatalf("expected resolved hostname reply, got %q", reply)
+	}
+	if gotTarget != "fragfest" || gotCmd != "status" {
+		t.Fatalf("resolved hostname dispatch = target %q cmd %q, want target fragfest cmd status", gotTarget, gotCmd)
+	}
+}
+
 func TestResolveAdminActorID_FallsBackToSourceIP(t *testing.T) {
 	r := newMockSession(true)
 	got := resolveAdminActorID("anonymous", r)
@@ -206,7 +243,7 @@ func TestExecNexusCommand_Help(t *testing.T) {
 	if !strings.Contains(reply, "Nexus commands:") {
 		t.Fatalf("expected help header, got %q", reply)
 	}
-	if !strings.Contains(reply, "session list") || !strings.Contains(reply, "session info <idx>") || !strings.Contains(reply, "session ban <idx>") || !strings.Contains(reply, "tail") {
+	if !strings.Contains(reply, "rcon nexus slist [<all|idx|host>]") || !strings.Contains(reply, "rcon nexus session list") || !strings.Contains(reply, "rcon nexus session info <idx>") || !strings.Contains(reply, "rcon nexus session ban <idx>") || !strings.Contains(reply, "rcon nexus tail") {
 		t.Fatalf("expected help to list new commands, got %q", reply)
 	}
 }
@@ -220,30 +257,56 @@ func TestExecNexusCommand_EmptyCommandReturnsHelp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected help reply for empty command, got error %v", err)
 	}
-	if !strings.Contains(reply, "Nexus commands:") || !strings.Contains(reply, "slist") {
+	if !strings.Contains(reply, "Nexus commands:") || !strings.Contains(reply, "rcon nexus slist [<all|idx|host>]") {
 		t.Fatalf("expected help output for empty command, got %q", reply)
 	}
 }
 
-func TestExecNexusCommand_UnknownCommandReturnsHelp(t *testing.T) {
+func TestExecNexusCommand_UnknownCommandReturnsHelpUsageError(t *testing.T) {
 	env := &Env{
 		ServerSnapshots:  func() []ServerInfo { return nil },
 		SessionSnapshots: func() []SessionInfo { return nil },
 	}
 	reply, err := execNexusCommand("wat", env)
-	if err != nil {
-		t.Fatalf("expected help reply for unknown command, got error %v", err)
+	if err == nil {
+		t.Fatalf("expected error for unknown command")
 	}
-	if !strings.Contains(reply, "Nexus commands:") || !strings.Contains(reply, "help") {
-		t.Fatalf("expected help output for unknown command, got %q", reply)
+	if reply != "" {
+		t.Fatalf("expected empty reply for unknown command, got %q", reply)
+	}
+	if !strings.Contains(err.Error(), "unknown Nexus command \"wat\"") {
+		t.Fatalf("expected unknown command detail, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "\nusage: rcon nexus help") {
+		t.Fatalf("expected help usage hint, got %q", err.Error())
 	}
 }
 
-func TestExecNexusCommand_Slist(t *testing.T) {
+func TestExecNexusCommand_InvalidCommandLineReturnsHelpUsageError(t *testing.T) {
+	env := &Env{
+		ServerSnapshots:  func() []ServerInfo { return nil },
+		SessionSnapshots: func() []SessionInfo { return nil },
+	}
+	reply, err := execNexusCommand("\"", env)
+	if err == nil {
+		t.Fatalf("expected error for invalid command line")
+	}
+	if reply != "" {
+		t.Fatalf("expected empty reply for invalid command line, got %q", reply)
+	}
+	if !strings.Contains(err.Error(), "invalid Nexus command line:") {
+		t.Fatalf("expected parse detail, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "\nusage: rcon nexus help") {
+		t.Fatalf("expected help usage hint, got %q", err.Error())
+	}
+}
+
+func TestExecNexusCommand_SlistNoArgsShowsPoolList(t *testing.T) {
 	env := &Env{
 		ServerSnapshots: func() []ServerInfo {
 			return []ServerInfo{
-				{ListenPort: 26000, GameDir: "id1", Hostname: "fragfest", Players: 1, MaxPlayers: 16, State: "stopped"},
+				{CandidatePort: 26000, GameDir: "id1", Hostname: "fragfest", Players: 1, MaxPlayers: 16, Instances: 3, State: "stopped"},
 			}
 		},
 		SessionSnapshots: func() []SessionInfo { return nil },
@@ -256,10 +319,10 @@ func TestExecNexusCommand_Slist(t *testing.T) {
 	if !strings.HasPrefix(reply, "\n") {
 		t.Fatalf("expected leading blank line, got %q", reply)
 	}
-	if !strings.Contains(reply, "#   Server          Port  Game            Users State") {
-		t.Fatalf("expected slist-style header, got %q", reply)
+	if !strings.Contains(reply, "#   Pool            Candidate Game            Users        State") {
+		t.Fatalf("expected pool-list header, got %q", reply)
 	}
-	if !strings.Contains(reply, "fragfest") || !strings.Contains(reply, "id1") || !strings.Contains(reply, "1/16") {
+	if !strings.Contains(reply, "fragfest") || !strings.Contains(reply, "id1") || !strings.Contains(reply, "1/16 (3)") {
 		t.Fatalf("expected hostname/game/users in slist reply, got %q", reply)
 	}
 
@@ -269,6 +332,141 @@ func TestExecNexusCommand_Slist(t *testing.T) {
 	}
 	if !strings.Contains(reply, "== end list ==") {
 		t.Fatalf("expected slist trailer, got %q", reply)
+	}
+}
+
+func TestExecNexusCommand_PlistUnknown(t *testing.T) {
+	env := &Env{
+		ServerSnapshots:  func() []ServerInfo { return nil },
+		SessionSnapshots: func() []SessionInfo { return nil },
+	}
+	reply, err := execNexusCommand("plist", env)
+	if err == nil {
+		t.Fatalf("expected error for removed plist command")
+	}
+	if reply != "" {
+		t.Fatalf("expected empty reply for removed plist command, got %q", reply)
+	}
+	if !strings.Contains(err.Error(), "unknown Nexus command \"plist\"") {
+		t.Fatalf("expected unknown command detail, got %q", err.Error())
+	}
+}
+
+func TestExecNexusCommand_SlistAll(t *testing.T) {
+	env := &Env{
+		ServerSnapshots: func() []ServerInfo {
+			return []ServerInfo{
+				{Line: 0, Hostname: "fragfest", CandidatePort: 26000, GameDir: "id1", Players: 1, MaxPlayers: 32, Instances: 2, State: "running"},
+				{Line: 1, Hostname: "ctf", CandidatePort: 26010, GameDir: "ctf", Players: 0, MaxPlayers: 16, Instances: 1, State: "starting"},
+			}
+		},
+		BackendSnapshots: func(target int) ([]ServerInfo, error) {
+			if target != 0 {
+				t.Fatalf("expected all target, got %d", target)
+			}
+			return []ServerInfo{
+				{Line: 0, ListenPort: 26000, MapName: "dm3", Players: 1, MaxPlayers: 16, State: "running"},
+				{Line: 0, ListenPort: 26001, MapName: "dm3", Players: 0, MaxPlayers: 16, State: "running"},
+				{Line: 1, ListenPort: 26010, MapName: "ctf2m3", Players: 0, MaxPlayers: 16, State: "starting"},
+			}, nil
+		},
+		SessionSnapshots: func() []SessionInfo { return nil },
+	}
+
+	reply, err := execNexusCommand("slist all", env)
+	if err != nil {
+		t.Fatalf("execNexusCommand(slist all) error = %v", err)
+	}
+	if !strings.Contains(reply, "[1] fragfest  game=id1  users=1/32 (2)  candidate=26000  state=running") {
+		t.Fatalf("expected grouped pool header, got %q", reply)
+	}
+	if !strings.Contains(reply, "    #  Port  Map             Users   State") || !strings.Contains(reply, "    2  26001 dm3") {
+		t.Fatalf("expected grouped backend rows, got %q", reply)
+	}
+	if !strings.Contains(reply, "[2] ctf  game=ctf  users=0/16 (1)  candidate=26010  state=starting") {
+		t.Fatalf("expected second grouped pool header, got %q", reply)
+	}
+}
+
+func TestExecNexusCommand_SlistPool(t *testing.T) {
+	env := &Env{
+		ServerSnapshots: func() []ServerInfo {
+			return []ServerInfo{
+				{Line: 0, Hostname: "fragfest", CandidatePort: 26000, GameDir: "id1", Players: 1, MaxPlayers: 32, Instances: 2, State: "running"},
+				{Line: 1, Hostname: "ctf", CandidatePort: 26017, GameDir: "ctf", Players: 2, MaxPlayers: 16, Instances: 1, State: "running"},
+			}
+		},
+		BackendSnapshots: func(target int) ([]ServerInfo, error) {
+			if target != 2 {
+				t.Fatalf("expected pool target 2, got %d", target)
+			}
+			return []ServerInfo{
+				{Line: 1, ListenPort: 26017, MapName: "ctf2m3", Players: 2, MaxPlayers: 16, State: "running"},
+			}, nil
+		},
+	}
+
+	reply, err := execNexusCommand("slist 2", env)
+	if err != nil {
+		t.Fatalf("execNexusCommand(slist 2) error = %v", err)
+	}
+	if !strings.Contains(reply, "[2] ctf  game=ctf  users=2/16 (1)  candidate=26017  state=running") {
+		t.Fatalf("expected selected pool header, got %q", reply)
+	}
+	if !strings.Contains(reply, "    #  Port  Map             Users   State") || !strings.Contains(reply, "    1  26017 ctf2m3") {
+		t.Fatalf("expected selected backend row, got %q", reply)
+	}
+}
+
+func TestExecNexusCommand_SlistPoolByHostname(t *testing.T) {
+	env := &Env{
+		ServerSnapshots: func() []ServerInfo {
+			return []ServerInfo{
+				{Line: 0, Hostname: "fragfest", CandidatePort: 26000, GameDir: "id1", Players: 1, MaxPlayers: 32, Instances: 2, State: "running"},
+				{Line: 1, Hostname: "ctf", CandidatePort: 26017, GameDir: "ctf", Players: 2, MaxPlayers: 16, Instances: 1, State: "running"},
+			}
+		},
+		BackendSnapshots: func(target int) ([]ServerInfo, error) {
+			if target != 2 {
+				t.Fatalf("expected pool target 2, got %d", target)
+			}
+			return []ServerInfo{
+				{Line: 1, ListenPort: 26017, MapName: "ctf2m3", Players: 2, MaxPlayers: 16, State: "running"},
+			}, nil
+		},
+	}
+
+	reply, err := execNexusCommand("slist ctf", env)
+	if err != nil {
+		t.Fatalf("execNexusCommand(slist ctf) error = %v", err)
+	}
+	if !strings.Contains(reply, "[2] ctf  game=ctf  users=2/16 (1)  candidate=26017  state=running") {
+		t.Fatalf("expected selected pool header, got %q", reply)
+	}
+	if !strings.Contains(reply, "    #  Port  Map             Users   State") || !strings.Contains(reply, "    1  26017 ctf2m3") {
+		t.Fatalf("expected selected backend row, got %q", reply)
+	}
+}
+
+func TestExecNexusCommand_SlistRejectsTooManyArgs(t *testing.T) {
+	env := &Env{}
+	_, err := execNexusCommand("slist all extra", env)
+	if err == nil {
+		t.Fatalf("expected slist usage error")
+	}
+	if !strings.Contains(err.Error(), "usage: rcon nexus slist [<all|idx|host>]") {
+		t.Fatalf("expected slist usage helper, got %q", err.Error())
+	}
+}
+
+func TestExecNexusCommand_SessionRequiresConcreteCommandUsage(t *testing.T) {
+	env := &Env{}
+	_, err := execNexusCommand("session", env)
+	if err == nil {
+		t.Fatalf("expected session usage error")
+	}
+	if !strings.Contains(err.Error(), "usage: rcon nexus session list | rcon nexus session info <idx> | rcon nexus session ban <idx>") {
+		t.Fatalf("expected explicit session command usage, got %q", err.Error())
 	}
 }
 
@@ -288,18 +486,68 @@ func TestExecNexusCommand_SessionListNoClients(t *testing.T) {
 
 func TestExecNexusCommand_InvalidTargetShowsCommandUsage(t *testing.T) {
 	env := &Env{
-		ServerSnapshots: func() []ServerInfo { return nil },
-		StartServer:     func(target int) error { return nil },
+		ServerSnapshots: func() []ServerInfo {
+			return []ServerInfo{{Hostname: "fragfest"}}
+		},
+		StartServer: func(target int) error { return nil },
 	}
 	_, err := execNexusCommand("start not-a-number", env)
 	if err == nil {
 		t.Fatalf("expected usage error for invalid target")
 	}
-	if !strings.Contains(err.Error(), "invalid target \"not-a-number\"") {
-		t.Fatalf("expected invalid target error, got %q", err.Error())
+	if !strings.Contains(err.Error(), "unknown target \"not-a-number\"") {
+		t.Fatalf("expected unknown target error, got %q", err.Error())
 	}
-	if !strings.Contains(err.Error(), "\nusage: rcon start <idx|port|all>") {
+	if !strings.Contains(err.Error(), "\nusage: rcon nexus start <idx|host|all>") {
 		t.Fatalf("expected command usage on next line for invalid target, got %q", err.Error())
+	}
+}
+
+func TestExecNexusCommand_StartPoolByHostname(t *testing.T) {
+	env := &Env{
+		ServerSnapshots: func() []ServerInfo {
+			return []ServerInfo{
+				{Hostname: "fragfest"},
+				{Hostname: "ctf"},
+			}
+		},
+		StartServer: func(target int) error {
+			if target != 2 {
+				t.Fatalf("expected hostname ctf to resolve to pool 2, got %d", target)
+			}
+			return nil
+		},
+	}
+
+	reply, err := execNexusCommand("start ctf", env)
+	if err != nil {
+		t.Fatalf("execNexusCommand(start ctf) error = %v", err)
+	}
+	if reply != "complete\n" {
+		t.Fatalf("expected complete reply, got %q", reply)
+	}
+}
+
+func TestExecNexusCommand_PoolPortTargetRejected(t *testing.T) {
+	env := &Env{
+		ServerSnapshots: func() []ServerInfo {
+			return []ServerInfo{{Hostname: "fragfest", CandidatePort: 26000}}
+		},
+		StartServer: func(target int) error {
+			t.Fatalf("unexpected start dispatch for pool port target %d", target)
+			return nil
+		},
+	}
+
+	_, err := execNexusCommand("start 26000", env)
+	if err == nil {
+		t.Fatalf("expected pool port target to be rejected")
+	}
+	if !strings.Contains(err.Error(), "unknown target \"26000\"") {
+		t.Fatalf("expected unknown target error, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "\nusage: rcon nexus start <idx|host|all>") {
+		t.Fatalf("expected updated command usage, got %q", err.Error())
 	}
 }
 
@@ -327,7 +575,7 @@ func TestExecNexusCommand_LaunchMissingBinaryShowsUsage(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected launch usage error")
 	}
-	if !strings.Contains(err.Error(), "usage: rcon launch <binary> [args...]") {
+	if !strings.Contains(err.Error(), "usage: rcon nexus launch <binary> [args...]") {
 		t.Fatalf("expected launch helper text, got %q", err.Error())
 	}
 }
@@ -344,7 +592,7 @@ func TestExecNexusCommand_SessionBanInvalidIndexShowsUsage(t *testing.T) {
 	if !strings.Contains(err.Error(), "invalid session index") {
 		t.Fatalf("expected invalid session index detail, got %q", err.Error())
 	}
-	if !strings.Contains(err.Error(), "\nusage: rcon session ban <idx>") {
+	if !strings.Contains(err.Error(), "\nusage: rcon nexus session ban <idx>") {
 		t.Fatalf("expected session ban usage helper text, got %q", err.Error())
 	}
 }
@@ -367,9 +615,9 @@ func TestExecNexusCommand_SessionInfoByIndex(t *testing.T) {
 				},
 			}
 		},
-		ExecServerCmd: func(port int, cmd, actorID string) (string, error) {
-			if port != 26000 || cmd != "status" || actorID != "" {
-				t.Fatalf("unexpected status lookup call: port=%d cmd=%q actor=%q", port, cmd, actorID)
+		DispatchServerCmd: func(target, cmd, actorID string) (string, error) {
+			if target != "26000" || cmd != "status" || actorID != "" {
+				t.Fatalf("unexpected status lookup call: target=%q cmd=%q actor=%q", target, cmd, actorID)
 			}
 			return `
 #1  player-one          0  0:00:22
@@ -412,7 +660,7 @@ func TestExecNexusCommand_SessionInfoUnknownManagedPortTreatedDisconnected(t *te
 				},
 			}
 		},
-		ExecServerCmd: func(port int, cmd, actorID string) (string, error) {
+		DispatchServerCmd: func(target, cmd, actorID string) (string, error) {
 			statusLookups++
 			return "", fmt.Errorf("unknown server")
 		},
@@ -440,26 +688,26 @@ players: 2 active (16 max)
 #2  player-two          5  0:01:11
    127.100.10.2:51235
 `
-	match, ok := StatusPlayerForVirtualIP(statusReply, "127.100.10.2")
+	match, ok := statusPlayerForVirtualIP(statusReply, "127.100.10.2")
 	if !ok {
 		t.Fatalf("expected to find matching slot in status output")
 	}
-	if match.Slot != 2 {
-		t.Fatalf("expected slot 2, got %d", match.Slot)
+	if match.slot != 2 {
+		t.Fatalf("expected slot 2, got %d", match.slot)
 	}
 }
 
 func TestApplyServerKickTargets_UsesKickByResolvedStatusSlot(t *testing.T) {
 	type execCall struct {
-		port    int
+		target  string
 		cmd     string
 		actorID string
 	}
 
 	calls := make([]execCall, 0, 2)
 	env := &Env{
-		ExecServerCmd: func(port int, cmd, actorID string) (string, error) {
-			calls = append(calls, execCall{port: port, cmd: cmd, actorID: actorID})
+		DispatchServerCmd: func(target, cmd, actorID string) (string, error) {
+			calls = append(calls, execCall{target: target, cmd: cmd, actorID: actorID})
 			if cmd == "status" {
 				return `
 #1  player-one          0  0:00:22
@@ -487,10 +735,10 @@ func TestApplyServerKickTargets_UsesKickByResolvedStatusSlot(t *testing.T) {
 	if len(calls) != 2 {
 		t.Fatalf("expected status+kick command pair, got %d calls", len(calls))
 	}
-	if calls[0].port != 26000 || calls[0].cmd != "status" || calls[0].actorID != "" {
+	if calls[0].target != "26000" || calls[0].cmd != "status" || calls[0].actorID != "" {
 		t.Fatalf("unexpected first call: %+v", calls[0])
 	}
-	if calls[1].port != 26000 || calls[1].cmd != "kick # 1 Nexus ban" || calls[1].actorID != "" {
+	if calls[1].target != "26000" || calls[1].cmd != "kick # 1 Nexus ban" || calls[1].actorID != "" {
 		t.Fatalf("unexpected second call: %+v", calls[1])
 	}
 }

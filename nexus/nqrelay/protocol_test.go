@@ -3,6 +3,7 @@ package nqrelay
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestBuildWSFrame(t *testing.T) {
@@ -120,3 +121,50 @@ func TestRelayHandleWSFrame_DropsDisallowedPort(t *testing.T) {
 	}
 }
 
+func TestRelaySendAdminReply_WaitsForQueueSpace(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	r := &Relay{
+		wsTx:   make(chan []byte, 1),
+		ctx:    ctx,
+		cancel: cancel,
+		warnf:  noopLogf,
+		debugf: noopLogf,
+	}
+
+	r.wsTx <- buildWSFrame(26000, []byte("busy"))
+
+	done := make(chan struct{})
+	go func() {
+		r.SendAdminReply("tail reply\n")
+		close(done)
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	select {
+	case <-done:
+		t.Fatalf("SendAdminReply returned before queue space was available")
+	default:
+	}
+
+	<-r.wsTx
+
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("SendAdminReply did not resume after queue space was freed")
+	}
+
+	select {
+	case frame := <-r.wsTx:
+		if frame[0] != byte(controlPort>>8) || frame[1] != byte(controlPort) {
+			t.Fatalf("admin reply routed to non-zero port: [%d %d]", frame[0], frame[1])
+		}
+		if string(frame[2:]) != "tail reply\n" {
+			t.Fatalf("admin reply payload = %q, want %q", string(frame[2:]), "tail reply\n")
+		}
+	default:
+		t.Fatalf("expected queued admin reply frame")
+	}
+}

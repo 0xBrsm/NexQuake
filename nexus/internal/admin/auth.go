@@ -3,7 +3,7 @@
 //
 // The entry points for callers are:
 //   - [InitAuth] — construct an [Auth] from environment variables once at startup.
-//   - [HandleAdminFrame] / [HandleAdminFrameWithIdentityAndPromotionHook] — process
+//   - [HandleAdminFrameWithIdentityAndPromotionHook] — process
 //     an incoming admin (port-0) WebSocket frame.
 //   - [Env] — dependency-injection struct wiring the admin layer to the server
 //     manager and session registry.
@@ -146,8 +146,8 @@ func (a *Auth) IdentifyRequest(r *http.Request) (bool, string) {
 	return false, "anonymous"
 }
 
-// IsAdmin checks whether the HTTP request carries valid admin credentials.
-func (a *Auth) IsAdmin(r *http.Request) bool {
+// isAdmin checks whether the HTTP request carries valid admin credentials.
+func (a *Auth) isAdmin(r *http.Request) bool {
 	ok, _ := a.IdentifyRequest(r)
 	return ok
 }

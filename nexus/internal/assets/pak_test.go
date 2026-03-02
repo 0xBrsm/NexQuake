@@ -73,12 +73,12 @@ func TestReadPakContents(t *testing.T) {
 
 	byName := map[string]pakFileEntry{}
 	for _, e := range entries {
-		byName[e.Name] = e
+		byName[e.name] = e
 	}
-	if e, ok := byName["gfx/palette.lmp"]; !ok || e.Size != 3 {
+	if e, ok := byName["gfx/palette.lmp"]; !ok || e.size != 3 {
 		t.Fatalf("missing gfx/palette.lmp or wrong size: %+v", e)
 	}
-	if e, ok := byName["progs.dat"]; !ok || e.Size != 4 {
+	if e, ok := byName["progs.dat"]; !ok || e.size != 4 {
 		t.Fatalf("missing progs.dat or wrong size: %+v", e)
 	}
 }
@@ -98,7 +98,7 @@ func TestPakExtractHandler_ServesEntry(t *testing.T) {
 		"docs/readme.txt": want,
 	})
 
-	h := NewPakExtractHandler(gameDir, NewPakIndexCache())
+	h := newPakExtractHandler(gameDir, NewPakIndexCache())
 
 	req := httptest.NewRequest(http.MethodGet, "/pak-extract/id1/common/pak0.pak/docs/readme.txt", nil)
 	rr := httptest.NewRecorder()

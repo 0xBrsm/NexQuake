@@ -72,12 +72,14 @@ extern void SNDDMA_Resume(void);
 #define JOY_MENU_NAV_THRESH   0.35f
 
 #define JOY_DEAD_ZONE             0.20f
+#define JOY_LOOK_DEAD_ZONE        0.14f
+#define JOY_LOOK_CURVE            1.60f
 #define JOY_TRIGGER_THRESH        0.5f
 #define DEFAULT_SENSITIVITY       3.0f
 #define DEFAULT_M_YAW             0.022f
 #define JOY_TARGET_TURN_RATE_DPS  180.0f
 #define TOUCH_TARGET_SWIPE_TURN   180.0f
-#define TOUCH_TARGET_SWIPE_FRAC   0.50f
+#define TOUCH_TARGET_SWIPE_FRAC   0.75f
 #define JOY_LOOK_UNITS_PER_SECOND (JOY_TARGET_TURN_RATE_DPS / (DEFAULT_SENSITIVITY * DEFAULT_M_YAW))
 
 #define CLAMP_PITCH(a) do { if ((a) > 80) (a) = 80; else if ((a) < -70) (a) = -70; } while(0)
@@ -1086,6 +1088,22 @@ static float joy_apply_deadzone(float val)
 	return (val < 0.0f ? -1.0f : 1.0f) * (av - JOY_DEAD_ZONE) / (1.0f - JOY_DEAD_ZONE);
 }
 
+static float joy_look_response_scale(float raw_x, float raw_y)
+{
+	float mag_sq = raw_x * raw_x + raw_y * raw_y;
+	float scaled_mag;
+	float mag;
+
+	if (mag_sq <= JOY_LOOK_DEAD_ZONE * JOY_LOOK_DEAD_ZONE)
+		return 0.0f;
+
+	mag = sqrtf(mag_sq);
+	scaled_mag = (mag - JOY_LOOK_DEAD_ZONE) / (1.0f - JOY_LOOK_DEAD_ZONE);
+	if (scaled_mag > 1.0f)
+		scaled_mag = 1.0f;
+	return powf(scaled_mag, JOY_LOOK_CURVE) / mag;
+}
+
 static void joy_handle_button(int index, qboolean pressed)
 {
 	if (index < 0 || index >= JOY_MAX_BUTTONS)
@@ -1151,14 +1169,11 @@ static void IN_PollGamepads(void)
 
 		if (gp.numAxes >= 4)
 		{
-			float rx, ry;
-			rx = joy_apply_deadzone(gp.axis[2]);
-			ry = joy_apply_deadzone(gp.axis[3]);
-			if (rx != 0.0f || ry != 0.0f)
-			{
-				joy_look_x += rx * JOY_LOOK_UNITS_PER_SECOND * (float)host_frametime;
-				joy_look_y += ry * JOY_LOOK_UNITS_PER_SECOND * (float)host_frametime;
-			}
+			float rx = gp.axis[2];
+			float ry = gp.axis[3];
+			float look_scale = joy_look_response_scale(rx, ry);
+			joy_look_x += rx * look_scale * JOY_LOOK_UNITS_PER_SECOND * (float)host_frametime;
+			joy_look_y += ry * look_scale * JOY_LOOK_UNITS_PER_SECOND * (float)host_frametime;
 		}
 
 		joy_connected = true;

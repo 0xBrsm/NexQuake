@@ -244,6 +244,7 @@ static EM_BOOL _WebSocket_onclose(int eventType, const EmscriptenWebSocketCloseE
 	ws_close_requested = false;
 
 	WebSocketTransport_ResetState();
+	NET_InvalidateHostCache();
 
 	if (expected)
 		WebSocketTransport_Log(WS_LOG_INFO, "_WebSocket_onclose: disconnected at user request");
