@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -310,6 +311,9 @@ func runFullStackStressTier(t *testing.T, clientCount int) {
 	if err != nil {
 		t.Fatalf("listen udp echo: %v", err)
 	}
+	// Enlarge the kernel receive buffer so high-fanin traffic from 10k
+	// relay UDP sockets doesn't overflow the default (~208 KB) buffer.
+	_ = echoConn.SetReadBuffer(4 * 1024 * 1024)
 	echoAddr, ok := echoConn.LocalAddr().(*net.UDPAddr)
 	if !ok || echoAddr == nil || echoAddr.Port <= 0 {
 		_ = echoConn.Close()
@@ -318,15 +322,22 @@ func runFullStackStressTier(t *testing.T, clientCount int) {
 	echoPort := echoAddr.Port
 
 	echoStop := make(chan struct{})
-	echoDone := make(chan struct{})
-	go func() {
-		defer close(echoDone)
-		runUDPEchoLoop(echoConn, echoStop)
-	}()
+	var echoWg sync.WaitGroup
+	echoWorkers := runtime.NumCPU()
+	if echoWorkers < 2 {
+		echoWorkers = 2
+	}
+	for i := 0; i < echoWorkers; i++ {
+		echoWg.Add(1)
+		go func() {
+			defer echoWg.Done()
+			runUDPEchoLoop(echoConn, echoStop)
+		}()
+	}
 	t.Cleanup(func() {
 		close(echoStop)
 		_ = echoConn.Close()
-		<-echoDone
+		echoWg.Wait()
 	})
 
 	var currentSessions atomic.Int64
@@ -646,18 +657,14 @@ func runFullStackStressTier(t *testing.T, clientCount int) {
 func runUDPEchoLoop(conn *net.UDPConn, stop <-chan struct{}) {
 	buffer := make([]byte, 2048)
 	for {
-		_ = conn.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
+		select {
+		case <-stop:
+			return
+		default:
+		}
 		n, remote, err := conn.ReadFromUDP(buffer)
 		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				select {
-				case <-stop:
-					return
-				default:
-					continue
-				}
-			}
-			return
+			return // socket closed or fatal error
 		}
 		if n == 0 || remote == nil {
 			continue

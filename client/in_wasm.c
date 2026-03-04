@@ -19,7 +19,8 @@ extern int m_state;
 extern void SNDDMA_Pause(void);
 extern void SNDDMA_Resume(void);
 
-// menu.c local enum value for m_quit
+// menu.c local enum values used for touch/menu policy
+#define MSTATE_OPTIONS 8
 #define MSTATE_QUIT 12
 
 // Bind slots mapped onto stock Quake JOY/AUX keycodes.
@@ -51,6 +52,7 @@ extern void SNDDMA_Resume(void);
 #define K_TOUCH6 K_AUX18
 #define K_TOUCH7 K_AUX19
 #define K_TOUCH8 K_AUX20
+#define K_TOUCH9 K_AUX23
 #endif
 
 #ifndef K_TOUCH_TAP1
@@ -61,7 +63,7 @@ extern void SNDDMA_Resume(void);
 // ---------------------------------------------------------------------------
 // Tunables / shared constants
 // ---------------------------------------------------------------------------
-#define TOUCH_SLOT_COUNT      8
+#define TOUCH_SLOT_COUNT      9
 #define TOUCH_MENU_BUTTON_COUNT 1
 #define TOUCH_BUTTON_COUNT    (TOUCH_SLOT_COUNT + TOUCH_MENU_BUTTON_COUNT)
 #define TOUCH_MENU_BACK_BUTTON TOUCH_SLOT_COUNT
@@ -123,7 +125,8 @@ static struct {
 
 static const int touch_slot_keys[TOUCH_SLOT_COUNT] = {
 	K_TOUCH1, K_TOUCH2, K_TOUCH3, K_TOUCH4,
-	K_TOUCH5, K_TOUCH6, K_TOUCH7, K_TOUCH8
+	K_TOUCH5, K_TOUCH6, K_TOUCH7, K_TOUCH8,
+	K_TOUCH9
 };
 
 static qboolean fullscreen_requested;
@@ -177,13 +180,18 @@ static float    joy_move_x, joy_move_y;
 
 static qboolean vctrl_down[CTRL_TOTAL];
 static int      vctrl_emitted_key[CTRL_TOTAL];
-static qboolean menu_mode_latched;
+static double   vctrl_next_repeat[CTRL_TOTAL];
+
+#define VCTRL_REPEAT_INTERVAL  0.25  /* seconds between repeats (4 per second) */
+static int      touch_nav_context_latched;
+static qboolean touch_menu_mode_latched;
 
 void js_set_touch_menu_mode(int active);
+void js_set_touch_menu_layout_mode(int active);
 static void touch_clear_move(void);
 static void touch_cancel_all(void);
 
-static qboolean is_menu_virtual_key(int key)
+static qboolean is_ui_virtual_key(int key)
 {
 	switch (key)
 	{
@@ -194,6 +202,8 @@ static qboolean is_menu_virtual_key(int key)
 	case K_DOWNARROW:
 	case K_LEFTARROW:
 	case K_RIGHTARROW:
+	case K_PGUP:
+	case K_PGDN:
 	case 'y':
 		return true;
 	default:
@@ -245,20 +255,41 @@ static int translate_virtual_key(int gameplay_key, int menu_key)
 	return mapped ? mapped : gameplay_key;
 }
 
+static qboolean touch_in_console(void)
+{
+	return key_dest == key_console || (key_dest == key_game && con_forcedup);
+}
+
 static void emit_virtual_control(int control_id, int gameplay_key, int menu_key, qboolean down)
 {
 	int emitted;
 
 	if (control_id < 0 || control_id >= CTRL_TOTAL)
 		return;
+
 	if (down == vctrl_down[control_id])
+	{
+		/* repeat: re-fire held controls in menu/console at fixed interval */
+		if (down && (key_dest == key_menu || touch_in_console()) &&
+		    realtime >= vctrl_next_repeat[control_id])
+		{
+			emitted = vctrl_emitted_key[control_id];
+			if (emitted)
+			{
+				Key_Event(emitted, false);
+				Key_Event(emitted, true);
+			}
+			vctrl_next_repeat[control_id] = realtime + VCTRL_REPEAT_INTERVAL;
+		}
 		return;
+	}
 
 	if (down)
 	{
 		emitted = translate_virtual_key(gameplay_key, menu_key);
 		vctrl_down[control_id] = true;
 		vctrl_emitted_key[control_id] = emitted;
+		vctrl_next_repeat[control_id] = realtime + VCTRL_REPEAT_INTERVAL;
 		if (emitted)
 			Key_Event(emitted, true);
 		return;
@@ -271,13 +302,13 @@ static void emit_virtual_control(int control_id, int gameplay_key, int menu_key,
 		Key_Event(emitted, false);
 }
 
-static void release_menu_virtual_controls(void)
+static void release_ui_virtual_controls(void)
 {
 	int i;
 
 	for (i = 0; i < CTRL_TOTAL; i++)
 	{
-		if (!vctrl_down[i] || !is_menu_virtual_key(vctrl_emitted_key[i]))
+		if (!vctrl_down[i] || !is_ui_virtual_key(vctrl_emitted_key[i]))
 			continue;
 
 		Key_Event(vctrl_emitted_key[i], false);
@@ -286,26 +317,54 @@ static void release_menu_virtual_controls(void)
 	}
 }
 
-static void sync_menu_mode_transition(void)
+static qboolean touch_in_nav_mode(void)
 {
-	qboolean in_menu = (key_dest == key_menu);
-
-	if (in_menu == menu_mode_latched)
-		return;
-
-	if (in_menu)
-		touch_cancel_all();
-	release_menu_virtual_controls();
-	menu_mode_latched = in_menu;
-	js_set_touch_menu_mode(in_menu);
+	return key_dest == key_menu || touch_in_console();
 }
 
-static void update_menu_nav(int nav_base, float thresh, float nx, float ny)
+static int touch_nav_context(void)
+{
+	if (key_dest == key_menu)
+		return 1;
+	if (touch_in_console())
+		return 2;
+	return 0;
+}
+
+static void sync_touch_mode_transition(void)
+{
+	qboolean nav_mode = touch_in_nav_mode();
+	int nav_context = touch_nav_context();
+
+	if (nav_context != touch_nav_context_latched)
+	{
+		if (nav_context)
+			touch_cancel_all();
+		release_ui_virtual_controls();
+		touch_nav_context_latched = nav_context;
+	}
+
+	if (nav_mode == touch_menu_mode_latched)
+	{
+		js_set_touch_menu_layout_mode(nav_mode && key_dest == key_menu && m_state == MSTATE_OPTIONS);
+		return;
+	}
+
+	touch_menu_mode_latched = nav_mode;
+	if (nav_mode)
+		touch_cancel_all();
+	js_set_touch_menu_mode(nav_mode);
+	js_set_touch_menu_layout_mode(nav_mode && key_dest == key_menu && m_state == MSTATE_OPTIONS);
+}
+
+static void update_touch_nav(int nav_base, float thresh, float nx, float ny)
 {
 	qboolean in_menu = (key_dest == key_menu);
+	qboolean in_con = touch_in_console();
+	qboolean nav = in_menu || in_con;
 
-	emit_virtual_control(nav_base + 0, 0, K_UPARROW,    in_menu && ny < -thresh);
-	emit_virtual_control(nav_base + 1, 0, K_DOWNARROW,  in_menu && ny >  thresh);
+	emit_virtual_control(nav_base + 0, in_con ? K_PGUP : 0, K_UPARROW,    nav && ny < -thresh);
+	emit_virtual_control(nav_base + 1, in_con ? K_PGDN : 0, K_DOWNARROW,  nav && ny >  thresh);
 	emit_virtual_control(nav_base + 2, 0, K_LEFTARROW,  in_menu && nx < -thresh);
 	emit_virtual_control(nav_base + 3, 0, K_RIGHTARROW, in_menu && nx >  thresh);
 }
@@ -364,7 +423,12 @@ EM_JS(int, js_overlay_modal_open, (), {
 	return Module.nqOverlayModalOpen ? 1 : 0;
 });
 
-EM_JS(int, js_overlay_editor_open, (), {
+EM_JS(int, js_overlay_blocking_modal_open, (), {
+	return Module.nqOverlayBlockingModalOpen ? 1 : 0;
+});
+
+EM_JS(int, js_dom_text_input_active, (), {
+	if (Module.nqTextEntryOpen) return 1;
 	var ctx = Module.nqOverlayCtx;
 	return (ctx && ctx.editor && ctx.editor.classList.contains('open')) ? 1 : 0;
 });
@@ -381,8 +445,34 @@ EM_JS(int, js_touch_controls_visible, (), {
 	return Module.nqTouchControlsVisible ? 1 : 0;
 });
 
+EM_JS(int, js_touch_text_entry_open, (), {
+	return Module.nqTextEntryOpen ? 1 : 0;
+});
+
+EM_JS(int, js_touch_text_entry_focused, (), {
+	return Module.nqTextEntryFocused ? 1 : 0;
+});
+
+EM_JS(void, js_dismiss_text_entry, (), {
+	var ctx = Module.nqOverlayCtx;
+	if (!ctx) return;
+	if (Module.nqMessageTextEntryOpen) {
+		if (typeof ctx.dismissTextEntry === 'function')
+			ctx.dismissTextEntry();
+	} else if (Module.nqTextEntryFocused) {
+		if (ctx.textEntryInput) ctx.textEntryInput.blur();
+	} else {
+		if (typeof ctx.closeTextEntry === 'function')
+			ctx.closeTextEntry();
+	}
+});
+
 EM_JS(void, js_set_touch_menu_mode, (int active), {
 	Module.nqTouchMenuMode = !!active;
+});
+
+EM_JS(void, js_set_touch_menu_layout_mode, (int active), {
+	Module.nqTouchMenuLayoutMode = !!active;
 });
 
 EM_JS(void, js_set_touch_flip, (int active), {
@@ -492,7 +582,7 @@ EM_JS(void, js_request_fullscreen, (), {
 
 EM_JS(int, js_touch_on_overlay_ui, (float x, float y), {
 	var el = document.elementFromPoint(x, y);
-	return (el && el.closest('#nq-overlay-toggle, #nq-overlay-panel, #nq-editor, #nq-touch-menu-m2')) ? 1 : 0;
+	return (el && el.closest('#nq-overlay-toggle, #nq-overlay-panel, #nq-editor, #nq-text-entry, #nq-touch-menu-m2')) ? 1 : 0;
 });
 
 // ---------------------------------------------------------------------------
@@ -502,7 +592,7 @@ static EM_BOOL on_key(int type, const EmscriptenKeyboardEvent *e, void *ud)
 {
 	int k;
 
-	if (js_overlay_editor_open())
+	if (js_dom_text_input_active())
 		return 0;
 
 	if (e->keyCode == 27 && emscripten_get_now() - ptrlock_lost_at < 50)
@@ -594,6 +684,19 @@ static void key_pulse(int idx, int ms)
 	Key_Event(key, false);
 	Key_Event(key, true);
 	emscripten_async_call(pulse_release, (void *)(intptr_t)idx, ms);
+}
+
+// Menu-back long-press → open console
+#define TOUCH_MENU_LONGPRESS_MS 400
+static int      menu_longpress_gen;
+static qboolean menu_longpress_fired;
+
+static void menu_longpress_fire(void *arg)
+{
+	if ((int)(intptr_t)arg != menu_longpress_gen || menu_longpress_gen <= 0)
+		return;
+	menu_longpress_fired = true;
+	Cbuf_AddText("toggleconsole\n");
 }
 
 static void emit_wheel_key(int dir)
@@ -775,13 +878,22 @@ static void touch_release_buttons(void)
 		emit_virtual_control(CTRL_TOUCH_SLOT_BASE + slot, touch_button_gameplay_key(slot), 0, false);
 		js_highlight_button(slot, 0);
 	}
+	menu_longpress_gen = 0;
 }
+
+static struct {
+	qboolean active;
+	long identifier;
+	float startX, startY;
+	double startMs;
+} touch_dismiss;
 
 static void touch_cancel_all(void)
 {
 	touch_release_buttons();
 	touch_clear_move();
 	memset(touch_look_points, 0, sizeof(touch_look_points));
+	touch_dismiss.active = false;
 }
 
 static qboolean touch_event_blocked(void)
@@ -792,7 +904,7 @@ static qboolean touch_event_blocked(void)
 		return true;
 	}
 
-	if (js_overlay_modal_open())
+	if (js_overlay_blocking_modal_open())
 		return true;
 
 	if (!js_touch_drag_active())
@@ -847,9 +959,28 @@ static void touch_try_zone_tap(int zone, float startX, float startY, double star
 
 	if (key_dest == key_menu)
 	{
+		if (zone == 1 && M_TextInputActive())
+		{
+			extern qboolean menu_text_editing;
+			menu_text_editing = true;
+			return;
+		}
 		key = (zone == 0) ? K_ESCAPE : menu_accept_key();
 		Key_Event(key, true);
 		Key_Event(key, false);
+		return;
+	}
+
+	if (touch_in_console())
+	{
+		if (zone == 1)
+		{
+			extern qboolean console_text_editing;
+			console_text_editing = true;
+			return;
+		}
+		Key_Event(K_ESCAPE, true);
+		Key_Event(K_ESCAPE, false);
 		return;
 	}
 
@@ -884,13 +1015,15 @@ static EM_BOOL on_touchstart(int type, const EmscriptenTouchEvent *e, void *ud)
 	int i;
 	qboolean handled;
 	qboolean in_menu;
+	qboolean text_entry_active;
 	float zone_split;
 
 	if (touch_event_blocked())
 		return 0;
 
 	handled = false;
-	in_menu = (key_dest == key_menu);
+	in_menu = touch_in_nav_mode();
+	text_entry_active = js_touch_text_entry_open();
 	zone_split = touch_zone_split(in_menu);
 
 	if (!fullscreen_requested)
@@ -916,6 +1049,20 @@ static EM_BOOL on_touchstart(int type, const EmscriptenTouchEvent *e, void *ud)
 		if (js_touch_on_overlay_ui(px, py))
 			continue;
 
+		if (text_entry_active)
+		{
+			if (!touch_dismiss.active)
+			{
+				touch_dismiss.active = true;
+				touch_dismiss.identifier = tp->identifier;
+				touch_dismiss.startX = px;
+				touch_dismiss.startY = py;
+				touch_dismiss.startMs = e->timestamp;
+			}
+			handled = true;
+			continue;
+		}
+
 		zone = touch_zone_for_point(px, zone_split);
 		slot = js_hit_test_buttons(px, py);
 		if (slot >= 0 && slot < TOUCH_BUTTON_COUNT && !touch_buttons[slot].active)
@@ -926,7 +1073,11 @@ static EM_BOOL on_touchstart(int type, const EmscriptenTouchEvent *e, void *ud)
 			touch_buttons[slot].identifier = tp->identifier;
 			js_highlight_button(slot, 1);
 			if (slot == TOUCH_MENU_BACK_BUTTON)
-				Cbuf_AddText("togglemenu\n");
+			{
+				menu_longpress_fired = false;
+				menu_longpress_gen++;
+				emscripten_async_call(menu_longpress_fire, (void *)(intptr_t)menu_longpress_gen, TOUCH_MENU_LONGPRESS_MS);
+			}
 			else
 				emit_virtual_control(CTRL_TOUCH_SLOT_BASE + slot, touch_button_gameplay_key(slot), 0, true);
 			if (slot < TOUCH_SLOT_COUNT && !in_menu && zone == 1)
@@ -969,7 +1120,7 @@ static EM_BOOL on_touchmove(int type, const EmscriptenTouchEvent *e, void *ud)
 
 	look_scale = touch_look_units_per_pixel();
 	handled = false;
-	in_menu = (key_dest == key_menu);
+	in_menu = touch_in_nav_mode();
 
 	for (i = 0; i < e->numTouches; i++)
 	{
@@ -1026,7 +1177,7 @@ static EM_BOOL on_touchend(int type, const EmscriptenTouchEvent *e, void *ud)
 	}
 
 	handled = false;
-	zone_split = touch_zone_split(key_dest == key_menu);
+	zone_split = touch_zone_split(touch_in_nav_mode());
 
 	for (i = 0; i < e->numTouches; i++)
 	{
@@ -1042,12 +1193,32 @@ static EM_BOOL on_touchend(int type, const EmscriptenTouchEvent *e, void *ud)
 		px = (float)tp->clientX;
 		py = (float)tp->clientY;
 
+		if (touch_dismiss.active && tp->identifier == touch_dismiss.identifier)
+		{
+			float dx = px - touch_dismiss.startX;
+			float dy = py - touch_dismiss.startY;
+			double elapsed = e->timestamp - touch_dismiss.startMs;
+			touch_dismiss.active = false;
+			if (dx*dx + dy*dy < 400.0f && elapsed < 500.0)
+			{
+				js_dismiss_text_entry();
+				handled = true;
+				continue;
+			}
+		}
+
 		slot = touch_find_button(tp->identifier);
 		if (slot >= 0)
 		{
 			touch_buttons[slot].active = false;
 			js_highlight_button(slot, 0);
 			emit_virtual_control(CTRL_TOUCH_SLOT_BASE + slot, touch_button_gameplay_key(slot), 0, false);
+			if (slot == TOUCH_MENU_BACK_BUTTON)
+			{
+				if (!menu_longpress_fired)
+					Cbuf_AddText("togglemenu\n");
+				menu_longpress_gen = 0;
+			}
 			look_slot = touch_find_look_point(tp->identifier);
 			if (look_slot >= 0)
 				touch_look_points[look_slot].active = false;
@@ -1128,7 +1299,7 @@ static void joy_disconnect_cleanup(void)
 	}
 
 	joy_move_x = joy_move_y = 0.0f;
-	update_menu_nav(CTRL_JOY_NAV_BASE, JOY_MENU_NAV_THRESH, 0.0f, 0.0f);
+	update_touch_nav(CTRL_JOY_NAV_BASE, JOY_MENU_NAV_THRESH, 0.0f, 0.0f);
 }
 
 static void IN_PollGamepads(void)
@@ -1165,7 +1336,7 @@ static void IN_PollGamepads(void)
 		{
 			joy_move_x = joy_move_y = 0.0f;
 		}
-		update_menu_nav(CTRL_JOY_NAV_BASE, JOY_MENU_NAV_THRESH, joy_move_x, joy_move_y);
+		update_touch_nav(CTRL_JOY_NAV_BASE, JOY_MENU_NAV_THRESH, joy_move_x, joy_move_y);
 
 		if (gp.numAxes >= 4)
 		{
@@ -1267,9 +1438,11 @@ char *IN_InvertPitchLabel(void)
 static void init_input(void)
 {
 	touch_active = js_touch_active();
-	menu_mode_latched = (key_dest == key_menu);
+	touch_nav_context_latched = touch_nav_context();
+	touch_menu_mode_latched = (key_dest == key_menu);
 	touch_flip_latched = false;
-	js_set_touch_menu_mode(menu_mode_latched);
+	js_set_touch_menu_mode(touch_menu_mode_latched);
+	js_set_touch_menu_layout_mode(touch_menu_mode_latched && m_state == MSTATE_OPTIONS);
 	touch_sync_flip_mode();
 
 	// Keyboard
@@ -1330,21 +1503,22 @@ void IN_Shutdown(void)
 	mouse_avail = 0;
 	touch_cancel_all();
 	joy_disconnect_cleanup();
-	release_menu_virtual_controls();
+	release_ui_virtual_controls();
 	js_set_touch_menu_mode(0);
+	js_set_touch_menu_layout_mode(0);
 	js_set_touch_flip(0);
 }
 
 void IN_Commands(void)
 {
-	sync_menu_mode_transition();
+	sync_touch_mode_transition();
 	touch_sync_flip_mode();
 	emscripten_sample_gamepad_data();
 	IN_PollGamepads();
 	// Touch joystick drives menu nav when no gamepad is connected.
 	// joy_connected is authoritative after IN_PollGamepads runs.
 	if (!joy_connected)
-		update_menu_nav(CTRL_JOY_NAV_BASE, JOY_MENU_NAV_THRESH, touch_move.axisX, touch_move.axisY);
+		update_touch_nav(CTRL_JOY_NAV_BASE, JOY_MENU_NAV_THRESH, touch_move.axisX, touch_move.axisY);
 }
 
 void IN_Move(usercmd_t *cmd)
@@ -1396,7 +1570,7 @@ void IN_Move(usercmd_t *cmd)
 		V_StopPitchDrift();
 	}
 
-	if (key_dest != key_menu)
+	if (!touch_in_nav_mode())
 	{
 		float spd = analog_speed.value;
 		cmd->forwardmove -= (touch_move.axisY + joy_move_y) * spd;

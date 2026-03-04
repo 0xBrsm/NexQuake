@@ -2,7 +2,7 @@
 (function() {
   var overlay = document.getElementById('nq-touch-overlay');
   var buttonsRoot = document.getElementById('nq-touch-buttons');
-  var bindableSlots = [1, 2, 3, 4, 5, 6, 7, 8];
+  var bindableSlots = [1, 2, 3, 4, 5, 6, 7, 8, 9];
   if (!overlay || !buttonsRoot) return;
 
   var moduleRef = (typeof Module !== 'undefined') ? Module : (window.Module = {});
@@ -89,8 +89,9 @@
       4: point(cx, touch4Y),
       5: point(mRightX, midY),
       6: point(mRightX - offset, mTopY),
-      7: point(mLeftX, midY),
-      8: point(mLeftX + offset, mTopY)
+      7: point(mLeftX + offset, mTopY),
+      8: point(mLeftX, midY),
+      9: point(mLeftX, clamp01(midY + ((1 - midY) * 0.5)))
     };
   }
 
@@ -210,6 +211,7 @@
   moduleRef.nqTouchDragActive = false;
   moduleRef.nqTouchControlsVisible = false;
   moduleRef.nqTouchMenuMode = !!moduleRef.nqTouchMenuMode;
+  moduleRef.nqTouchMenuLayoutMode = !!moduleRef.nqTouchMenuLayoutMode;
   moduleRef.nqTouchFlip = !!moduleRef.nqTouchFlip;
 
   if (!isTouchInput) {
@@ -306,11 +308,14 @@
     });
   }
 
+  // K_AUX13..K_AUX20 (219..226) for slots 1-8, K_AUX23 (229) for slot 9
+  var slotKeyCodes = [0, 219, 220, 221, 222, 223, 224, 225, 226, 229];
+
   function getSlotBinding(slot) {
     var key;
     if (!moduleRef.ccall || !moduleRef.calledRun) return null;
-    key = 218 + slot; // touch1..touch8 => K_AUX13..K_AUX20 (219..226)
-    return nqWasmGetKeyBinding(key) || '';
+    key = slotKeyCodes[slot] || 0;
+    return key ? nqWasmGetKeyBinding(key) || '' : '';
   }
 
   function setSlotGlyph(slot, binding) {
@@ -416,18 +421,25 @@
 
     var canvasShown = canvasElement && canvasElement.style.display === 'block';
     var landscape = isLandscapeOrientation();
-    var modalOpen = moduleRef && moduleRef.nqOverlayModalOpen;
+    var overlayCtx = moduleRef && moduleRef.nqOverlayCtx;
+    var panelOpen = !!(overlayCtx && overlayCtx.panel && overlayCtx.panel.classList.contains('open'));
+    var editorOpen = !!(overlayCtx && overlayCtx.editor && overlayCtx.editor.classList.contains('open'));
+    var textEntryOpen = !!(moduleRef && moduleRef.nqTextEntryOpen);
+    var blockingModal = panelOpen || editorOpen;
     var menuMode = !!moduleRef.nqTouchMenuMode;
+    var menuLayoutMode = !!moduleRef.nqTouchMenuLayoutMode;
     var visible = canvasShown && landscape;
-    var interactive = visible && !modalOpen;
+    var interactive = visible && !blockingModal;
 
     overlay.style.display = visible ? 'flex' : 'none';
     moduleRef.nqTouchControlsVisible = interactive;
     overlay.classList.toggle('nq-touch-menu-mode', visible && menuMode);
+    overlay.classList.toggle('nq-touch-menu-layout-mode', visible && menuLayoutMode);
     overlay.classList.toggle('nq-touch-flip', visible && !!moduleRef.nqTouchFlip);
-    overlay.classList.toggle('nq-touch-modal-open', visible && modalOpen);
+    overlay.classList.toggle('nq-touch-modal-open', visible && blockingModal);
+    overlay.classList.toggle('nq-touch-text-entry-open', visible && textEntryOpen && !blockingModal);
 
-    if ((!interactive || !menuMode) && dragState)
+    if ((!interactive || !menuLayoutMode) && dragState)
       endDrag();
 
     overlay.classList.toggle('nq-touch-idle', interactive && !touchHeld &&
@@ -492,14 +504,14 @@
     button.addEventListener('pointerdown', function(ev) {
       if (ev.pointerType === 'mouse' && ev.button !== 0)
         return;
-      if (!moduleRef.nqTouchMenuMode)
+      if (!moduleRef.nqTouchMenuLayoutMode)
         return;
 
       startX = ev.clientX;
       startY = ev.clientY;
       clearHold();
       holdTimer = setTimeout(function() {
-        if (!moduleRef.nqTouchMenuMode)
+        if (!moduleRef.nqTouchMenuLayoutMode)
           return;
         holdTimer = 0;
         beginDrag(button, slot, ev.pointerId, ev.clientX, ev.clientY);

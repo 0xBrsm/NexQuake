@@ -243,7 +243,7 @@ int WebSocket_Init(void)
 		Sys_Error("WebSocket_Init: emscripten_websocket_is_supported() says WebSockets aren't supported\n");
 
 	if (Q_strcmp(hostname.string, "UNNAMED") == 0)
-		Cvar_Set("hostname", "nexquake");
+		Cvar_Set("hostname", "NexQuake");
 
 	if ((net_controlsocket = WebSocket_OpenSocket(0)) == -1)
 		Sys_Error("WebSocket_Init: Unable to open control socket\n");

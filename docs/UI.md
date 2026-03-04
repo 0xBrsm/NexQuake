@@ -8,6 +8,8 @@ This guide explains how to use the NexQuake shell overlay (the gear button in th
 
 **Touch devices:** The gear button is fixed in the top-right corner of the screen (always visible). Tap it to open or close the settings panel. See [Controls](CONTROLS.md#touch-input) for the full touch layout and button configuration.
 
+**Touch text entry:** When Quake asks for text (console, chat, or a menu field), a text bar appears at the top on touch devices. Tap it to focus, type on the system keyboard, and press enter/send to submit. Tap outside the bar to hide it; `Esc` (back button) cancels in-progress text.
+
 ## Overlay Layout
 
 | Area | Purpose |

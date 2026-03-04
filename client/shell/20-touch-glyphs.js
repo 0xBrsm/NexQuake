@@ -96,19 +96,32 @@
         '<rect x="14" y="4" width="4" height="2.5" rx="0.5"/>' +
       '</svg>',
 
-    // impulse 7: Rocket Launcher – vertical rocket: nose cone, body, fins flush with flat bottom
+    // impulse 7: Rocket Launcher – curved body, swept side fins, rounded nozzle
     'impulse 7':
       '<svg viewBox="0 0 24 24" fill="currentColor">' +
-        '<rect x="9" y="8" width="6" height="13"/>' +
-        '<polygon points="9,8 15,8 12,3"/>' +
-        '<polygon points="9,17 6,21 9,21"/>' +
-        '<polygon points="15,17 18,21 15,21"/>' +
+        '<path d="M12,2 Q15.5,6 15,9 L15,18 L9,18 L9,9 Q8.5,6 12,2 Z"/>' +
+        '<polygon points="9,13 5,20 9,19"/>' +
+        '<polygon points="15,13 19,20 15,19"/>' +
+        '<rect x="10" y="18" width="4" height="3" rx="1"/>' +
       '</svg>',
 
     // impulse 8: Lightning Gun – zigzag thunderbolt
     'impulse 8':
       '<svg viewBox="0 0 24 24" fill="currentColor">' +
         '<path d="M13 2L5 13h6l-2 9 10-12h-6z"/>' +
+      '</svg>',
+
+    // messagemode: outlined single speech bubble for public chat
+    'messagemode':
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+        '<path d="M8 3h8a5 5 0 0 1 5 5v5a5 5 0 0 1-5 5H9l-4 3v-3a5 5 0 0 1-3-4.5V8a5 5 0 0 1 5-5z"/>' +
+      '</svg>',
+
+    // messagemode2: two overlapping speech bubbles for team chat
+    'messagemode2':
+      '<svg viewBox="0 0 24 24" fill="currentColor">' +
+        '<path d="M14 3h4a4 4 0 0 1 4 4v3a4 4 0 0 1-4 4h-1v3l-2.5-3H14a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4z" opacity="0.55"/>' +
+        '<path d="M2 9a5 5 0 0 1 5-5h5a5 5 0 0 1 5 5v3a5 5 0 0 1-5 5H8l-4 4v-4a5 5 0 0 1-2-4V9z"/>' +
       '</svg>'
   };
 })();

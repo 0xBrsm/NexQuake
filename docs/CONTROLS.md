@@ -16,11 +16,19 @@ Touch controls activate automatically on coarse-pointer (touch) screens with no 
 |----------------|----------|---------|
 | Joystick zone | Left 40% of the screen | Virtual thumbstick — drag from any starting point to move. Re-centers on release. |
 | Look zone | Right 60% of the screen | Swipe to turn and look. |
-| Touch slots 1–8 | Edge buttons (configurable positions) | Bindable action buttons. |
-| Back button (`Q`) | Top-left (fixed) | Menu back / escape. |
+| Touch slots 1–9 | Edge buttons (configurable positions) | Bindable action buttons. |
+| Back button (`Q`) | Top-left (fixed) | Tap: menu back / escape. Long-press (400 ms): open console. |
 | Gear button | Top-right (fixed) | Opens the [settings panel](UI.md). |
 
-Slots default to common actions on both sides of the screen (fire, jump, weapon cycle, movement). Each button shows an SVG glyph matching its bound command. The overlay auto-hides after 2.5 seconds of inactivity and reappears on the next touch.
+Slots default to common actions (fire, jump, weapon cycle, team chat, rocket launcher, and lightning gun). Each button shows an SVG glyph matching its bound command. The overlay auto-hides after 2.5 seconds of inactivity and reappears on the next touch.
+
+### Touch Text Entry
+
+When Quake enters a text mode on touch (console input, `say`/`messagemode`, or a menu text field), a text bar appears at the top:
+
+- Tap the bar to focus and use the mobile keyboard; press enter/send to submit to the game.
+- Tap outside the bar to hide it. `Esc`/back also dismisses it (and cancels message entry).
+- Console text stays synced with the engine buffer while the bar is focused.
 
 ### Flip Mode
 
@@ -32,13 +40,27 @@ Touch slots can be dragged to any position on the screen. Layout is saved to `lo
 
 ### Touch Buttons
 
-Eight slots (`touch1`–`touch8`) can be rebound with the standard `bind` command:
+Nine slots (`touch1`–`touch9`) can be rebound with the standard `bind` command:
 
 ```
 bind touch1 +attack
 bind touch2 +jump
 bind touch3 impulse 10
 ```
+
+Default bindings:
+
+| Slot | Default | Action |
+|------|---------|--------|
+| `touch1` | `+jump` | Jump |
+| `touch2` | `impulse 12` | Previous weapon |
+| `touch3` | `+attack` | Fire |
+| `touch4` | `impulse 10` | Next weapon |
+| `touch5` | `messagemode2` | Team chat |
+| `touch6` | — | Unbound |
+| `touch7` | — | Unbound |
+| `touch8` | `impulse 7` | Rocket launcher |
+| `touch9` | `impulse 8` | Lightning gun |
 
 ### Touch Tap Zones
 

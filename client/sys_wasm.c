@@ -17,6 +17,9 @@ qboolean isDedicated;
 
 static double time, oldtime, newtime;
 static qboolean quit_requested, bootstrap_ready, main_loop_started, canvas_visible;
+static qboolean text_input_latched, console_text_latched, message_text_latched;
+qboolean menu_text_editing;
+qboolean console_text_editing;
 void main_loop(void);
 
 EM_JS(void, js_syncfs, (), {
@@ -37,6 +40,44 @@ EM_JS(void, js_on_bootstrap_ready, (), {
 
 EM_JS(void, js_hide_console, (), {
 	if (typeof Module.hideConsole === 'function') Module.hideConsole();
+});
+
+EM_JS(void, js_request_text_entry, (), {
+	var ctx = Module.nqOverlayCtx;
+	if (!ctx || typeof ctx.requestTextEntry !== 'function')
+		return;
+	try {
+		ctx.requestTextEntry();
+	} catch (e) {
+		console.warn('requestTextEntry failed:', e);
+	}
+});
+
+EM_JS(void, js_close_text_entry, (), {
+	var ctx = Module.nqOverlayCtx;
+	if (ctx && typeof ctx.closeTextEntry === 'function')
+		ctx.closeTextEntry();
+});
+
+EM_JS(void, js_set_console_text_entry, (int active), {
+	Module.nqConsoleTextEntryOpen = !!active;
+	if (Module.nqOverlayCtx && typeof Module.nqOverlayCtx.syncTextEntryMode === 'function')
+		Module.nqOverlayCtx.syncTextEntryMode();
+});
+
+EM_JS(void, js_set_message_text_entry, (int active), {
+	Module.nqMessageTextEntryOpen = !!active;
+	if (Module.nqOverlayCtx && typeof Module.nqOverlayCtx.syncTextEntryMode === 'function')
+		Module.nqOverlayCtx.syncTextEntryMode();
+});
+
+EM_JS(void, js_sync_menu_text_entry, (), {
+	if (Module.nqOverlayCtx && typeof Module.nqOverlayCtx.syncTextEntryValueFromGame === 'function')
+		Module.nqOverlayCtx.syncTextEntryValueFromGame();
+});
+
+EM_JS(int, js_text_entry_open, (), {
+	return Module.nqTextEntryOpen ? 1 : 0;
 });
 
 EM_JS(void, js_register_unload_handlers, (), {
@@ -212,18 +253,30 @@ int main(int c, char **v) {
 
 	Host_Init(&parms);
 	js_register_unload_handlers();
-	Con_Printf("NextQuake WebAssembly - %s\n", NEXQUAKE_VERSION);
+	Con_Printf("NexQuake WebAssembly - %s\n", NEXQUAKE_VERSION);
 	oldtime = Sys_FloatTime() - 0.1;
 	bootstrap_ready = false;
 	main_loop_started = false;
 	canvas_visible = false;
+	text_input_latched = false;
+	console_text_latched = false;
+	message_text_latched = false;
+	menu_text_editing = false;
+	console_text_editing = false;
 #ifdef WASM_BENCHMARK
 	emscripten_set_main_loop_timing(EM_TIMING_SETIMMEDIATE, 0);
 #endif
 	emscripten_set_main_loop(main_loop, 0, 0);
 }
 
+static qboolean text_entry_was_dismissed(void)
+{
+	return text_input_latched && !js_text_entry_open();
+}
+
 void main_loop(void) {
+	qboolean in_con, in_msg, want_text;
+
 	if (quit_requested) {
 		quit_requested = false;
 		if (cls.state == ca_connected) CL_Disconnect();
@@ -249,6 +302,39 @@ void main_loop(void) {
 	if (time > sys_ticrate.value * 2) oldtime = newtime;
 	else oldtime += time;
 	Host_Frame(time);
+
+	// --- text input state machine (touch keyboard on mobile) ---
+	// Cancel touch-triggered editing modes when the game state or DOM
+	// text entry no longer supports them.
+	if (menu_text_editing && (!M_TextInputActive() || text_entry_was_dismissed()))
+		menu_text_editing = false;
+	in_con = key_dest == key_console || (key_dest == key_game && con_forcedup);
+	if (console_text_editing && (!in_con || text_entry_was_dismissed()))
+		console_text_editing = false;
+
+	// Determine whether we need the text entry bar open.
+	in_msg = (key_dest == key_message);
+	want_text = in_msg || console_text_editing || menu_text_editing;
+
+	// Notify JS of sub-mode changes.
+	if (in_con != console_text_latched)
+		js_set_console_text_entry(in_con);
+	if (in_msg != message_text_latched)
+		js_set_message_text_entry(in_msg);
+
+	// Open/close the text entry bar on edges.
+	if (want_text && !text_input_latched)
+		js_request_text_entry();
+	else if (!want_text && text_input_latched)
+		js_close_text_entry();
+
+	// Keep menu text field in sync while editing.
+	if (menu_text_editing)
+		js_sync_menu_text_entry();
+
+	console_text_latched = in_con;
+	message_text_latched = in_msg;
+	text_input_latched = want_text;
 }
 
 // Exported JS hooks (browser only).
@@ -278,6 +364,23 @@ EMSCRIPTEN_KEEPALIVE const char *NQWasm_GetKeyBinding(int key)
 	if (key < 0 || key >= 256 || !keybindings[key])
 		return "";
 	return keybindings[key];
+}
+
+EMSCRIPTEN_KEEPALIVE void NQWasm_TextInputKey(int key)
+{
+	if (key < 1 || key > 127)
+		return;
+	if (!(key_dest == key_message || key_dest == key_console || (key_dest == key_game && con_forcedup) || M_TextInputActive()))
+		return;
+	Key_Event(key, true);
+	Key_Event(key, false);
+}
+
+EMSCRIPTEN_KEEPALIVE const char *NQWasm_GetTextInputValue(void)
+{
+	if (!M_TextInputActive())
+		return "";
+	return M_TextInputValue();
 }
 
 EMSCRIPTEN_KEEPALIVE int NQWasm_GetVideoWidth(void)

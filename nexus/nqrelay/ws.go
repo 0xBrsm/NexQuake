@@ -66,7 +66,10 @@ func (r *Relay) wsWriteLoop() {
 			if len(packet) == 0 || r.ctx.Err() != nil {
 				continue
 			}
-			if err := r.ws.WriteMessage(websocket.BinaryMessage, packet); err != nil {
+			_ = r.ws.SetWriteDeadline(time.Now().Add(wsKeepaliveWriteTimeout))
+			err := r.ws.WriteMessage(websocket.BinaryMessage, packet)
+			_ = r.ws.SetWriteDeadline(time.Time{})
+			if err != nil {
 				if r.ctx.Err() == nil {
 					r.debugf("WebSocket write error: %v", err)
 				}

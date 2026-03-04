@@ -17,6 +17,7 @@
       return !!el && (
         ctx.panel.contains(el) ||
         ctx.editor.contains(el) ||
+        ctx.textEntry.contains(el) ||
         el === ctx.toggle ||
         el === ctx.closeButton
       );
@@ -96,10 +97,6 @@
         ctx.syncFooterLayout();
     }
 
-    function isOverlayTextInput(el) {
-      return el === ctx.editorText;
-    }
-
     function setPanelOpen(open) {
       if (open) {
         ctx.panel.classList.add('open');
@@ -154,7 +151,7 @@
 
     function preventOverlayControlFocus(ev) {
       var focusEl = ev.target;
-      if (!focusEl || isOverlayTextInput(focusEl) || isTextInputEl(focusEl))
+      if (!focusEl || isTextInputEl(focusEl))
         return;
       ev.preventDefault();
     }
@@ -163,7 +160,7 @@
       ev.stopPropagation();
     }
 
-    var overlayMouseTargets = [ctx.panel, ctx.toggle, ctx.editor, ctx.closeButton].filter(Boolean);
+    var overlayMouseTargets = [ctx.panel, ctx.toggle, ctx.editor, ctx.textEntry, ctx.closeButton].filter(Boolean);
     ['mousedown', 'mouseup', 'mousemove', 'click', 'dblclick', 'contextmenu'].forEach(function(eventName) {
       overlayMouseTargets.forEach(function(el) {
         el.addEventListener(eventName, stopPropagation);
@@ -181,15 +178,14 @@
 
     document.addEventListener('keydown', function(ev) {
       var keyEv = /** @type {KeyboardEvent} */ (ev);
-      if (keyEv.key !== 'Escape' || !isOverlayOpen())
+      if (keyEv.key !== 'Escape')
         return;
-      if (ctx.closeConfirmModal && ctx.closeConfirmModal(false)) {
-        if (keyEv.cancelable)
-          keyEv.preventDefault();
-        keyEv.stopImmediatePropagation();
+      if (Module.nqTextEntryOpen)
+        ctx.dismissTextEntry();
+      else if (!isOverlayOpen())
         return;
-      }
-      ctx.closeEditor() || setPanelOpen(false);
+      else if (!(ctx.closeConfirmModal && ctx.closeConfirmModal(false)))
+        ctx.closeEditor() || setPanelOpen(false);
       if (keyEv.cancelable)
         keyEv.preventDefault();
       keyEv.stopImmediatePropagation();
@@ -206,7 +202,7 @@
     ctx.panel.addEventListener('mousedown', preventOverlayControlFocus, true);
     ctx.editor.addEventListener('mousedown', preventOverlayControlFocus, true);
     function blurNonTextFocusin(ev) {
-      if (!isOverlayTextInput(ev.target)) ev.target.blur();
+      if (ev.target !== ctx.editorText) ev.target.blur();
     }
     ctx.panel.addEventListener('focusin', blurNonTextFocusin);
     ctx.editor.addEventListener('focusin', blurNonTextFocusin);

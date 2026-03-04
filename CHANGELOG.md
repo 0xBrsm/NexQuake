@@ -4,6 +4,20 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.8.0
+
+### Added
+- Touch text entry added with a dedicated top-of-screen bar for mobile console/chat/menu text, kept in sync with engine buffers.
+- Touch controls added a ninth slot.
+- Touch controls updated default binds and glyphs.
+
+### Changed
+- WASM touch/menu text handling is simplified: new menu text helpers keep JS and C in lockstep, and overlay resize/focus logic is shared to avoid stray inputs when the keyboard appears.
+- Startup prefetch warms common `gfx` assets so the first overlay/console paint is smoother on the web client.
+
+### Fixed
+- Nexus relay writes now apply a deadline to prevent rare WebSocket stalls under load; the stress-test harness handles larger UDP bursts more safely.
+
 ## 1.7.7
 
 ### Fixed

@@ -177,3 +177,61 @@
  }
  
  
+@@ -3257,3 +3290,57 @@
+ 	if (IPXConfig || TCPIPConfig)
+ 		net_hostport = lanConfig_port;
+ }
++
++qboolean M_TextInputActive (void)
++{
++	if (key_dest != key_menu)
++		return false;
++	switch (m_state)
++	{
++	case m_setup:
++		return setup_cursor <= 1;
++	case m_lanconfig:
++		return lanConfig_cursor == 0 || lanConfig_cursor == 2;
++	case m_serialconfig:
++		return serialConfig_cursor == 4;
++	case m_modemconfig:
++		return modemConfig_cursor >= 1 && modemConfig_cursor <= 3;
++	default:
++		return false;
++	}
++}
++
++const char *M_TextInputValue (void)
++{
++	if (key_dest != key_menu)
++		return "";
++	switch (m_state)
++	{
++	case m_setup:
++		if (setup_cursor == 0)
++			return setup_hostname;
++		if (setup_cursor == 1)
++			return setup_myname;
++		return "";
++	case m_lanconfig:
++		if (lanConfig_cursor == 0)
++			return lanConfig_portname;
++		if (lanConfig_cursor == 2)
++			return lanConfig_joinname;
++		return "";
++	case m_serialconfig:
++		if (serialConfig_cursor == 4)
++			return serialConfig_phone;
++		return "";
++	case m_modemconfig:
++		if (modemConfig_cursor == 1)
++			return modemConfig_clear;
++		if (modemConfig_cursor == 2)
++			return modemConfig_init;
++		if (modemConfig_cursor == 3)
++			return modemConfig_hangup;
++		return "";
++	default:
++		return "";
++	}
++}

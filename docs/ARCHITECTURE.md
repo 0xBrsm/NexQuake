@@ -71,6 +71,8 @@ Tap detection fires `touch_tap1` or `touch_tap2` key events for touches that end
 
 The joystick ring visual and overlay hide timer are driven by `EM_JS` calls into the shell JavaScript layer (`js_joy_show`, `js_joy_move`, `js_joy_hide`, `js_set_touch_active`), keeping visual state out of C.
 
+Text entry for touch is also driven from C: when Quake enters a text mode (console, menu field, or `messagemode`), `js_request_text_entry()` opens a DOM text bar. Input events feed back through `NQWasm_TextInputKey` so the engine receives the same key stream it would from a hardware keyboard. Closing the bar via `Esc`/back triggers `js_close_text_entry()` to keep the WASM text state and DOM in sync.
+
 ### Gamepad Input
 
 Gamepad input uses a polling model — the inverse of the event-driven keyboard and mouse. `IN_PollGamepads()` runs each frame from `IN_Commands()` and calls `emscripten_get_gamepad_status()` for each connected device. The W3C standard mapping is assumed: 16 buttons (indices 0–15) and 4 axes.
@@ -228,14 +230,14 @@ To keep stock Quake server behavior, Nexus assigns each WebSocket client a stabl
 
 ### Patch-Based Overlay
 
-NexQuake does not fork Quake. The upstream `id-Software/Quake` repository is checked out immutably into `build/tmp/WinQuake/` and never modified. At build time:
+NexQuake does not fork Quake. The upstream `WinQuake/` source is fetched into `build/tmp/WinQuake/` as an immutable cache and never modified. At build time:
 
 1. Copy the canonical source to a working directory
 2. Apply `.patch` files from `client/` and `server/`
 3. Copy overlay `.c`/`.h` files (new code that does not exist upstream)
 4. Compile
 
-This keeps project changes auditable. Every modification is a short patch file, scoped only to its impact. New functionality is a new file. The Quake source in git is always canonical.
+This keeps project changes auditable. Every modification is a short patch file, scoped only to its impact. New functionality is a new file. The cached Quake source is always canonical.
 
 ### Multi-Stage Docker
 

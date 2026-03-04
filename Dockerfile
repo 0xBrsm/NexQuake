@@ -32,7 +32,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 	case "${go_build_p}" in \
 		''|*[!0-9]*|0) echo "error: NQ_GO_BUILD_P must be a positive integer (got '${go_build_p}')" >&2; exit 2 ;; \
 	esac; \
-	CGO_ENABLED=0 go build -p "${go_build_p}" -trimpath -ldflags "-s -w -X github.com/brstm/NexQuake/nexus.gitSHA=${GIT_SHA} -X github.com/brstm/NexQuake/nexus.buildTime=${BUILD_TIME}" -o /out/nexus .
+	CGO_ENABLED=0 go build -p "${go_build_p}" -trimpath -ldflags "-s -w -X github.com/0xBrsm/NexQuake/nexus.gitSHA=${GIT_SHA} -X github.com/0xBrsm/NexQuake/nexus.buildTime=${BUILD_TIME}" -o /out/nexus .
 
 FROM scratch AS nexus-artifact
 COPY --from=nexus-builder /out/nexus /nexus

@@ -323,6 +323,19 @@
     Module.nexquakePrefetchEnqueue = enqueuePrefetch;
     Module.nexquakePrefetchStart = startPrefetch;
 
+    function prefetchGfx() {
+      var entries = manifestBundle && manifestBundle[baseGame];
+      var paths = [];
+      if (!Array.isArray(entries)) return;
+      entries.forEach(function(ent) {
+        var path = String(ent && ent.path || '').trim().toLowerCase();
+        if (path && path.indexOf('gfx/') === 0)
+          paths.push(path);
+      });
+      if (paths.length > 0)
+        prefetchMany(paths, Module.nexquakePrefetchConcurrency);
+    }
+
     // Install virtualized manifests into REMOTE_ROOT/<mod> roots.
     // Files are installed as lazy-backed VFS entries (download on first read).
     var baseGame = getBaseGameName();
@@ -599,6 +612,7 @@
     refreshStartBundle()
       .then(function() {
         Module.nexquakeActiveGame = baseGame;
+        prefetchGfx();
         startManifestRefreshLoop();
         nqSetBootstrapPhase(3);
         Module.addRunDependency(syncDependencyId);

@@ -3,8 +3,9 @@
 # Prepare an upstream WinQuake source tree for builds.
 #
 # This repo does not vendor the upstream Quake sources. This script fetches
-# them (sparse-checkout WinQuake/) and applies our server overlays/patches
-# into a temporary working tree.
+# WinQuake from upstream via a temporary sparse clone, caches the plain source
+# tree under build/tmp/WinQuake/, and applies our server overlays/patches into
+# a disposable working tree.
 #
 # By default, community-sourced vanilla Quake bugfix patches (buffer overflows,
 # crashes, etc.) from src/bugfix/ are applied before any build-specific patches.
@@ -41,6 +42,48 @@ fi
 
 mkdir -p "${UPSTREAM_QUAKE_DIR}" "$(dirname "${OUT_DIR}")"
 
+remove_legacy_upstream_git() {
+  local legacy_git_dir="${UPSTREAM_QUAKE_DIR}/.git"
+  local legacy_origin=""
+
+  if [[ ! -d "${legacy_git_dir}" ]]; then
+    return 0
+  fi
+
+  legacy_origin="$(git -C "${UPSTREAM_QUAKE_DIR}" config --get remote.origin.url 2>/dev/null || true)"
+  if [[ "${legacy_origin}" != "${UPSTREAM_REPO}" ]]; then
+    echo "warning: leaving existing git metadata in ${UPSTREAM_QUAKE_DIR} (origin: ${legacy_origin:-unknown})" >&2
+    return 0
+  fi
+
+  echo "Removing legacy upstream git metadata from ${UPSTREAM_QUAKE_DIR} ..."
+  rm -rf "${legacy_git_dir}"
+}
+
+fetch_upstream_winquake() {
+  local fetch_root checkout_dir
+
+  fetch_root="$(mktemp -d)"
+  checkout_dir="${fetch_root}/quake"
+
+  cleanup_fetch_root() {
+    rm -rf "${fetch_root}"
+  }
+  trap cleanup_fetch_root RETURN
+
+  git clone --depth 1 --filter=blob:none --sparse "${UPSTREAM_REPO}" "${checkout_dir}"
+  git -C "${checkout_dir}" sparse-checkout set WinQuake
+
+  if [[ "${UPSTREAM_REF}" != "HEAD" ]]; then
+    git -C "${checkout_dir}" fetch --depth 1 origin "${UPSTREAM_REF}"
+    git -C "${checkout_dir}" checkout --force FETCH_HEAD
+  fi
+
+  rm -rf "${UPSTREAM_WINQUAKE_DIR}"
+  mkdir -p "${UPSTREAM_QUAKE_DIR}"
+  cp -r "${checkout_dir}/WinQuake" "${UPSTREAM_WINQUAKE_DIR}"
+}
+
 refresh_upstream=0
 if [[ ! -d "${UPSTREAM_WINQUAKE_DIR}" ]]; then
   refresh_upstream=1
@@ -49,16 +92,10 @@ if [[ "${UPSTREAM_REF}" != "HEAD" ]]; then
   refresh_upstream=1
 fi
 
+remove_legacy_upstream_git
+
 if [[ "${refresh_upstream}" == "1" ]]; then
-  mkdir -p "${UPSTREAM_QUAKE_DIR}"
-  if [[ ! -d "${UPSTREAM_QUAKE_DIR}/.git" ]]; then
-    git -C "${UPSTREAM_QUAKE_DIR}" init
-    git -C "${UPSTREAM_QUAKE_DIR}" remote add origin "${UPSTREAM_REPO}"
-    git -C "${UPSTREAM_QUAKE_DIR}" config core.sparseCheckout true
-    echo "WinQuake/" > "${UPSTREAM_QUAKE_DIR}/.git/info/sparse-checkout"
-  fi
-  git -C "${UPSTREAM_QUAKE_DIR}" fetch --depth 1 origin "${UPSTREAM_REF}"
-  git -C "${UPSTREAM_QUAKE_DIR}" checkout --force FETCH_HEAD
+  fetch_upstream_winquake
 fi
 
 if [[ "${FETCH_ONLY}" == "1" ]]; then
@@ -209,6 +246,7 @@ if [[ "${kind}" == "client" ]]; then
   apply_patch "${ROOT}/client/patches/host.c.patch"
   apply_patch "${ROOT}/client/patches/keys.c.patch"
   apply_patch "${ROOT}/client/patches/net_main.c.patch"
+  apply_patch "${ROOT}/client/patches/menu.h.patch"
   apply_patch "${ROOT}/client/patches/menu.c.patch"
   apply_patch "${ROOT}/client/patches/net_dgrm.c.patch"
   apply_patch "${ROOT}/client/patches/cl_parse.c.patch"

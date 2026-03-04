@@ -10,12 +10,59 @@
     if (!h) return;
     document.documentElement.style.setProperty('--nq-overlay-vh', Math.round(h) + 'px');
   }
+
+  var canvasViewportWidth = 0;
+  var canvasViewportHeight = 0;
+  var canvasViewportOrientation = '';
+
+  function syncCanvasViewportSize(forceReset) {
+    var root = document.documentElement;
+    var viewportWidth = window.innerWidth || root.clientWidth || 0;
+    var viewportHeight = window.innerHeight || root.clientHeight || 0;
+    var orientation = viewportWidth >= viewportHeight ? 'landscape' : 'portrait';
+    var freezeTouchViewport = !!(Module && Module.nqIsTouchInput);
+    forceReset = forceReset === true;
+
+    if (!(viewportWidth > 0 && viewportHeight > 0))
+      return;
+
+    if (!freezeTouchViewport) {
+      canvasViewportWidth = viewportWidth;
+      canvasViewportHeight = viewportHeight;
+      canvasViewportOrientation = orientation;
+    } else {
+      /* Touch keyboards can transiently shrink viewport units; keep the
+       * gameplay canvas pinned to the largest viewport seen per orientation. */
+      if (forceReset || canvasViewportOrientation !== orientation) {
+        canvasViewportWidth = 0;
+        canvasViewportHeight = 0;
+        canvasViewportOrientation = orientation;
+      }
+      if (viewportWidth > canvasViewportWidth)
+        canvasViewportWidth = viewportWidth;
+      if (viewportHeight > canvasViewportHeight)
+        canvasViewportHeight = viewportHeight;
+    }
+
+    root.style.setProperty('--nq-canvas-vw', Math.round(canvasViewportWidth) + 'px');
+    root.style.setProperty('--nq-canvas-vh', Math.round(canvasViewportHeight) + 'px');
+  }
   syncOverlayViewportHeight();
-  window.addEventListener('resize', syncOverlayViewportHeight, { passive: true });
-  window.addEventListener('orientationchange', syncOverlayViewportHeight, { passive: true });
+  syncCanvasViewportSize(true);
+
+  function onResize() {
+    syncOverlayViewportHeight();
+    syncCanvasViewportSize(false);
+  }
+  function onOrientationChange() {
+    syncOverlayViewportHeight();
+    syncCanvasViewportSize(true);
+  }
+  window.addEventListener('resize', onResize, { passive: true });
+  window.addEventListener('orientationchange', onOrientationChange, { passive: true });
   if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', syncOverlayViewportHeight, { passive: true });
-    window.visualViewport.addEventListener('scroll', syncOverlayViewportHeight, { passive: true });
+    window.visualViewport.addEventListener('resize', onResize, { passive: true });
+    window.visualViewport.addEventListener('scroll', onResize, { passive: true });
   }
 
   var cdRow = document.getElementById('nq-cd-row');
@@ -48,6 +95,9 @@
     confirmText: document.getElementById('nq-confirm-text'),
     confirmOk: document.getElementById('nq-confirm-ok'),
     confirmCancel: document.getElementById('nq-confirm-cancel'),
+    textEntry: document.getElementById('nq-text-entry'),
+    textEntryForm: document.getElementById('nq-text-entry-form'),
+    textEntryInput: document.getElementById('nq-text-entry-input'),
     configGlobalBtn: document.getElementById('nq-config-global'),
     joinCodeBtn: document.getElementById('nq-join-code'),
     joinCodeValue: document.getElementById('nq-join-code-value'),
@@ -86,11 +136,19 @@
     safeSyncFS: nqSafeSyncFS
   };
 
+  Module.nqTextEntryOpen = false;
+  Module.nqTextEntryFocused = false;
+  Module.nqConsoleTextEntryOpen = false;
+  Module.nqMessageTextEntryOpen = false;
   ctx.syncModalOpen = function() {
-    Module.nqOverlayModalOpen = ctx.panel.classList.contains('open') || ctx.editor.classList.contains('open');
+    var blocking = ctx.panel.classList.contains('open') ||
+      ctx.editor.classList.contains('open');
+    Module.nqOverlayBlockingModalOpen = blocking;
+    Module.nqOverlayModalOpen = blocking || !!Module.nqTextEntryOpen;
   };
   ctx.syncModalOpen();
   Module.nqOverlayCtx = ctx;
+  ctx.syncCanvasViewportSize = syncCanvasViewportSize;
 
   function isUserFile(path) {
     var ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase();

@@ -1,0 +1,8 @@
+--- menu.h
++++ menu.h
+@@ -35,3 +35,5 @@
+ void M_Draw (void);
+ void M_ToggleMenu_f (void);
+ 
++qboolean M_TextInputActive (void);
++const char *M_TextInputValue (void);

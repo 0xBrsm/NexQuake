@@ -131,6 +131,15 @@ function nqWasmGetKeyBinding(key) {
   return binding || '';
 }
 
+function nqWasmTextInputKey(key) {
+  return nqWasmCall('NQWasm_TextInputKey', 'void', ['number'], [Number(key) | 0], null) !== null;
+}
+
+function nqWasmGetTextInputValue() {
+  var value = nqWasmCall('NQWasm_GetTextInputValue', 'string', [], [], '');
+  return value || '';
+}
+
 function nqWasmGetVideoWidth() {
   return Number(nqWasmCall('NQWasm_GetVideoWidth', 'number', [], [], 0)) | 0;
 }
