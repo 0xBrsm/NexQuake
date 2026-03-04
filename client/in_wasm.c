@@ -52,12 +52,12 @@ extern void SNDDMA_Resume(void);
 #define K_TOUCH6 K_AUX18
 #define K_TOUCH7 K_AUX19
 #define K_TOUCH8 K_AUX20
-#define K_TOUCH9 K_AUX23
+#define K_TOUCH9 K_AUX21
 #endif
 
 #ifndef K_TOUCH_TAP1
-#define K_TOUCH_TAP1 K_AUX21
-#define K_TOUCH_TAP2 K_AUX22
+#define K_TOUCH_TAP1 K_AUX22
+#define K_TOUCH_TAP2 K_AUX23
 #endif
 
 // ---------------------------------------------------------------------------

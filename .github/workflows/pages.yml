@@ -49,6 +49,7 @@ jobs:
           cp client/shell/shell-nq.css _site/client/shell/
           cp client/shell/favicon.svg _site/client/shell/
           node site/extract-home-features.js README.md _site/data/home-features.json
+          node site/generate-static-shell.js
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

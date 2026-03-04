@@ -16,7 +16,7 @@
 qboolean isDedicated;
 
 static double time, oldtime, newtime;
-static qboolean quit_requested, bootstrap_ready, main_loop_started, canvas_visible;
+static qboolean quit_requested, main_loop_started, canvas_visible;
 static qboolean text_input_latched, console_text_latched, message_text_latched;
 qboolean menu_text_editing;
 qboolean console_text_editing;
@@ -28,14 +28,11 @@ EM_JS(void, js_syncfs, (), {
 });
 
 EM_JS(void, js_on_quit, (), {
-	_js_syncfs();
+	Module.nqQuitInProgress = true;
+	if (typeof FS !== 'undefined')
+		try { FS.syncfs(false, function(err) { if (err) console.warn('syncfs:', err); }); } catch(e) {}
 	if (Module.nqOverlayRefreshVFS) try { Module.nqOverlayRefreshVFS(); } catch(e) {}
 	if (Module.nqShowReloadScreen) try { Module.nqShowReloadScreen(); } catch(e2) {}
-});
-
-EM_JS(void, js_on_bootstrap_ready, (), {
-	if (Module.nqOnBootstrapReady)
-		try { Module.nqOnBootstrapReady(); } catch(e) {}
 });
 
 EM_JS(void, js_hide_console, (), {
@@ -85,6 +82,8 @@ EM_JS(void, js_register_unload_handlers, (), {
 	function handler() {
 		if (fired) return;
 		fired = true;
+		if (Module && Module.nqQuitInProgress)
+			return;
 		try {
 			if (typeof Module.ccall === 'function')
 				Module.ccall('NQWasm_OnPageUnload', 'void', [], []);
@@ -255,7 +254,6 @@ int main(int c, char **v) {
 	js_register_unload_handlers();
 	Con_Printf("NexQuake WebAssembly - %s\n", NEXQUAKE_VERSION);
 	oldtime = Sys_FloatTime() - 0.1;
-	bootstrap_ready = false;
 	main_loop_started = false;
 	canvas_visible = false;
 	text_input_latched = false;
@@ -286,10 +284,6 @@ void main_loop(void) {
 		js_on_quit();
 		emscripten_cancel_main_loop();
 		return;
-	}
-	if (!bootstrap_ready) {
-		bootstrap_ready = true;
-		js_on_bootstrap_ready();
 	}
 	if (!main_loop_started)
 		return;

@@ -4,6 +4,18 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.8.1
+
+### Added
+- The in-game settings logo now links to the documentation site as a direct help entry point.
+
+### Changed
+- The docs site now ships with pre-rendered navigation and home-page content so the initial page is readable before client-side navigation boots.
+
+### Fixed
+- The ninth touch-control slot now maps cleanly through the WASM input layer, bind names, and client docs.
+- Browser `quit` now returns to a fresh loader page again, with mobile fullscreen re-entered on the next normal `ENTER` tap instead of getting stuck after teardown.
+
 ## 1.8.0
 
 ### Added

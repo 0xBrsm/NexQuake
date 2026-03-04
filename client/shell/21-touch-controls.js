@@ -308,8 +308,8 @@
     });
   }
 
-  // K_AUX13..K_AUX20 (219..226) for slots 1-8, K_AUX23 (229) for slot 9
-  var slotKeyCodes = [0, 219, 220, 221, 222, 223, 224, 225, 226, 229];
+  // K_AUX13..K_AUX21 (219..227) for slots 1-9
+  var slotKeyCodes = [0, 219, 220, 221, 222, 223, 224, 225, 226, 227];
 
   function getSlotBinding(slot) {
     var key;

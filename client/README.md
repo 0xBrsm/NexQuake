@@ -74,7 +74,7 @@ The client patches and overlays are a mix of required and additive features. The
 
 ### 7. Touch Controls and Gamepad
 
-**Quality-of-life addition.** Enables gameplay on mobile devices and controllers. Touch input uses a configurable on-screen button layout (8 bindable slots plus a menu button) with a virtual joystick zone on the left side of the screen and a swipe-look zone on the right. Buttons show SVG glyphs for their bound actions. Gamepad input uses the Gamepad API with standard mapping (A/B/X/Y, shoulder buttons, triggers, D-pad, sticks). Both touch and gamepad inputs are detected automatically; the on-screen touch overlay only appears when a coarse-pointer device is present. Mirrored layout and flip mode are supported for left-handed play.
+**Quality-of-life addition.** Enables gameplay on mobile devices and controllers. Touch input uses a configurable on-screen button layout (9 bindable slots plus a menu button) with a virtual joystick zone on the left side of the screen and a swipe-look zone on the right. Buttons show SVG glyphs for their bound actions. Gamepad input uses the Gamepad API with standard mapping (A/B/X/Y, shoulder buttons, triggers, D-pad, sticks). Both touch and gamepad inputs are detected automatically; the on-screen touch overlay only appears when a coarse-pointer device is present. Mirrored layout and flip mode are supported for left-handed play.
 
 Per-device sensitivity cvars extend the Options menu: `sensitivity` (Quake's built-in) for mouse, `touch_sensitivity` for touch swipe-look, and `joy_sensitivity` for gamepad stick look. `lookspring` and `lookstrafe` are similarly per-device. The menu label updates to reflect the active input device.
 
@@ -83,7 +83,7 @@ FOV scales automatically with the canvas aspect ratio when changing video mode (
 | File | Purpose |
 |------|---------|
 | `in_wasm.c` | Input module: mouse pointer-lock, touch slot dispatch, virtual joystick, swipe-look, gamepad polling, per-device sensitivity cvars (`sensitivity`, `touch_sensitivity`, `joy_sensitivity`). |
-| `patches/keys.c.patch` | Renames `JOY*`/`AUX*` key names to readable aliases (`joy_a`, `joy_b`, `touch1`–`touch8`, etc.) for bind commands. |
+| `patches/keys.c.patch` | Renames `JOY*`/`AUX*` key names to readable aliases (`JOY_A`, `JOY_B`, `TOUCH1`–`TOUCH9`, etc.) for bind commands. |
 | `patches/menu.c.patch` | Per-device sensitivity/lookspring/lookstrafe labels and sliders; video mode menu with fixed and fullscreen sections. |
 | `patches/host.c.patch` | FOV aspect-ratio scaling on video mode change. |
 

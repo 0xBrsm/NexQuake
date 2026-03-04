@@ -897,15 +897,22 @@ body.nq-touch-input #nq-overlay-panel .nq-tabs-wrap {
   justify-self: end;
 }
 #nq-branding {
+  display: inline-block;
   font-family: var(--nq-font-brand);
   font-size: 20px;
   color: #8c8c8c;
   letter-spacing: 1px;
   justify-self: start;
+  text-decoration: none;
 }
 #nq-branding .nq-n { font-size: 15px; }
 #nq-branding .nq-q { font-size: 19px; }
 #nq-branding .nq-nex { color: var(--nq-brand-color-logo); }
+#nq-branding:hover,
+#nq-branding:focus-visible {
+  color: #b0b0b0;
+  text-decoration: none;
+}
 #nq-version {
   overflow: hidden;
   white-space: nowrap;

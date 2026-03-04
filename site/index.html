@@ -771,10 +771,329 @@
     </div>
   </header>
 
-  <nav class="sidebar" id="sidebar" aria-label="Documentation navigation"></nav>
+  <nav class="sidebar" id="sidebar" aria-label="Documentation navigation">
+    <!-- static-nav:start -->
+
+    <div class="nav-section">
+      
+      <a class="nav-item" data-page="home" href="#">Home</a>
+    </div>
+  
+    <div class="nav-section">
+      <div class="nav-section-label">Get Started</div>
+      <a class="nav-item" data-page="overview" href="README.md">Overview</a><a class="nav-item" data-page="quickstart" href="docs/QUICKSTART.md">Quick Start</a>
+    </div>
+  
+    <div class="nav-section">
+      <div class="nav-section-label">Operate</div>
+      <a class="nav-item" data-page="setup" href="docs/SETUP.md">Data & Servers</a><a class="nav-item" data-page="catalog" href="etc/README.md">Game Catalog</a><a class="nav-item" data-page="environment" href="docs/ENVIRONMENT.md">Environment</a><a class="nav-item" data-page="admin" href="docs/ADMIN.md">Admin Commands</a>
+    </div>
+  
+    <div class="nav-section">
+      <div class="nav-section-label">Play</div>
+      <a class="nav-item" data-page="controls" href="docs/CONTROLS.md">Controls</a><a class="nav-item" data-page="ui" href="docs/UI.md">User Interface</a>
+    </div>
+  
+    <div class="nav-section">
+      <div class="nav-section-label">System</div>
+      <a class="nav-item" data-page="architecture" href="docs/ARCHITECTURE.md">Architecture</a><a class="nav-item" data-page="web-client" href="client/README.md">Web Client</a><a class="nav-item" data-page="nexus-service" href="nexus/README.md">Nexus Service</a><a class="nav-item" data-page="dedicated-server" href="server/README.md">Dedicated Server</a>
+    </div>
+  
+    <div class="nav-section">
+      <div class="nav-section-label">Internals</div>
+      <a class="nav-item" data-page="build-system" href="build/README.md">Build System</a><a class="nav-item" data-page="relay-package" href="nexus/nqrelay/README.md">Relay Package</a><a class="nav-item" data-page="shareware-extractor" href="nexus/quake106/README.md">Shareware Extractor</a><a class="nav-item" data-page="bugfix-catalog" href="bugfix/README.md">Bug Fix Catalog</a>
+    </div>
+  
+    <div class="nav-section">
+      <div class="nav-section-label">Reference</div>
+      <a class="nav-item" data-page="docs-index" href="docs/README.md">All Docs</a><a class="nav-item" data-page="changelog" href="CHANGELOG.md">Release Notes</a><a class="nav-item" data-page="attributions" href="ATTRIBUTIONS.md">Attributions</a>
+    </div>
+  
+    <!-- static-nav:end -->
+  </nav>
 
   <div class="content-wrap" id="content-wrap">
-    <main class="content" id="content" aria-live="polite"></main>
+    <main class="content" id="content" aria-live="polite">
+      <!-- static-main:start -->
+
+      <div class="hero-banner">
+        <div class="hero-logo"><span class="nex">Nex</span><span class="quake">Quake</span></div>
+        <p class="hero-tagline">
+          Click. Frag.
+        </p>
+        <div class="hero-cmd">
+          <span class="comment"># launch NexQuake, then browse to http://your-server:1337</span><br>
+          docker run -p 1337:1337 -e CL_ARGS=+connect ghcr.io/0xbrsm/nexquake
+        </div>
+        <div class="hero-buttons">
+          <a class="btn btn-primary" href="#quickstart" data-page="quickstart">QUICKSTART</a>
+        </div>
+      </div>
+
+      
+    <section class="hub-section">
+      <div class="section-head">
+        <span class="section-kicker">Get Started</span>
+        <h2 class="section-title">Overview and Quick Start</h2>
+        <p class="section-desc">Learn what NexQuake is and get an instance running in minutes.</p>
+      </div>
+      <div class="doc-grid">
+        
+    <a class="doc-card" href="README.md" data-page="overview">
+      <span class="doc-type">Overview</span>
+      <div class="doc-name">Product Overview</div>
+      <div class="doc-summary">High-level product narrative, features, runtime model, and source tree.</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  
+    <a class="doc-card" href="docs/QUICKSTART.md" data-page="quickstart">
+      <span class="doc-type">Guide</span>
+      <div class="doc-name">Quick Start</div>
+      <div class="doc-summary">Fastest path to launch NexQuake with Docker defaults.</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  
+      </div>
+    </section>
+  
+    <section class="hub-section">
+      <div class="section-head">
+        <span class="section-kicker">Operate</span>
+        <h2 class="section-title">Servers and Data</h2>
+        <p class="section-desc">Data layout, game catalog, environment configuration, and live server administration.</p>
+      </div>
+      <div class="doc-grid doc-grid--4">
+        
+    <a class="doc-card" href="docs/SETUP.md" data-page="setup">
+      <span class="doc-type">Guide</span>
+      <div class="doc-name">Data and Servers</div>
+      <div class="doc-summary">Data layout, mod installation, and servers.ini launch planning.</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  
+    <a class="doc-card" href="etc/README.md" data-page="catalog">
+      <span class="doc-type">Reference</span>
+      <div class="doc-name">Quickstart Catalog</div>
+      <div class="doc-summary">How QUICKSTART entries and game.json bootstrap data and default servers.</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  
+    <a class="doc-card" href="docs/ENVIRONMENT.md" data-page="environment">
+      <span class="doc-type">Reference</span>
+      <div class="doc-name">Environment Reference</div>
+      <div class="doc-summary">Runtime variables for Nexus, networking, auth, and deployment.</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  
+    <a class="doc-card" href="docs/ADMIN.md" data-page="admin">
+      <span class="doc-type">Reference</span>
+      <div class="doc-name">Admin Commands</div>
+      <div class="doc-summary">Console-level administration for servers and Nexus runtime control.</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  
+      </div>
+    </section>
+  
+    <section class="hub-section">
+      <div class="section-head">
+        <span class="section-kicker">Play</span>
+        <h2 class="section-title">Browser Client</h2>
+        <p class="section-desc">Controls, input mapping, and the in-browser settings panel for touch, keyboard, and gamepad.</p>
+      </div>
+      <div class="doc-grid">
+        
+    <a class="doc-card" href="docs/CONTROLS.md" data-page="controls">
+      <span class="doc-type">Guide</span>
+      <div class="doc-name">Controls</div>
+      <div class="doc-summary">Touch, keyboard, gamepad, and video-mode guidance for browser play.</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  
+    <a class="doc-card" href="docs/UI.md" data-page="ui">
+      <span class="doc-type">Guide</span>
+      <div class="doc-name">User Interface</div>
+      <div class="doc-summary">Use the in-browser gear panel for local files, cfg edits, and CD controls.</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  
+      </div>
+    </section>
+  
+    <section class="hub-section">
+      <div class="section-head">
+        <span class="section-kicker">System</span>
+        <h2 class="section-title">Architecture and Components</h2>
+        <p class="section-desc">System design and component docs for the browser client, Nexus service, and dedicated server.</p>
+      </div>
+      <div class="doc-grid doc-grid--4">
+        
+    <a class="doc-card" href="docs/ARCHITECTURE.md" data-page="architecture">
+      <span class="doc-type">Reference</span>
+      <div class="doc-name">Architecture</div>
+      <div class="doc-summary">System design, runtime flow, and protocol-level behavior across the stack.</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  
+    <a class="doc-card" href="client/README.md" data-page="web-client">
+      <span class="doc-type">Component</span>
+      <div class="doc-name">Web Client</div>
+      <div class="doc-summary">WASM platform layer, renderer, audio, input, and browser transport internals.</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  
+    <a class="doc-card" href="nexus/README.md" data-page="nexus-service">
+      <span class="doc-type">Component</span>
+      <div class="doc-name">Nexus Service</div>
+      <div class="doc-summary">HTTP and WebSocket relay orchestration, boundaries, and runtime wiring.</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  
+    <a class="doc-card" href="server/README.md" data-page="dedicated-server">
+      <span class="doc-type">Component</span>
+      <div class="doc-name">Dedicated Server</div>
+      <div class="doc-summary">Native nqserver build, patches, configuration, and dedicated-mode behavior.</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  
+      </div>
+    </section>
+  
+    <section class="hub-section">
+      <div class="section-head">
+        <span class="section-kicker">Internals</span>
+        <h2 class="section-title">Build and Packages</h2>
+        <p class="section-desc">Build pipeline, relay and extractor packages, and the upstream WinQuake bugfix catalog.</p>
+      </div>
+      <div class="doc-grid doc-grid--4">
+        
+    <a class="doc-card" href="build/README.md" data-page="build-system">
+      <span class="doc-type">Component</span>
+      <div class="doc-name">Build System</div>
+      <div class="doc-summary">Build scripts, upstream staging, and artifact generation for client and server.</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  
+    <a class="doc-card" href="nexus/nqrelay/README.md" data-page="relay-package">
+      <span class="doc-type">Package</span>
+      <div class="doc-name">Relay Package</div>
+      <div class="doc-summary">Standalone WebSocket-to-UDP relay package and integration notes.</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  
+    <a class="doc-card" href="nexus/quake106/README.md" data-page="shareware-extractor">
+      <span class="doc-type">Package</span>
+      <div class="doc-name">Shareware Extractor</div>
+      <div class="doc-summary">Pure Go extraction flow and provenance checks for Quake 1.06 shareware.</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  
+    <a class="doc-card" href="bugfix/README.md" data-page="bugfix-catalog">
+      <span class="doc-type">Reference</span>
+      <div class="doc-name">Bug Fix Catalog</div>
+      <div class="doc-summary">Upstream WinQuake fixes carried by NexQuake for safety and stability.</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  
+      </div>
+    </section>
+  
+    <section class="hub-section">
+      <div class="section-head">
+        <span class="section-kicker">Reference</span>
+        <h2 class="section-title">Indexes and Meta</h2>
+        <p class="section-desc">Documentation index, release history, and licensing provenance.</p>
+      </div>
+      <div class="doc-grid">
+        
+    <a class="doc-card" href="docs/README.md" data-page="docs-index">
+      <span class="doc-type">Index</span>
+      <div class="doc-name">Documentation Index</div>
+      <div class="doc-summary">Role-oriented list of every product-facing document under src/.</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  
+    <a class="doc-card" href="CHANGELOG.md" data-page="changelog">
+      <span class="doc-type">Release</span>
+      <div class="doc-name">Release Notes</div>
+      <div class="doc-summary">Product-visible changes organized by SemVer release.</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  
+    <a class="doc-card" href="ATTRIBUTIONS.md" data-page="attributions">
+      <span class="doc-type">Legal</span>
+      <div class="doc-name">Attributions</div>
+      <div class="doc-summary">GPL lineage, third-party credits, and product provenance notes.</div>
+      <div class="doc-cta">Open Document</div>
+    </a>
+  
+      </div>
+    </section>
+  
+      
+    <section class="hub-section">
+      <div class="section-head">
+        <span class="section-kicker">Layout</span>
+        <h2 class="section-title">Source Tree</h2>
+        <p class="section-desc">Each source directory, linked to its component documentation.</p>
+      </div>
+      <div class="layout-grid">
+        
+    <a class="layout-card" href="README.md" data-page="overview">
+      <div class="layout-path">README.md</div>
+      <div class="layout-summary">Top-level product overview and broad project narrative.</div>
+    </a>
+  
+    <a class="layout-card" href="docs/README.md" data-page="docs-index">
+      <div class="layout-path">docs/</div>
+      <div class="layout-summary">Task-oriented operator and player guides.</div>
+    </a>
+  
+    <a class="layout-card" href="etc/README.md" data-page="catalog">
+      <div class="layout-path">etc/</div>
+      <div class="layout-summary">Game catalog and quickstart entry definitions.</div>
+    </a>
+  
+    <a class="layout-card" href="client/README.md" data-page="web-client">
+      <div class="layout-path">client/</div>
+      <div class="layout-summary">WASM client implementation and browser-side runtime details.</div>
+    </a>
+  
+    <a class="layout-card" href="nexus/README.md" data-page="nexus-service">
+      <div class="layout-path">nexus/</div>
+      <div class="layout-summary">Relay and orchestration service plus nested packages.</div>
+    </a>
+  
+    <a class="layout-card" href="server/README.md" data-page="dedicated-server">
+      <div class="layout-path">server/</div>
+      <div class="layout-summary">Dedicated server build and runtime behavior.</div>
+    </a>
+  
+    <a class="layout-card" href="build/README.md" data-page="build-system">
+      <div class="layout-path">build/</div>
+      <div class="layout-summary">Build pipeline, upstream staging, and artifact generation.</div>
+    </a>
+  
+    <a class="layout-card" href="bugfix/README.md" data-page="bugfix-catalog">
+      <div class="layout-path">bugfix/</div>
+      <div class="layout-summary">Curated WinQuake patch catalog carried by NexQuake.</div>
+    </a>
+  
+    <a class="layout-card" href="CHANGELOG.md" data-page="changelog">
+      <div class="layout-path">CHANGELOG.md</div>
+      <div class="layout-summary">Release history for shipped product changes.</div>
+    </a>
+  
+    <a class="layout-card" href="ATTRIBUTIONS.md" data-page="attributions">
+      <div class="layout-path">ATTRIBUTIONS.md</div>
+      <div class="layout-summary">Licenses, provenance, and third-party credits.</div>
+    </a>
+  
+      </div>
+    </section>
+  
+    <!-- static-main:end -->
+    </main>
   </div>
 </div>
 
@@ -798,6 +1117,7 @@ function normalizePath(path) {
   return sanitizePath(path).toLowerCase();
 }
 
+// <!-- site-data:start -->
 const PAGE_LIST = [
   {
     id: 'overview',
@@ -1057,6 +1377,7 @@ const REPO_LAYOUT = [
     page: 'attributions'
   }
 ];
+// <!-- site-data:end -->
 
 const LOCAL_PATH_TO_ID = {};
 for (const page of PAGE_LIST) {

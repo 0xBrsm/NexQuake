@@ -1,37 +1,16 @@
 var nqStoredPerModConfig = nqLoadPerModConfig();
 var nqBootstrapReady = false;
 var nqMainLoopStarted = false;
-var nqNeedsReload = false;
-var NQ_AUTOSTART_RELOAD_STORAGE_KEY = 'nexquake.autostart_after_reload';
 var NQ_BOOTSTRAP_PHASE_COUNT = 3;
 var NQ_BOOTSTRAP_PROGRESS_MAX = 90;
 var NQ_BOOTSTRAP_PROGRESS_STEP = NQ_BOOTSTRAP_PROGRESS_MAX / NQ_BOOTSTRAP_PHASE_COUNT;
 var nqBootstrapPhase = 0;
-var nqAutoStartAfterReload = false;
 var nqFirstStartHooksRan = false;
-
-function nqConsumeAutoStartAfterReload() {
-  try {
-    if (sessionStorage.getItem(NQ_AUTOSTART_RELOAD_STORAGE_KEY) === '1') {
-      sessionStorage.removeItem(NQ_AUTOSTART_RELOAD_STORAGE_KEY);
-      return true;
-    }
-  } catch (e) {}
-  return false;
-}
-
-function nqMarkAutoStartAfterReload() {
-  try {
-    sessionStorage.setItem(NQ_AUTOSTART_RELOAD_STORAGE_KEY, '1');
-  } catch (e) {}
-}
 
 function nqLogBootstrapStage(text) {
   if (text)
     console.info('[nq-loader] ' + text);
 }
-
-nqAutoStartAfterReload = nqConsumeAutoStartAfterReload();
 
 function nqSetBootstrapProgress(percent) {
   if (!loaderProgressBar)
@@ -162,6 +141,36 @@ function nqSetLoaderEnterButtonEnabled() {
   loaderReloadButton.classList.remove('hidden');
 }
 
+function nqReloadPageAfterQuit() {
+  var done = false;
+  function finish() {
+    if (done)
+      return;
+    done = true;
+    window.location.reload();
+  }
+
+  try {
+    var exitFullscreen = document.exitFullscreen || document.webkitExitFullscreen;
+    if (!exitFullscreen ||
+        (!document.fullscreenElement && !document.webkitFullscreenElement)) {
+      finish();
+      return;
+    }
+    var request = exitFullscreen.call(document);
+    if (request && request.then) {
+      request.then(function() {
+        setTimeout(finish, 0);
+      }).catch(function() {
+        setTimeout(finish, 0);
+      });
+      return;
+    }
+  } catch (e) {}
+
+  setTimeout(finish, 0);
+}
+
 function nqSyncOverlayCdEnabled(fallbackEnabled) {
   var overlayCtx;
   try {
@@ -200,10 +209,6 @@ function nqShowEnterButton() {
     loaderStatusElement.textContent = '';
   nqSetLoaderEnterButtonEnabled();
   nqLogBootstrapStage('enter ready (100%)');
-  if (nqAutoStartAfterReload) {
-    nqAutoStartAfterReload = false;
-    setTimeout(nqStartGameFromEnter, 0);
-  }
 }
 
 function nqStartGameRuntime() {
@@ -250,9 +255,7 @@ function nqStartGameRuntime() {
 }
 
 function nqStartGameFromEnter() {
-  if (nqNeedsReload || nqGameStarted) {
-    if (nqNeedsReload)
-      nqMarkAutoStartAfterReload();
+  if (nqGameStarted) {
     window.location.reload();
     return;
   }
@@ -273,6 +276,7 @@ Module = Object.assign(Module || {}, {
   nexquakeAutoSMenuOnFirstLoad: false,
   nexquakeSendArgs: [],
   nexquakeURLArgs: false,
+  nqQuitInProgress: false,
   dataFileDownloads: (Module && Module.dataFileDownloads && typeof Module.dataFileDownloads === 'object')
     ? Module.dataFileDownloads
     : {},
@@ -316,7 +320,6 @@ Module = Object.assign(Module || {}, {
       if (document.pointerLockElement && document.exitPointerLock)
         document.exitPointerLock();
     } catch (e) {}
-    nqNeedsReload = true;
     nqMainLoopStarted = false;
     nqGameStarted = false;
     if (loaderProgressBar)
@@ -338,9 +341,9 @@ Module = Object.assign(Module || {}, {
       if (Module.nqOverlayCtx && Module.nqOverlayCtx.setPanelOpen)
         Module.nqOverlayCtx.setPanelOpen(false);
     } catch (e) {}
+    nqReloadPageAfterQuit();
   },
   hideConsole: function() {
-    nqNeedsReload = false;
     if (loaderElement)
       loaderElement.classList.add('hidden');
     outputElement.style.display = 'none';
