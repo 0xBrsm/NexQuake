@@ -2,7 +2,7 @@
 
 The browser client: Quake compiled to WebAssembly with a from-scratch native WASM platform layer for software rendering. See [`ARCHITECTURE.md`](../docs/ARCHITECTURE.md) for the full technical breakdown (GPU-side palette conversion, audio pipeline, input handling).
 
-The client patches and overlays are a mix of required and additive features. These files overlay the upstream id Software Quake source during build. The build system clones `id-Software/Quake`, applies patches, copies these overlays in, and compiles with Emscripten. The output is `index.html`, `index.js`, `index.wasm`, `index.data`, plus the static shell assets (`shell-nq.css`, `shell-loader.css`, `shell-ui.css`, `shell-touch.css`, `favicon.svg`).
+The client patches and overlays are a mix of required and additive features. These files overlay the upstream id Software Quake source during build. The build system clones `id-Software/Quake`, applies patches, copies these overlays in, and compiles with Emscripten. The output is `index.html`, `index.js`, `index.wasm`, optional `index.data`, plus packaged shell assets (`shell.css`, `favicon.svg`, `manifest.webmanifest`, `nq-icon-192.png`, `nq-icon-512.png`, `nq-touch-icon-180.png`).
 
 ## Features
 
@@ -89,7 +89,7 @@ FOV scales automatically with the canvas aspect ratio when changing video mode (
 
 ## Shell
 
-The `shell/` directory contains the JavaScript runtime, HTML template, and CSS that quickstart the WASM module, manage game data, and provide a browser-native overlay UI. JS files are grouped by numbered buckets (`00`, `10s`, `20s`, `50s`, `60`) and load in lexicographic order via `--pre-js nq-pre.js` (the concatenated pre-JS injected into the Emscripten output). The HTML template (`shell.html`) is processed by Emscripten's `--shell-file` to produce the final `index.html`. The four CSS files are served as static assets alongside it.
+The `shell/` directory contains the JavaScript runtime, HTML template, and CSS that quickstart the WASM module, manage game data, and provide a browser-native overlay UI. JS files are grouped by numbered buckets (`00`, `10s`, `20s`, `50s`, `60`) and load in lexicographic order via `--pre-js nq-pre.js` (the concatenated pre-JS injected into the Emscripten output). The HTML template (`shell.html`) is processed by Emscripten's `--shell-file` to produce the final `index.html`. During build prep, the four CSS source files are concatenated into a single `shell.css`, and PWA/icon assets (`manifest.webmanifest`, `nq-icon-192.png`, `nq-icon-512.png`, `nq-touch-icon-180.png`, `favicon.svg`) are copied for runtime packaging.
 
 **Startup and VFS** — `00-core.js`, `10-startup.js`, `11-startup-vfs.js`
 
@@ -141,4 +141,4 @@ cp /path/to/client/shell/shell.html .
 make -f Makefile.emscripten
 ```
 
-Output: `index.html`, `index.js`, `index.wasm`, `index.data`; copy `shell/shell-nq.css`, `shell/shell-loader.css`, `shell/shell-ui.css`, `shell/shell-touch.css`, `shell/favicon.svg` alongside.
+Output (project build scripts): `index.html`, `index.js`, `index.wasm`, optional `index.data`; ship `shell.css`, `favicon.svg`, `manifest.webmanifest`, `nq-icon-192.png`, `nq-icon-512.png`, `nq-touch-icon-180.png` alongside.

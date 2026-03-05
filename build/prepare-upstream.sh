@@ -208,7 +208,7 @@ if [[ "${kind}" == "client" ]]; then
   cp "${ROOT}/client/net_bsd.c" "${ROOT}/client/net_ws_transport.c" "${ROOT}/client/net_ws_vnet.c" "${ROOT}/client/net_slist.c" "${ROOT}/client/cmd_rcon.c" "${ROOT}/client/net_ws_transport.h" "${ROOT}/client/net_ws_vnet.h" "${OUT_DIR}/"
   cp "${ROOT}/client/sys_wasm.c" "${ROOT}/client/vid_wasm.c" "${ROOT}/client/in_wasm.c" "${ROOT}/client/snd_wasm.c" "${ROOT}/client/cd_wasm.c" "${OUT_DIR}/"
   cp "${ROOT}/client/com_gameswitch.c" "${ROOT}/client/com_gameswitch.h" "${ROOT}/client/cl_prefetch.c" "${ROOT}/client/cl_prefetch.h" "${OUT_DIR}/"
-  cp "${ROOT}/client/Makefile.emscripten" "${client_shell_src_dir}/shell.html" "${client_shell_src_dir}/favicon.svg" "${OUT_DIR}/"
+  cp "${ROOT}/client/Makefile.emscripten" "${client_shell_src_dir}/"{shell.html,favicon.svg,manifest.webmanifest,nq-icon-512.png,nq-icon-192.png,nq-touch-icon-180.png} "${OUT_DIR}/"
 
   : > "${OUT_DIR}/shell.css"
   for css_name in "${client_shell_css_parts[@]}"; do

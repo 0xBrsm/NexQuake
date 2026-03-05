@@ -246,11 +246,11 @@ The production Dockerfile builds all three components in isolated stages:
 ```
 Stage 1: Go builder    -> Nexus binary (CGO_ENABLED=0, static)
 Stage 2: C builder     -> nqserver (64-bit by default)
-Stage 3: WASM builder  -> index.html + shell.css + index.js + index.wasm
+Stage 3: WASM builder  -> index.html + shell.css + favicon/manifest/icons + index.js + index.wasm
 Stage 4: Runtime       -> chainguard/wolfi-base + all artifacts
 ```
 
-The final ~4 MB image contains only the runtime: no compilers, no source code, no build tools.
+The final ~10 MB image contains only the runtime: no compilers, no source code, no build tools.
 
 ### 64-Bit Server with QuakeC Patches
 

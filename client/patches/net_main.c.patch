@@ -60,6 +60,12 @@
  
  	if (! slistSilent)
  	{
+@@ -308,4 +308,5 @@
+ 	SchedulePollProcedure(&slistSendProcedure, 0.0);
+ 	SchedulePollProcedure(&slistPollProcedure, 0.1);
+ 
++	Q_memset(hostcache, 0, sizeof(hostcache));
+ 	hostCacheCount = 0;
 @@ -312,8 +312,11 @@
  }
  

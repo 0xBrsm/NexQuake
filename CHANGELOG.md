@@ -4,6 +4,17 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.8.2
+
+### Added
+- Web app install metadata now includes dedicated NexQuake PWA icons (`192`, `512`, and Apple touch) so home-screen installs use branded assets.
+
+### Changed
+- Client packaging now ships `manifest.webmanifest` and install icon files alongside the WASM shell output, with shell metadata links resolved relative to the install path.
+
+### Fixed
+- Client server-list refresh now clears stale hostcache entries before rebuilding results, avoiding leftover server metadata between `slist` runs.
+
 ## 1.8.1
 
 ### Added
