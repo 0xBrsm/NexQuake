@@ -1,6 +1,6 @@
 # NexQuake
 
-Quake was released thirty years ago and changed video-gaming forever. For many of us, it was our first foray into true multiplayer gaming. NexQuake was built to recapture that experience without the setup hassle. With NexQuake, playing old-school Quake is as easy as clicking a link, picking a server, and pwning your friends. The same brutal, fast-paced gameplay from 1996, running natively in your browser in 2026.
+NexQuake is a unified multiplayer Quake platform: dedicated servers, orchestration, and browser client in one tiny Docker image. Players launch by URL and join from the in-game server list.
 
 <!-- pages:home-features:start -->
 - **Zero friction**: Click a link, and now you're playing.
@@ -9,15 +9,16 @@ Quake was released thirty years ago and changed video-gaming forever. For many o
 - **Self-hostable**: Pull one Docker image, open one port, go frag.
 <!-- pages:home-features:end -->
 
-Ready for deathmatch?
+Ready to play?
+
+[`https://kitty1.quake.nexus`](https://kitty1.quake.nexus)
+
+Rather host it yourself?
 
 ```bash
 # launch with a single shareware FFA server
 docker run -p 1337:1337 -e CL_ARGS=+connect ghcr.io/0xbrsm/nexquake
 ```
-
-Rather try a few mods?
-
 ```bash
 # launch with several popular server mods
 docker run -p 1337:1337 -e CL_SMENU=1 -e QUICKSTART=all ghcr.io/0xbrsm/nexquake
@@ -26,6 +27,8 @@ docker run -p 1337:1337 -e CL_SMENU=1 -e QUICKSTART=all ghcr.io/0xbrsm/nexquake
 For more options, check the [Quick Start Guide](docs/QUICKSTART.md). Or read on for the nitty gritty.
 
 ## The Details
+
+Quake was released thirty years ago and changed video-gaming forever. For many of us, it was our first foray into true multiplayer gaming. NexQuake was built to recapture that experience without the setup hassle. With NexQuake, playing old-school Quake is as easy as clicking a link, picking a server, and pwning your friends. The same brutal, fast-paced gameplay from 1996, running natively in your browser in 2026.
 
 NexQuake is a WebAssembly port of Quake with browser-native multiplayer. It runs the original id Software engine in the browser and connects players back to dedicated game servers on the host through a lightweight Go relay that tunnels UDP over WebSocket.
 
@@ -47,22 +50,23 @@ Players use the standard Quake multiplayer connection experience; use the Multip
 
 - **Browser-native**: Runs in Chrome, Firefox, Safari, Edge, and any browser with WebGL2.
 - **Real multiplayer**: Dedicated NetQuake servers centrally managed through Nexus.
-- **Mod support**: Game directory switching at runtime without page reload.
-- **Software renderer**: GPU-accelerated palette conversion of the original 8-bit framebuffer.
+- **Universal input**: Native touch controls and Gamepad API support.
 - **CD audio emulation**: Stream the original Quake soundtrack in .ogg or .mp3 format.
 - **Persistent saves**: Config and saves survive browser sessions via IndexedDB.
+- **Mod support**: Game directory switching at runtime without page reload.
 - **Self-contained**: Single Docker image, single port.
 - **Easy to secure**: Supports OIDC via JWT tokens or just run it behind a reverse proxy.
+- **Software renderer**: GPU-accelerated palette conversion of the original 8-bit framebuffer.
 - **Auto-quickstart**: Shareware/freeware game data downloads automatically on first run.
 
 ### Documentation
 
 - **[Repo Overview](docs/README.md)**: Index to all the documentation in the repo.
 - **[Quick Start](docs/QUICKSTART.md)**: Get up and running quickly with Docker.
-- **[Environment](docs/ENVIRONMENT.md)**: Environment variables and networking setup.
-- **[Setup Guide](docs/SETUP.md)**: Managing game data, mods, and servers.
-- **[UI Guide](docs/UI.md)**: Using the in-browser settings panel for files, cfg editing, and CD controls.
 - **[Controls](docs/CONTROLS.md)**: Touch, gamepad, and video mode configuration.
+- **[UI Guide](docs/UI.md)**: Using the in-browser settings panel for files, cfg editing, and CD controls.
+- **[Setup Guide](docs/SETUP.md)**: Managing game data, mods, and servers.
+- **[Environment](docs/ENVIRONMENT.md)**: Environment variables and networking setup.
 - **[Admin Guide](docs/ADMIN.md)**: Server administration reference.
 - **[Architecture](docs/ARCHITECTURE.md)**: Technical deep dive into system design.
 - **[Bug Fixes](bugfix/README.md)**: Security and stability patches for the upstream WinQuake source.
@@ -79,6 +83,7 @@ nexus/            Go relay, file serving, server orchestration
 server/           Dedicated server Makefile and patches
 site/             GitHub Pages content
 ATTRIBUTIONS.md   Source provenance and GPL lineage
+CHANGELOG.md      Development and release history
 compose.yml       Docker Compose configuration
 Dockerfile        Multi-stage production image
 README.md         You're still reading it (go play Quake!)

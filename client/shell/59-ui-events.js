@@ -111,7 +111,7 @@
         closeGameMenuFromOverlayExit();
       }
       syncOverlayPanelWidth();
-      if (Module && Module.nqTouchActive) {
+      if (Module && Module.nexquakeTouchEnabled !== false && Module.nqTouchActive) {
         if (open && typeof Module.nqTouchPrepareOverlayMode === 'function')
           Module.nqTouchPrepareOverlayMode();
         if (!open && typeof Module.nqTouchEnsureLandscapeFullscreen === 'function')

@@ -36,7 +36,12 @@ pushd "${CLIENT_BUILD_DIR}" >/dev/null
 make -j "${make_jobs}" -f Makefile.emscripten
 popd >/dev/null
 
-cp -f "${CLIENT_BUILD_DIR}/"{index.html,shell.css,favicon.svg,manifest.webmanifest,nq-icon-512.png,nq-icon-192.png,nq-touch-icon-180.png,index.js,index.wasm} "${OUT_DIR}/"
+cp -f "${CLIENT_BUILD_DIR}/"{index.html,shell.css,favicon.svg,manifest.webmanifest,pwa-icon.svg,index.js,index.wasm} "${OUT_DIR}/"
+for icon_name in nq-icon-512.png nq-icon-192.png nq-touch-icon-180.png; do
+  if [[ -f "${CLIENT_BUILD_DIR}/${icon_name}" ]]; then
+    cp -f "${CLIENT_BUILD_DIR}/${icon_name}" "${OUT_DIR}/"
+  fi
+done
 if [[ -f "${CLIENT_BUILD_DIR}/index.data" ]]; then
   cp -f "${CLIENT_BUILD_DIR}/index.data" "${OUT_DIR}/"
 fi

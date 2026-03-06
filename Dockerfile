@@ -78,7 +78,7 @@ COPY --from=server-builder-ci /out/nqserver /nqserver
 FROM ${EMSDK_IMAGE} AS wasm-builder
 WORKDIR /src
 
-RUN apt-get update && apt-get install -y --no-install-recommends git make patch ca-certificates bash && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends git make patch ca-certificates bash librsvg2-bin && rm -rf /var/lib/apt/lists/*
 
 COPY build/ build/
 COPY bugfix/ bugfix/

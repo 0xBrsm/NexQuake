@@ -3,7 +3,7 @@
 @@ -46,1 +46,2 @@
  int			host_hunklevel;
 +int			fs_hunklevel;
-@@ -482,2 +482,7 @@
+@@ -482,2 +483,7 @@
 -	if (host_hunklevel)
 -		Hunk_FreeToLowMark (host_hunklevel);
 +	{

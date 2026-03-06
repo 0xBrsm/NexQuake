@@ -179,3 +179,52 @@ function nqLoadCdEnabled() {
 function nqSaveCdEnabled(value) {
   nqSaveStoredBool(NQ_CD_ENABLED_STORAGE_KEY, value);
 }
+
+function nqParseStartBundle(encoded) {
+  var text = String(encoded || '').trim();
+  var binary;
+
+  try {
+    if (!text)
+      throw new Error('start bundle payload is empty');
+    if (typeof atob !== 'function')
+      throw new Error('base64 decode not supported in this runtime');
+    if (typeof TextDecoder === 'undefined')
+      throw new Error('TextDecoder is required for start bundle decode');
+    binary = atob(text);
+    return JSON.parse(new TextDecoder().decode(Uint8Array.from(binary, function(ch) {
+      return ch.charCodeAt(0) & 255;
+    })));
+  } catch (err) {
+    throw new Error('start bundle decode failed: ' + err);
+  }
+}
+
+// Load /start before wasm instantiation so startup memory can follow client sendArgs.
+function nqTryLoadStartBundleSync() {
+  var moduleRef = (typeof Module !== 'undefined' && Module) ? Module : (window.Module = window.Module || {});
+  var request;
+  var assetRef;
+
+  if (moduleRef.nexquakeStartBundle)
+    return moduleRef.nexquakeStartBundle;
+
+  try {
+    request = new XMLHttpRequest();
+    request.open('GET', '/start', false);
+    request.send(null);
+    if (request.status < 200 || request.status >= 300)
+      throw new Error('start bundle fetch failed: ' + request.status);
+
+    assetRef = String(request.getResponseHeader('X-NexQuake-Ref') || '');
+    if (!assetRef)
+      throw new Error('start bundle missing X-NexQuake-Ref header');
+
+    moduleRef.nexquakeAssetRef = assetRef;
+    moduleRef.nexquakeStartBundle = nqParseStartBundle(request.responseText);
+    return moduleRef.nexquakeStartBundle;
+  } catch (err) {
+    console.warn('Failed to preload /start bundle before wasm instantiation:', err);
+    return null;
+  }
+}

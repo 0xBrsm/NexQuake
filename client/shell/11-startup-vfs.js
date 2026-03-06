@@ -70,24 +70,6 @@
       return '/nq/' + fnv1a64Hex(ref + ':' + key);
     }
 
-    function decodeBase64UTF8(encoded) {
-      var text = String(encoded || '').trim();
-      var binary;
-      var bytes;
-      var i;
-      if (!text)
-        throw new Error('start bundle payload is empty');
-      if (typeof atob !== 'function')
-        throw new Error('base64 decode not supported in this runtime');
-      if (typeof TextDecoder === 'undefined')
-        throw new Error('TextDecoder is required for start bundle decode');
-      binary = atob(text);
-      bytes = new Uint8Array(binary.length);
-      for (i = 0; i < binary.length; i++)
-        bytes[i] = binary.charCodeAt(i) & 255;
-      return new TextDecoder().decode(bytes);
-    }
-
     function ensureGameDir(mod) {
       mod = normalizeGameName(mod);
       safeMkdirTree(REMOTE_ROOT + '/' + mod);
@@ -452,42 +434,37 @@
     Module.addRunDependency(manifestDependencyId);
 
     function applyClientConfig(config) {
-      if (!config || typeof config !== 'object')
-        config = {};
+      config = config && typeof config === 'object' ? config : {};
       applyPrefetchConcurrency(config.prefetchConcurrency);
-      Module.nexquakeAutoSMenuOnFirstLoad = config.smenuOnFirstLoad === true;
-      Module.nexquakeSendArgs = Array.isArray(config.sendArgs) ? config.sendArgs.slice() : [];
-      Module.nexquakeURLArgs = config.urlArgs === true;
+      Module.nexquakeApplyClientConfig(config);
     }
 
     function fetchStartBundle() {
-      return fetch('/start').then(function(response) {
-        if (!response.ok) throw new Error('start bundle fetch failed: ' + response.status);
-        Module.nexquakeAssetRef = String(response.headers.get('X-NexQuake-Ref') || '');
-        if (!Module.nexquakeAssetRef)
-          throw new Error('start bundle missing X-NexQuake-Ref header');
-        return response.text();
-      }).then(function(encoded) {
-        var decoded = decodeBase64UTF8(encoded);
-        var rawBundle;
-        var rawGame;
-        var rawCd;
+      var rawBundle = Module.nexquakeStartBundle;
+      var bundlePromise;
+
+      if (rawBundle)
+        Module.nexquakeStartBundle = null;
+      bundlePromise = rawBundle
+        ? Promise.resolve(rawBundle)
+        : fetch('/start').then(function(response) {
+          if (!response.ok) throw new Error('start bundle fetch failed: ' + response.status);
+          Module.nexquakeAssetRef = String(response.headers.get('X-NexQuake-Ref') || '');
+          if (!Module.nexquakeAssetRef)
+            throw new Error('start bundle missing X-NexQuake-Ref header');
+          return response.text();
+        }).then(nqParseStartBundle);
+
+      return bundlePromise.then(function(rawBundle) {
+        var rawGame = (rawBundle && rawBundle.game && typeof rawBundle.game === 'object') ? rawBundle.game : {};
+        var rawCd = (rawBundle && Array.isArray(rawBundle.cd)) ? rawBundle.cd : [];
         var game = Object.create(null);
-        try {
-          rawBundle = JSON.parse(decoded);
-        } catch (err) {
-          throw new Error('start bundle decode failed: ' + err);
-        }
 
-        applyClientConfig(rawBundle.client);
-        rawGame = (rawBundle && rawBundle.game && typeof rawBundle.game === 'object') ? rawBundle.game : {};
-        rawCd = (rawBundle && Array.isArray(rawBundle.cd)) ? rawBundle.cd : [];
-
+        applyClientConfig(rawBundle && rawBundle.client);
         Object.keys(rawGame).forEach(function(rawMod) {
           var mod = normalizeGameName(rawMod);
-          if (!mod)
-            return;
-          game[mod] = Array.isArray(rawGame[rawMod]) ? rawGame[rawMod] : [];
+          if (mod)
+            game[mod] = Array.isArray(rawGame[rawMod]) ? rawGame[rawMod] : [];
         });
 
         if (!game[baseGame])

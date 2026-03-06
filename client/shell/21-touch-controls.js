@@ -290,6 +290,7 @@
 
   moduleRef.nqTouchEnsureLandscapeFullscreen = ensureLandscapeFullscreen;
   moduleRef.nqTouchPrepareOverlayMode = prepareOverlayMode;
+  moduleRef.nqTouchControlsRefresh = syncVisibility;
 
   function saveLayout() {
     try { localStorage.setItem(storageKey, JSON.stringify(layout)); } catch (e) {}
@@ -428,7 +429,7 @@
     var blockingModal = panelOpen || editorOpen;
     var menuMode = !!moduleRef.nqTouchMenuMode;
     var menuLayoutMode = !!moduleRef.nqTouchMenuLayoutMode;
-    var visible = canvasShown && landscape;
+    var visible = moduleRef.nexquakeTouchEnabled !== false && canvasShown && landscape;
     var interactive = visible && !blockingModal;
 
     overlay.style.display = visible ? 'flex' : 'none';

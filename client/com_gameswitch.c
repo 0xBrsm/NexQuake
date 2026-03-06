@@ -31,6 +31,7 @@ extern void Host_WriteConfiguration (void);
 static char			com_gameswitch_basedir[MAX_OSPATH];
 static struct searchpath_s	*com_gameswitch_base_searchpaths;
 static char			com_gameswitch_base_gamedir[MAX_OSPATH];
+static int			com_gameswitch_base_hunklevel;
 static const char		*com_user_root = ".usr";
 
 static void COM_GameSwitch_SetGameDir (char *gamedir)
@@ -62,7 +63,7 @@ void COM_GameSwitch_Init (const char *basedir)
 	Q_strncpy (com_gameswitch_base_gamedir, com_gamedir, sizeof(com_gameswitch_base_gamedir) - 1);
 	com_gameswitch_base_gamedir[sizeof(com_gameswitch_base_gamedir) - 1] = 0;
 
-	fs_hunklevel = Hunk_LowMark ();
+	com_gameswitch_base_hunklevel = fs_hunklevel = Hunk_LowMark ();
 
 #ifdef __EMSCRIPTEN__
 	EM_ASM({
@@ -106,13 +107,13 @@ void COM_SwitchGame (const char *gamedir)
 
 	/* Reset to baseline, then add the game directory on top. */
 	COM_GameSwitch_RestoreBase ();
+	fs_hunklevel = com_gameswitch_base_hunklevel;
 
 	if (Q_strcasecmp (game, GAMENAME) != 0 && com_gameswitch_basedir[0])
 	{
 		COM_AddGameDirectories (com_gameswitch_basedir, game);
+		fs_hunklevel = Hunk_LowMark ();
 	}
-
-	fs_hunklevel = Hunk_LowMark ();
 
 	if (per_game_config)
 		Cbuf_InsertText ("exec quake.rc\n");

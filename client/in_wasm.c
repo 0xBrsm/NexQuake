@@ -131,6 +131,7 @@ static const int touch_slot_keys[TOUCH_SLOT_COUNT] = {
 
 static qboolean fullscreen_requested;
 static qboolean touch_flip_latched;
+static qboolean touch_enabled = true;
 
 // ---------------------------------------------------------------------------
 // Gamepad state
@@ -166,6 +167,7 @@ static const int s_joy_key_map[JOY_MAX_BUTTONS] = {
 static qboolean joy_button_state[JOY_MAX_BUTTONS];
 static qboolean joy_connected;
 static float    joy_move_x, joy_move_y;
+static qboolean joy_enabled = true;
 
 // ---------------------------------------------------------------------------
 // Virtual control emission + menu translation
@@ -561,6 +563,12 @@ EM_JS(void, js_set_touch_active, (int active), {
 	Module.nqTouchActive = !!active;
 });
 
+static void sync_touch_active_state(void)
+{
+	touch_active = touch_enabled ? js_touch_active() : false;
+	js_set_touch_active(touch_active);
+}
+
 // Request fullscreen + landscape lock (one-shot, called on first touch)
 EM_JS(void, js_request_fullscreen, (), {
 	if (Module && typeof Module.nqRequestFullscreen === 'function') {
@@ -898,6 +906,9 @@ static void touch_cancel_all(void)
 
 static qboolean touch_event_blocked(void)
 {
+	if (!touch_enabled)
+		return true;
+
 	if (!js_touch_controls_visible())
 	{
 		touch_cancel_all();
@@ -1316,7 +1327,8 @@ static void IN_PollGamepads(void)
 		if (!touch_active)
 		{
 			touch_active = true;
-			js_set_touch_active(1);
+			if (touch_enabled)
+				js_set_touch_active(1);
 		}
 
 		for (b = 0; b < gp.numButtons && b < JOY_MAX_BUTTONS; b++)
@@ -1354,6 +1366,7 @@ static void IN_PollGamepads(void)
 	if (joy_connected)
 		joy_disconnect_cleanup();
 	joy_connected = false;
+	sync_touch_active_state();
 }
 
 #define INPUT_PROFILE_PICK(mouse, touch, joy) (joy_connected ? (joy) : (touch_active ? (touch) : (mouse)))
@@ -1437,7 +1450,7 @@ char *IN_InvertPitchLabel(void)
 // ---------------------------------------------------------------------------
 static void init_input(void)
 {
-	touch_active = js_touch_active();
+	sync_touch_active_state();
 	touch_nav_context_latched = touch_nav_context();
 	touch_menu_mode_latched = (key_dest == key_menu);
 	touch_flip_latched = false;
@@ -1460,13 +1473,17 @@ static void init_input(void)
 	emscripten_set_visibilitychange_callback(0, 1, on_visibility);
 
 	// Touch (C-native)
-	emscripten_set_touchstart_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, 0, 1, on_touchstart);
-	emscripten_set_touchmove_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, 0, 1, on_touchmove);
-	emscripten_set_touchend_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, 0, 1, on_touchend);
-	emscripten_set_touchcancel_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, 0, 1, on_touchend);
+	if (touch_enabled)
+	{
+		emscripten_set_touchstart_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, 0, 1, on_touchstart);
+		emscripten_set_touchmove_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, 0, 1, on_touchmove);
+		emscripten_set_touchend_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, 0, 1, on_touchend);
+		emscripten_set_touchcancel_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, 0, 1, on_touchend);
+	}
 
 	// Gamepad: register sample callback so emscripten_get_gamepad_status works
-	emscripten_sample_gamepad_data();
+	if (joy_enabled)
+		emscripten_sample_gamepad_data();
 }
 
 // ---------------------------------------------------------------------------
@@ -1479,6 +1496,9 @@ void Sys_SendKeyEvents(void)
 
 void IN_Init(void)
 {
+	touch_enabled = !COM_CheckParm("-notouch");
+	joy_enabled = !COM_CheckParm("-nojoy");
+
 	if (!COM_CheckParm("-nomouse"))
 		mouse_avail = 1;
 
@@ -1513,11 +1533,14 @@ void IN_Commands(void)
 {
 	sync_touch_mode_transition();
 	touch_sync_flip_mode();
-	emscripten_sample_gamepad_data();
-	IN_PollGamepads();
+	if (joy_enabled)
+	{
+		emscripten_sample_gamepad_data();
+		IN_PollGamepads();
+	}
 	// Touch joystick drives menu nav when no gamepad is connected.
 	// joy_connected is authoritative after IN_PollGamepads runs.
-	if (!joy_connected)
+	if (!joy_connected && touch_enabled)
 		update_touch_nav(CTRL_JOY_NAV_BASE, JOY_MENU_NAV_THRESH, touch_move.axisX, touch_move.axisY);
 }
 

@@ -15,11 +15,12 @@ ifneq ($(strip $(WEBSOCKET_URL)),)
 WEBSOCKET_URL_FLAG := -sWEBSOCKET_URL=$(WEBSOCKET_URL)
 endif
 SEED_PRELOAD_FLAGS := --preload-file seed@/nqseed
-LDFLAGS := -O3 -Wl,--allow-multiple-definition -sMAX_WEBGL_VERSION=2 -sMIN_WEBGL_VERSION=2 -sINITIAL_MEMORY=64MB -sTOTAL_STACK=2MB -sALLOW_MEMORY_GROWTH \
+LDFLAGS := -O3 -Wl,--allow-multiple-definition -sMAX_WEBGL_VERSION=2 -sMIN_WEBGL_VERSION=2 -sINITIAL_MEMORY=64MB -sTOTAL_STACK=2MB -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=2GB -sIMPORTED_MEMORY \
 	$(SEED_PRELOAD_FLAGS) \
 	--shell-file shell.html --pre-js nq-pre.js -lidbfs.js $(WEBSOCKET_URL_FLAG) -sWEBSOCKET_SUBPROTOCOL=binary \
 	-lwebsocket.js -sASYNCIFY=1 -sASYNCIFY_STACK_SIZE=4MB -sASYNCIFY_IGNORE_INDIRECT=0 -sALLOW_BLOCKING_ON_MAIN_THREAD=1 \
-	-sEXPORTED_RUNTIME_METHODS=['addRunDependency','removeRunDependency','ccall','callMain'] -sEXPORT_KEEPALIVE=1
+	-sEXPORTED_RUNTIME_METHODS=['addRunDependency','removeRunDependency','ccall','callMain'] -sEXPORT_KEEPALIVE=1 \
+	-sINCOMING_MODULE_JS_API=canvas,dataFileDownloads,monitorRunDependencies,noInitialRun,onRuntimeInitialized,postRun,preRun,print,setStatus,wasmMemory
 TARGET := index.html
 
 # C source files

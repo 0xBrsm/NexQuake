@@ -227,20 +227,14 @@ int main(int c, char **v) {
 	COM_InitArgv(c, v);
 	parms.argc = com_argc;
 	parms.argv = com_argv;
-	parms.memsize = 32 * 1024 * 1024;
-	if ((pnum = COM_CheckParm("-mem"))) {
+	parms.memsize = 64 * 1024 * 1024;
+	pnum = COM_CheckParm("-mem");
+	if (pnum) {
 		if (pnum >= com_argc - 1) {
 			fprintf(stderr, "Error: -mem requires a size in MB\n");
 			return 1;
 		}
 		parms.memsize = Q_atoi(com_argv[pnum + 1]) * 1024 * 1024;
-	}
-	if ((pnum = COM_CheckParm("-heapsize"))) {
-		if (pnum >= com_argc - 1) {
-			fprintf(stderr, "Error: -heapsize requires a size in KB\n");
-			return 1;
-		}
-		parms.memsize = Q_atoi(com_argv[pnum + 1]) * 1024;
 	}
 	parms.membase = malloc(parms.memsize);
 	if (!parms.membase) {

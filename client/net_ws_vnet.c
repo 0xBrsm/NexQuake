@@ -233,12 +233,6 @@ static qboolean WebSocket_EnsureTransportOpen(void)
 
 int WebSocket_Init(void)
 {
-	if (COM_CheckParm("-nowebsocket"))
-	{
-		Sys_Printf("WebSocket_Init: -nowebsocket flag given (disabling WebSockets)\n");
-		return -1;
-	}
-
 	if (!emscripten_websocket_is_supported())
 		Sys_Error("WebSocket_Init: emscripten_websocket_is_supported() says WebSockets aren't supported\n");
 

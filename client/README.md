@@ -2,7 +2,7 @@
 
 The browser client: Quake compiled to WebAssembly with a from-scratch native WASM platform layer for software rendering. See [`ARCHITECTURE.md`](../docs/ARCHITECTURE.md) for the full technical breakdown (GPU-side palette conversion, audio pipeline, input handling).
 
-The client patches and overlays are a mix of required and additive features. These files overlay the upstream id Software Quake source during build. The build system clones `id-Software/Quake`, applies patches, copies these overlays in, and compiles with Emscripten. The output is `index.html`, `index.js`, `index.wasm`, optional `index.data`, plus packaged shell assets (`shell.css`, `favicon.svg`, `manifest.webmanifest`, `nq-icon-192.png`, `nq-icon-512.png`, `nq-touch-icon-180.png`).
+The client patches and overlays are a mix of required and additive features. These files overlay the upstream id Software Quake source during build. The build system clones `id-Software/Quake`, applies patches, copies these overlays in, and compiles with Emscripten. The output is `index.html`, `index.js`, `index.wasm`, optional `index.data`, plus packaged shell assets (`shell.css`, `favicon.svg`, `manifest.webmanifest`, `pwa-icon.svg`, optional generated `nq-icon-192.png`, `nq-icon-512.png`, `nq-touch-icon-180.png`).
 
 ## Features
 
@@ -89,13 +89,43 @@ FOV scales automatically with the canvas aspect ratio when changing video mode (
 
 ## Shell
 
-The `shell/` directory contains the JavaScript runtime, HTML template, and CSS that quickstart the WASM module, manage game data, and provide a browser-native overlay UI. JS files are grouped by numbered buckets (`00`, `10s`, `20s`, `50s`, `60`) and load in lexicographic order via `--pre-js nq-pre.js` (the concatenated pre-JS injected into the Emscripten output). The HTML template (`shell.html`) is processed by Emscripten's `--shell-file` to produce the final `index.html`. During build prep, the four CSS source files are concatenated into a single `shell.css`, and PWA/icon assets (`manifest.webmanifest`, `nq-icon-192.png`, `nq-icon-512.png`, `nq-touch-icon-180.png`, `favicon.svg`) are copied for runtime packaging.
+The `shell/` directory contains the JavaScript runtime, HTML template, and CSS that quickstart the WASM module, manage game data, and provide a browser-native overlay UI. JS files are grouped by numbered buckets (`00`, `10s`, `20s`, `50s`, `60`) and load in lexicographic order via `--pre-js nq-pre.js` (the concatenated pre-JS injected into the Emscripten output). The HTML template (`shell.html`) is processed by Emscripten's `--shell-file` to produce the final `index.html`. During build prep, the four CSS source files are concatenated into a single `shell.css`, `pwa-icon.svg` is copied as the install-icon source asset, `nq-icon-192.png`, `nq-icon-512.png`, and `nq-touch-icon-180.png` are generated when raster tooling is available, and `manifest.webmanifest` plus `favicon.svg` are copied for runtime packaging.
 
 **Startup and VFS** — `00-core.js`, `10-startup.js`, `11-startup-vfs.js`
 
 On page load, the shell fetches a manifest bundle from `/start`, builds a virtual filesystem in Emscripten's VFS, and syncs persistent user data from IndexedDB (IDBFS). Remote game assets are mounted as lazy nodes under `/nexusfs/<mod>/` and downloaded on first read via synchronous XHR with retry and exponential backoff. User mod files live in `/NexQuake/game/<mod>/` and are linked at `/nexusfs/.usr/<mod>/`; user CD uploads live in `/NexQuake/cd` and are exposed at `/cd`. This keeps Quake search paths layered so user files override remote assets. Asset URLs are computed from an FNV-1a hash of the manifest reference and file key, producing immutable CDN-friendly paths. At first browser startup, bundled seed cfg files (`/nqseed/<base>/autoexec.cfg` and `/nqseed/<base>/nexquake.cfg`) are copied once into the user IDBFS tree and guarded by `/NexQuake/.nq.cfgseed-v1`. Startup args come from Nexus runtime config (`CL_ARGS`), with optional URL arg append when `CL_URL_ARGS=1` (for example `?-nosound&+exec&ctf.cfg`). URL parsing splits on `&`, so each `&`-separated value maps to one argv token. Tokens are passed to Quake as command-line args (including normal `stuffcmds` handling for `+` tokens).
 
 `10-startup.js` drives the three-phase bootstrap (WASM instantiation → VFS build → IDBFS sync), progress bar, and the ENTER button flow. On touch devices it requests fullscreen and captures monitor dimensions before calling `Module.callMain()`. Game directory switches that require a page reload show a reload screen instead of trying to restart in-place.
+
+### Client Arguments
+
+The web client accepts the argv array passed to `Module.callMain()`. In practice that means `CL_ARGS`, plus optional URL args when `CL_URL_ARGS=1`. Two argument forms are supported:
+
+- `-flag` / `-flag value` startup switches checked by the wasm build
+- `+command` startup console commands executed by Quake's stock `stuffcmds` path
+
+Supported `-` flags in the wasm client build:
+
+| Flag | Effect |
+|------|--------|
+| `-condebug` | Writes console output to `qconsole.log` in the active game directory. |
+| `-mem <MB>` | Sets the Quake heap size used by the client. The NexQuake default is 64 MB. |
+| `-nosound` | Disables sound effects output. |
+| `-nocdaudio` | Disables streamed CD music playback. |
+| `-nojoy` | Disables gamepad/joystick input. |
+| `-nolan` | Disables the networking layer. The client will not connect back to Nexus, but single-player is still avaialble. |
+| `-nomouse` | Disables mouse input. |
+| `-notouch` | Disables touch input. |
+
+Startup `+command` arguments use normal Quake console syntax:
+
+| Example | Effect |
+|---------|--------|
+| `+connect 26000` | Connects to the server routed by Nexus on listen port `26000`. |
+| `+exec autoexec.cfg` | Executes a config file from the mounted VFS. |
+| `+name BrowserPlayer` | Sets the player name on startup. |
+| `+map e1m1` | Starts a local map or listen-server session. |
+
 
 **Touch UI** — `20-touch-glyphs.js`, `21-touch-controls.js`
 
@@ -141,4 +171,4 @@ cp /path/to/client/shell/shell.html .
 make -f Makefile.emscripten
 ```
 
-Output (project build scripts): `index.html`, `index.js`, `index.wasm`, optional `index.data`; ship `shell.css`, `favicon.svg`, `manifest.webmanifest`, `nq-icon-192.png`, `nq-icon-512.png`, `nq-touch-icon-180.png` alongside.
+Output (project build scripts): `index.html`, `index.js`, `index.wasm`, optional `index.data`; ship `shell.css`, `favicon.svg`, `manifest.webmanifest`, `pwa-icon.svg`, and, when raster tooling is available, `nq-icon-192.png`, `nq-icon-512.png`, `nq-touch-icon-180.png` alongside.

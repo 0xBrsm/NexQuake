@@ -221,17 +221,7 @@ function nqStartGameRuntime() {
   try {
     if (typeof Module.callMain !== 'function')
       throw new Error('Module.callMain is not available');
-    var mainArgs = [];
-    if (typeof Module.nexquakeBuildMainArgs === 'function') {
-      try {
-        mainArgs = Module.nexquakeBuildMainArgs();
-      } catch (argsErr) {
-        console.warn('Failed to build startup args:', argsErr);
-      }
-    }
-    if (!Array.isArray(mainArgs))
-      mainArgs = [];
-    Module.callMain(mainArgs);
+    Module.callMain(Array.isArray(Module.nexquakeMainArgs) ? Module.nexquakeMainArgs : []);
     nqLogBootstrapStage('wasm main initialized');
     nqWasmStartMainLoop();
     nqLogBootstrapStage('main loop started');
@@ -263,7 +253,7 @@ function nqStartGameFromEnter() {
     return;
   nqMainLoopStarted = true;
   nqGameStarted = true;
-  if (Module && Module.nqTouchActive) {
+  if (Module && Module.nexquakeTouchEnabled !== false && Module.nqTouchActive) {
     nqRequestStartupFullscreen(nqStartGameRuntime);
     return;
   }
@@ -276,6 +266,7 @@ Module = Object.assign(Module || {}, {
   nexquakeAutoSMenuOnFirstLoad: false,
   nexquakeSendArgs: [],
   nexquakeURLArgs: false,
+  nexquakeTouchEnabled: true,
   nqQuitInProgress: false,
   dataFileDownloads: (Module && Module.dataFileDownloads && typeof Module.dataFileDownloads === 'object')
     ? Module.dataFileDownloads
@@ -394,6 +385,12 @@ Module = Object.assign(Module || {}, {
 });
 
 (function() {
+  var NQ_DEFAULT_HEAP_MB = 64;
+  var NQ_WASM_OVERHEAD_MB = 32;
+  var NQ_WASM_MIN_MB = 64;
+  var NQ_WASM_MAX_MB = 2048;
+  var NQ_WASM_PAGE_BYTES = 64 * 1024;
+
   function parseURLArgs() {
     var out = [];
     var tokens = window.location.search.length > 1 ? window.location.search.slice(1).split('&') : [];
@@ -419,11 +416,10 @@ Module = Object.assign(Module || {}, {
   }
 
   function buildMainArgs() {
-    var out = [];
+    var out = Module.nexquakeURLArgs === true ? parseURLArgs() : [];
     var source = Array.isArray(Module.nexquakeSendArgs) ? Module.nexquakeSendArgs : [];
     var i;
     var token;
-    var urlArgs;
 
     for (i = 0; i < source.length; i++) {
       token = String(source[i] || '').trim();
@@ -432,16 +428,50 @@ Module = Object.assign(Module || {}, {
       out.push(token);
     }
 
-    if (Module.nexquakeURLArgs === true) {
-      urlArgs = parseURLArgs();
-      for (i = 0; i < urlArgs.length; i++)
-        out.push(urlArgs[i]);
-    }
-
     return out;
   }
 
-  Module.nexquakeBuildMainArgs = buildMainArgs;
+  function parseMemArgMB(args) {
+    var pnum = args.indexOf('-mem');
+    var value = parseInt(pnum >= 0 ? args[pnum + 1] : '', 10);
+    return Number.isFinite(value) && value > 0 ? value : NQ_DEFAULT_HEAP_MB;
+  }
+
+  function configureStartupMemory(args) {
+    var initialMB;
+    var initialPages;
+    var maximumPages;
+
+    if (Module.wasmMemory || typeof WebAssembly === 'undefined' || typeof WebAssembly.Memory !== 'function')
+      return;
+
+    // Keep a fixed wasm-side budget above Quake's own -mem heap.
+    initialMB = Math.max(NQ_WASM_MIN_MB,
+      Math.min(parseMemArgMB(args) + NQ_WASM_OVERHEAD_MB, NQ_WASM_MAX_MB));
+    initialPages = Math.ceil((initialMB * 1024 * 1024) / NQ_WASM_PAGE_BYTES);
+    maximumPages = Math.ceil((NQ_WASM_MAX_MB * 1024 * 1024) / NQ_WASM_PAGE_BYTES);
+
+    Module.nexquakeStartupMemoryMB = initialPages * NQ_WASM_PAGE_BYTES / (1024 * 1024);
+    Module.wasmMemory = new WebAssembly.Memory({
+      initial: initialPages,
+      maximum: maximumPages
+    });
+  }
+
+  function applyClientConfig(config) {
+    config = config && typeof config === 'object' ? config : {};
+    Module.nexquakeAutoSMenuOnFirstLoad = config.smenuOnFirstLoad === true;
+    Module.nexquakeSendArgs = Array.isArray(config.sendArgs) ? config.sendArgs.slice() : [];
+    Module.nexquakeURLArgs = config.urlArgs === true;
+    Module.nexquakeMainArgs = buildMainArgs();
+    Module.nexquakeTouchEnabled = Module.nexquakeMainArgs.indexOf('-notouch') === -1;
+    configureStartupMemory(Module.nexquakeMainArgs);
+    if (typeof Module.nqTouchControlsRefresh === 'function')
+      Module.nqTouchControlsRefresh();
+  }
+
+  Module.nexquakeApplyClientConfig = applyClientConfig;
+  Module.nexquakeApplyClientConfig((nqTryLoadStartBundleSync() || {}).client);
 })();
 
 if (loaderReloadButton) {

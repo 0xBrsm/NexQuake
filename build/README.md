@@ -7,9 +7,9 @@ Scripts that compile the WASM client and dedicated server from the upstream id S
 | File | Purpose |
 |------|---------|
 | `Makefile` | Primary orchestrator. Top-level build targets for client, server, and upstream preparation. |
-| `build-client.sh` | WASM client build. Prepares the upstream source, applies client patches and overlays, runs `make -j <jobs> -f Makefile.emscripten`. Produces `index.html`, `shell.css`, `favicon.svg`, `manifest.webmanifest`, `nq-icon-192.png`, `nq-icon-512.png`, `nq-touch-icon-180.png`, `index.js`, `index.wasm`, and optional `index.data`. |
+| `build-client.sh` | WASM client build. Prepares the upstream source, applies client patches and overlays, runs `make -j <jobs> -f Makefile.emscripten`. Produces `index.html`, `shell.css`, `favicon.svg`, `manifest.webmanifest`, `pwa-icon.svg`, optional generated `nq-icon-192.png`, `nq-icon-512.png`, `nq-touch-icon-180.png`, `index.js`, `index.wasm`, and optional `index.data`. |
 | `build-server.sh` | Dedicated server build. Prepares the upstream source, applies server patches, compiles with GCC, and runs `make -j <jobs>` for parallel object builds. Produces `nqserver`. Handles platform detection and 32/64-bit selection. |
-| `prepare-upstream.sh` | Upstream fetch and build-tree staging. Uses a temporary sparse clone of `id-Software/Quake` to refresh `tmp/WinQuake/`, applies overlays/patches, and resolves client version metadata (`NQ_VERSION` -> `git describe` -> `unknown`). Set `FETCH_ONLY=1` to only ensure checkout exists (used by CI prefetch). |
+| `prepare-upstream.sh` | Upstream fetch and build-tree staging. Uses a temporary sparse clone of `id-Software/Quake` to refresh `tmp/WinQuake/`, applies overlays/patches, ships `client/shell/pwa-icon.svg`, generates client PWA PNG icons from it when raster tooling is available, and resolves client version metadata (`NQ_VERSION` -> `git describe` -> `unknown`). Set `FETCH_ONLY=1` to only ensure checkout exists (used by CI prefetch). |
 | `platform.sh` | Platform detection. Sets `PLATFORM` environment variable from Docker-style platform strings (linux/amd64, linux/arm64, linux/arm/v7, linux/386). Used by Dockerfiles and build scripts. |
 
 ## How It Works
@@ -21,7 +21,8 @@ Scripts that compile the WASM client and dedicated server from the upstream id S
 2. build-client.sh
    ├── cp tmp/WinQuake/ -> tmp/client/ (working copy)
    ├── apply src/client/patches/*.patch
-   ├── cp src/client/*.c, *.h, *.js + shell assets (`shell.html`, `favicon.svg`, `manifest.webmanifest`, `nq-icon-*.png`, `nq-touch-icon-180.png`)
+   ├── cp src/client/*.c, *.h, *.js + shell assets (`shell.html`, `favicon.svg`, `manifest.webmanifest`, `pwa-icon.svg`)
+   ├── rasterize `src/client/shell/pwa-icon.svg` -> `nq-icon-192.png`, `nq-icon-512.png`, `nq-touch-icon-180.png` when the raster tool is available
    ├── bundle `shell-nq.css`, `shell-loader.css`, `shell-ui.css`, `shell-touch.css` -> `shell.css`
    ├── stage seed cfgs from src/etc/ into tmp/client/seed/<base-game>/
    └── emcc (Emscripten) -> output files

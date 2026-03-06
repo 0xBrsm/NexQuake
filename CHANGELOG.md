@@ -4,6 +4,19 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.8.3
+
+### Added
+- Browser client startup now supports `-notouch` and `-nojoy` so operators can explicitly disable touch and gamepad input paths.
+
+### Changed
+- Browser client startup now preloads `/start` before WASM instantiation, derives imported WASM memory from the startup `-mem` value, and defaults the client heap to 64 MB.
+- Client install-icon packaging now uses `client/shell/pwa-icon.svg` as the source asset and generates PNG install icons when raster tooling is available.
+
+### Fixed
+- Game-directory switching now restores the base hunk level before mounting mod content, preventing stale allocator state from leaking across client gameswitches.
+- Generated NexQuake install icons now keep the legacy glyph placement while restoring the missing `Q` segment in the mark.
+
 ## 1.8.2
 
 ### Added
