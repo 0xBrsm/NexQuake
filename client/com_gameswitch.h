@@ -28,4 +28,10 @@ void COM_AddGameDirectories (const char *basedir, const char *gamedir);
  */
 void COM_SwitchGame (const char *gamedir);
 
+/*
+ * Resolve the current connection's game directory from hostcache and switch
+ * to it. Falls back to the base game when no matching hostcache entry exists.
+ */
+void COM_SwitchGameForConnection (void);
+
 #endif /* COM_GAMESWITCH_H */

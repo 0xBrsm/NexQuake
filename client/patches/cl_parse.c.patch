@@ -1,9 +1,10 @@
 --- cl_parse.c
 +++ cl_parse.c
-@@ -21,6 +21,8 @@
- 
+@@ -21,6 +21,9 @@
+
  #include "quakedef.h"
- 
+
++#include "com_gameswitch.h"
 +#include "cl_prefetch.h"
 +
  char *svc_strings[] =
@@ -20,30 +21,11 @@
  			break;
  		}
  	} while (ret);
-@@ -215,6 +220,27 @@
+@@ -215,6 +220,8 @@
  //
  	CL_ClearState ();
- 
-+	{
-+		char gamedir[16];
-+		int n;
-+
-+		gamedir[0] = 0;
-+		if (cls.netcon)
-+		{
-+			int ld = cls.netcon->landriver;
-+			if (ld >= 0 && ld < net_numlandrivers && net_landrivers[ld].initialized)
-+				for (n = 0; n < hostCacheCount; n++)
-+					if (hostcache[n].ldriver == ld &&
-+						net_landrivers[ld].AddrCompare(&cls.netcon->addr, &hostcache[n].addr) >= 0)
-+					{
-+						Q_strncpy(gamedir, hostcache[n].gamedir, sizeof(gamedir) - 1);
-+						gamedir[sizeof(gamedir) - 1] = 0;
-+						break;
-+					}
-+		}
-+		COM_SwitchGame(gamedir);
-+	}
+
++	COM_SwitchGameForConnection ();
 +
  // parse protocol version number
  	i = MSG_ReadLong ();
@@ -51,7 +33,7 @@
 @@ -281,6 +307,8 @@
  		S_TouchSound (str);
  	}
- 
+
 +	CL_Prefetch(model_precache, nummodels, sound_precache, numsounds);
 +
  //

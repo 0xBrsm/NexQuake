@@ -209,6 +209,12 @@ function nqShowEnterButton() {
     loaderStatusElement.textContent = '';
   nqSetLoaderEnterButtonEnabled();
   nqLogBootstrapStage('enter ready (100%)');
+  if (nqRuntimeReady && new URLSearchParams(window.location.search).has('autostart')) {
+    var isTouch = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
+                  ('ontouchstart' in window && screen.width <= 1024);
+    if (!isTouch)
+      nqStartGameFromEnter();
+  }
 }
 
 function nqStartGameRuntime() {

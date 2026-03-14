@@ -118,3 +118,27 @@ void COM_SwitchGame (const char *gamedir)
 	if (per_game_config)
 		Cbuf_InsertText ("exec quake.rc\n");
 }
+
+void COM_SwitchGameForConnection (void)
+{
+	char	gamedir[sizeof(hostcache[0].gamedir)];
+	int	n;
+
+	gamedir[0] = 0;
+	if (cls.netcon)
+	{
+		int ld = cls.netcon->landriver;
+
+		if (ld >= 0 && ld < net_numlandrivers && net_landrivers[ld].initialized)
+			for (n = 0; n < hostCacheCount; n++)
+				if (hostcache[n].ldriver == ld &&
+					net_landrivers[ld].AddrCompare (&cls.netcon->addr, &hostcache[n].addr) >= 0)
+				{
+					Q_strncpy (gamedir, hostcache[n].gamedir, sizeof(gamedir) - 1);
+					gamedir[sizeof(gamedir) - 1] = 0;
+					break;
+				}
+	}
+
+	COM_SwitchGame (gamedir);
+}

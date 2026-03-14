@@ -30,11 +30,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install markdown renderer
+        shell: bash
+        run: python3 -m pip install --quiet markdown
+
       - name: Build site
         shell: bash
         run: |
           set -euo pipefail
 
+          node site/generate-static-shell.js
           mkdir -p _site/client/shell _site/data
           cp -r site/. _site/
           find . \
@@ -49,7 +54,7 @@ jobs:
           cp client/shell/shell-nq.css _site/client/shell/
           cp client/shell/favicon.svg _site/client/shell/
           node site/extract-home-features.js README.md _site/data/home-features.json
-          node site/generate-static-shell.js
+          node site/generate-doc-pages.js _site
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

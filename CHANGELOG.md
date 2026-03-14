@@ -4,6 +4,18 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.8.4
+
+### Added
+- Site now generates static HTML documentation pages from Markdown sources, with client-side navigation between doc routes.
+- Homepage PLAY NOW button auto-launches the game on desktop browsers via `?autostart=1`; touch devices retain the ENTER screen for fullscreen/landscape activation.
+- Site publishes `sitemap.xml` and `robots.txt` for search-engine indexing.
+
+### Changed
+- Gameswitch connection lookup moved from inline `cl_parse.c` patch logic into `com_gameswitch.c` (`COM_SwitchGameForConnection`).
+- Homepage SEO improved with structured data, Open Graph / Twitter meta tags, and semantic HTML headings.
+- Dead client-side docs route helpers removed from static shell generator in favor of the new static page pipeline.
+
 ## 1.8.3
 
 ### Added

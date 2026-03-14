@@ -59,18 +59,40 @@ if (!PAGE_LIST || !NAV_SECTIONS || !HOME_INDEX_SECTIONS || !REPO_LAYOUT) {
 
 const PAGES = Object.fromEntries(PAGE_LIST.map((p) => [p.id, p]));
 
-function buildRoute(page, anchor) {
-  return '#' + page + (anchor ? ('::' + anchor) : '');
+function pageHref(id) {
+  if (id === 'home') {
+    return '/';
+  }
+
+  return '/' + id + '/';
+}
+
+function renderHero() {
+  return `
+      <div class="hero-banner">
+        <h1 class="hero-logo"><span class="nex">Nex</span><span class="quake">Quake</span></h1>
+        <p class="hero-tagline">
+          Click. Frag.
+        </p>
+        <div class="hero-cmd" data-nosnippet>
+          <span class="comment"># launch NexQuake, then browse to http://your-server:1337</span><br>
+          docker run -p 1337:1337 -e CL_ARGS=+connect ghcr.io/0xbrsm/nexquake
+        </div>
+        <div class="hero-buttons">
+          <a class="btn btn-primary" href="https://kitty1.quake.nexus?autostart=1">PLAY NOW</a>
+        </div>
+      </div>
+  `;
 }
 
 // --- Nav renderer ---
 
 function renderNavItem(id) {
   if (id === 'home') {
-    return `<a class="nav-item" data-page="home" href="#">Home</a>`;
+    return `<a class="nav-item" data-page="home" href="${pageHref('home')}">Home</a>`;
   }
   const doc = PAGES[id];
-  return `<a class="nav-item" data-page="${id}" href="${doc.path}">${doc.navLabel}</a>`;
+  return `<a class="nav-item" data-page="${id}" href="${pageHref(id)}">${doc.navLabel}</a>`;
 }
 
 function renderNav() {
@@ -87,7 +109,7 @@ function renderNav() {
 function renderDocCard(id) {
   const doc = PAGES[id];
   return `
-    <a class="doc-card" href="${doc.path}" data-page="${id}">
+    <a class="doc-card" href="${pageHref(id)}" data-page="${id}">
       <span class="doc-type">${doc.kind}</span>
       <div class="doc-name">${doc.title}</div>
       <div class="doc-summary">${doc.summary}</div>
@@ -113,9 +135,8 @@ function renderMapSection(section) {
 }
 
 function renderLayoutCard(item) {
-  const doc = PAGES[item.page];
   return `
-    <a class="layout-card" href="${doc.path}" data-page="${item.page}">
+    <a class="layout-card" href="${pageHref(item.page)}" data-page="${item.page}">
       <div class="layout-path">${item.path}</div>
       <div class="layout-summary">${item.summary}</div>
     </a>
@@ -138,22 +159,11 @@ function renderMain() {
   `;
 
   return `
-      <div class="hero-banner">
-        <div class="hero-logo"><span class="nex">Nex</span><span class="quake">Quake</span></div>
-        <p class="hero-tagline">
-          Click. Frag.
-        </p>
-        <div class="hero-cmd">
-          <span class="comment"># launch NexQuake, then browse to http://your-server:1337</span><br>
-          docker run -p 1337:1337 -e CL_ARGS=+connect ghcr.io/0xbrsm/nexquake
-        </div>
-        <div class="hero-buttons">
-          <a class="btn btn-primary" href="${buildRoute('quickstart')}" data-page="quickstart">QUICKSTART</a>
-        </div>
-      </div>
-
-      ${docSections}
-      ${layoutSection}`;
+      ${renderHero()}
+      <div class="home-docs" data-nosnippet>
+        ${docSections}
+        ${layoutSection}
+      </div>`;
 }
 
 // --- Inject back into HTML ---

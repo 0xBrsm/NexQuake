@@ -4,9 +4,30 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="dark">
-  <title>NexQuake - Documentation</title>
+  <meta name="theme-color" content="#0a0a0a">
+  <meta name="application-name" content="NexQuake">
+  <meta name="description" content="Play authentic multiplayer Quake in the browser with a WebAssembly client, real dedicated servers, and a self-hostable Go relay.">
+  <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="NexQuake">
+  <meta property="og:title" content="NexQuake | Play Multiplayer Quake in Your Browser">
+  <meta property="og:description" content="Play authentic multiplayer Quake in the browser with a WebAssembly client, real dedicated servers, and a self-hostable Go relay.">
+  <meta property="og:url" content="https://quake.nexus/">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="NexQuake | Play Multiplayer Quake in Your Browser">
+  <meta name="twitter:description" content="Play authentic multiplayer Quake in the browser with a WebAssembly client, real dedicated servers, and a self-hostable Go relay.">
+  <link rel="canonical" href="https://quake.nexus/">
+  <title>NexQuake | Play Multiplayer Quake in Your Browser</title>
   <link rel="icon" href="client/shell/favicon.svg" type="image/svg+xml">
-  <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "NexQuake",
+      "url": "https://quake.nexus/",
+      "description": "Play authentic multiplayer Quake in the browser with a WebAssembly client, real dedicated servers, and a self-hostable Go relay."
+    }
+  </script>
   <style>
     @font-face {
       font-family: 'DpQuakeSite';
@@ -738,7 +759,7 @@
 <body>
 <div class="layout">
   <header class="topbar">
-    <a class="logo-link" href="#home" onclick="navigate('home');return false;">
+    <a class="logo-link" href="/" onclick="navigate('home');return false;">
       <span class="logo-nex">Nex</span><span class="logo-quake">Quake</span>
     </a>
     <span class="topbar-sep">/</span>
@@ -771,42 +792,42 @@
     </div>
   </header>
 
-  <nav class="sidebar" id="sidebar" aria-label="Documentation navigation">
+  <nav class="sidebar" id="sidebar" aria-label="Documentation navigation" data-nosnippet>
     <!-- static-nav:start -->
 
     <div class="nav-section">
       
-      <a class="nav-item" data-page="home" href="#">Home</a>
+      <a class="nav-item" data-page="home" href="/">Home</a>
     </div>
   
     <div class="nav-section">
       <div class="nav-section-label">Get Started</div>
-      <a class="nav-item" data-page="overview" href="README.md">Overview</a><a class="nav-item" data-page="quickstart" href="docs/QUICKSTART.md">Quick Start</a>
+      <a class="nav-item" data-page="overview" href="/overview/">Overview</a><a class="nav-item" data-page="quickstart" href="/quickstart/">Quick Start</a>
     </div>
   
     <div class="nav-section">
       <div class="nav-section-label">Operate</div>
-      <a class="nav-item" data-page="setup" href="docs/SETUP.md">Data & Servers</a><a class="nav-item" data-page="catalog" href="etc/README.md">Game Catalog</a><a class="nav-item" data-page="environment" href="docs/ENVIRONMENT.md">Environment</a><a class="nav-item" data-page="admin" href="docs/ADMIN.md">Admin Commands</a>
+      <a class="nav-item" data-page="setup" href="/setup/">Data & Servers</a><a class="nav-item" data-page="catalog" href="/catalog/">Game Catalog</a><a class="nav-item" data-page="environment" href="/environment/">Environment</a><a class="nav-item" data-page="admin" href="/admin/">Admin Commands</a>
     </div>
   
     <div class="nav-section">
       <div class="nav-section-label">Play</div>
-      <a class="nav-item" data-page="controls" href="docs/CONTROLS.md">Controls</a><a class="nav-item" data-page="ui" href="docs/UI.md">User Interface</a>
+      <a class="nav-item" data-page="controls" href="/controls/">Controls</a><a class="nav-item" data-page="ui" href="/ui/">User Interface</a>
     </div>
   
     <div class="nav-section">
       <div class="nav-section-label">System</div>
-      <a class="nav-item" data-page="architecture" href="docs/ARCHITECTURE.md">Architecture</a><a class="nav-item" data-page="web-client" href="client/README.md">Web Client</a><a class="nav-item" data-page="nexus-service" href="nexus/README.md">Nexus Service</a><a class="nav-item" data-page="dedicated-server" href="server/README.md">Dedicated Server</a>
+      <a class="nav-item" data-page="architecture" href="/architecture/">Architecture</a><a class="nav-item" data-page="web-client" href="/web-client/">Web Client</a><a class="nav-item" data-page="nexus-service" href="/nexus-service/">Nexus Service</a><a class="nav-item" data-page="dedicated-server" href="/dedicated-server/">Dedicated Server</a>
     </div>
   
     <div class="nav-section">
       <div class="nav-section-label">Internals</div>
-      <a class="nav-item" data-page="build-system" href="build/README.md">Build System</a><a class="nav-item" data-page="relay-package" href="nexus/nqrelay/README.md">Relay Package</a><a class="nav-item" data-page="shareware-extractor" href="nexus/quake106/README.md">Shareware Extractor</a><a class="nav-item" data-page="bugfix-catalog" href="bugfix/README.md">Bug Fix Catalog</a>
+      <a class="nav-item" data-page="build-system" href="/build-system/">Build System</a><a class="nav-item" data-page="relay-package" href="/relay-package/">Relay Package</a><a class="nav-item" data-page="shareware-extractor" href="/shareware-extractor/">Shareware Extractor</a><a class="nav-item" data-page="bugfix-catalog" href="/bugfix-catalog/">Bug Fix Catalog</a>
     </div>
   
     <div class="nav-section">
       <div class="nav-section-label">Reference</div>
-      <a class="nav-item" data-page="docs-index" href="docs/README.md">All Docs</a><a class="nav-item" data-page="changelog" href="CHANGELOG.md">Release Notes</a><a class="nav-item" data-page="attributions" href="ATTRIBUTIONS.md">Attributions</a>
+      <a class="nav-item" data-page="docs-index" href="/docs-index/">All Docs</a><a class="nav-item" data-page="changelog" href="/changelog/">Release Notes</a><a class="nav-item" data-page="attributions" href="/attributions/">Attributions</a>
     </div>
   
     <!-- static-nav:end -->
@@ -816,21 +837,23 @@
     <main class="content" id="content" aria-live="polite">
       <!-- static-main:start -->
 
+      
       <div class="hero-banner">
-        <div class="hero-logo"><span class="nex">Nex</span><span class="quake">Quake</span></div>
+        <h1 class="hero-logo"><span class="nex">Nex</span><span class="quake">Quake</span></h1>
         <p class="hero-tagline">
           Click. Frag.
         </p>
-        <div class="hero-cmd">
+        <div class="hero-cmd" data-nosnippet>
           <span class="comment"># launch NexQuake, then browse to http://your-server:1337</span><br>
           docker run -p 1337:1337 -e CL_ARGS=+connect ghcr.io/0xbrsm/nexquake
         </div>
         <div class="hero-buttons">
-          <a class="btn btn-primary" href="#quickstart" data-page="quickstart">QUICKSTART</a>
+          <a class="btn btn-primary" href="https://kitty1.quake.nexus?autostart=1">PLAY NOW</a>
         </div>
       </div>
-
-      
+  
+      <div class="home-docs" data-nosnippet>
+        
     <section class="hub-section">
       <div class="section-head">
         <span class="section-kicker">Get Started</span>
@@ -839,14 +862,14 @@
       </div>
       <div class="doc-grid">
         
-    <a class="doc-card" href="README.md" data-page="overview">
+    <a class="doc-card" href="/overview/" data-page="overview">
       <span class="doc-type">Overview</span>
       <div class="doc-name">Product Overview</div>
       <div class="doc-summary">High-level product narrative, features, runtime model, and source tree.</div>
       <div class="doc-cta">Open Document</div>
     </a>
   
-    <a class="doc-card" href="docs/QUICKSTART.md" data-page="quickstart">
+    <a class="doc-card" href="/quickstart/" data-page="quickstart">
       <span class="doc-type">Guide</span>
       <div class="doc-name">Quick Start</div>
       <div class="doc-summary">Fastest path to launch NexQuake with Docker defaults.</div>
@@ -864,28 +887,28 @@
       </div>
       <div class="doc-grid doc-grid--4">
         
-    <a class="doc-card" href="docs/SETUP.md" data-page="setup">
+    <a class="doc-card" href="/setup/" data-page="setup">
       <span class="doc-type">Guide</span>
       <div class="doc-name">Data and Servers</div>
       <div class="doc-summary">Data layout, mod installation, and servers.ini launch planning.</div>
       <div class="doc-cta">Open Document</div>
     </a>
   
-    <a class="doc-card" href="etc/README.md" data-page="catalog">
+    <a class="doc-card" href="/catalog/" data-page="catalog">
       <span class="doc-type">Reference</span>
       <div class="doc-name">Quickstart Catalog</div>
       <div class="doc-summary">How QUICKSTART entries and game.json bootstrap data and default servers.</div>
       <div class="doc-cta">Open Document</div>
     </a>
   
-    <a class="doc-card" href="docs/ENVIRONMENT.md" data-page="environment">
+    <a class="doc-card" href="/environment/" data-page="environment">
       <span class="doc-type">Reference</span>
       <div class="doc-name">Environment Reference</div>
       <div class="doc-summary">Runtime variables for Nexus, networking, auth, and deployment.</div>
       <div class="doc-cta">Open Document</div>
     </a>
   
-    <a class="doc-card" href="docs/ADMIN.md" data-page="admin">
+    <a class="doc-card" href="/admin/" data-page="admin">
       <span class="doc-type">Reference</span>
       <div class="doc-name">Admin Commands</div>
       <div class="doc-summary">Console-level administration for servers and Nexus runtime control.</div>
@@ -903,14 +926,14 @@
       </div>
       <div class="doc-grid">
         
-    <a class="doc-card" href="docs/CONTROLS.md" data-page="controls">
+    <a class="doc-card" href="/controls/" data-page="controls">
       <span class="doc-type">Guide</span>
       <div class="doc-name">Controls</div>
       <div class="doc-summary">Touch, keyboard, gamepad, and video-mode guidance for browser play.</div>
       <div class="doc-cta">Open Document</div>
     </a>
   
-    <a class="doc-card" href="docs/UI.md" data-page="ui">
+    <a class="doc-card" href="/ui/" data-page="ui">
       <span class="doc-type">Guide</span>
       <div class="doc-name">User Interface</div>
       <div class="doc-summary">Use the in-browser gear panel for local files, cfg edits, and CD controls.</div>
@@ -928,28 +951,28 @@
       </div>
       <div class="doc-grid doc-grid--4">
         
-    <a class="doc-card" href="docs/ARCHITECTURE.md" data-page="architecture">
+    <a class="doc-card" href="/architecture/" data-page="architecture">
       <span class="doc-type">Reference</span>
       <div class="doc-name">Architecture</div>
       <div class="doc-summary">System design, runtime flow, and protocol-level behavior across the stack.</div>
       <div class="doc-cta">Open Document</div>
     </a>
   
-    <a class="doc-card" href="client/README.md" data-page="web-client">
+    <a class="doc-card" href="/web-client/" data-page="web-client">
       <span class="doc-type">Component</span>
       <div class="doc-name">Web Client</div>
       <div class="doc-summary">WASM platform layer, renderer, audio, input, and browser transport internals.</div>
       <div class="doc-cta">Open Document</div>
     </a>
   
-    <a class="doc-card" href="nexus/README.md" data-page="nexus-service">
+    <a class="doc-card" href="/nexus-service/" data-page="nexus-service">
       <span class="doc-type">Component</span>
       <div class="doc-name">Nexus Service</div>
       <div class="doc-summary">HTTP and WebSocket relay orchestration, boundaries, and runtime wiring.</div>
       <div class="doc-cta">Open Document</div>
     </a>
   
-    <a class="doc-card" href="server/README.md" data-page="dedicated-server">
+    <a class="doc-card" href="/dedicated-server/" data-page="dedicated-server">
       <span class="doc-type">Component</span>
       <div class="doc-name">Dedicated Server</div>
       <div class="doc-summary">Native nqserver build, patches, configuration, and dedicated-mode behavior.</div>
@@ -967,28 +990,28 @@
       </div>
       <div class="doc-grid doc-grid--4">
         
-    <a class="doc-card" href="build/README.md" data-page="build-system">
+    <a class="doc-card" href="/build-system/" data-page="build-system">
       <span class="doc-type">Component</span>
       <div class="doc-name">Build System</div>
       <div class="doc-summary">Build scripts, upstream staging, and artifact generation for client and server.</div>
       <div class="doc-cta">Open Document</div>
     </a>
   
-    <a class="doc-card" href="nexus/nqrelay/README.md" data-page="relay-package">
+    <a class="doc-card" href="/relay-package/" data-page="relay-package">
       <span class="doc-type">Package</span>
       <div class="doc-name">Relay Package</div>
       <div class="doc-summary">Standalone WebSocket-to-UDP relay package and integration notes.</div>
       <div class="doc-cta">Open Document</div>
     </a>
   
-    <a class="doc-card" href="nexus/quake106/README.md" data-page="shareware-extractor">
+    <a class="doc-card" href="/shareware-extractor/" data-page="shareware-extractor">
       <span class="doc-type">Package</span>
       <div class="doc-name">Shareware Extractor</div>
       <div class="doc-summary">Pure Go extraction flow and provenance checks for Quake 1.06 shareware.</div>
       <div class="doc-cta">Open Document</div>
     </a>
   
-    <a class="doc-card" href="bugfix/README.md" data-page="bugfix-catalog">
+    <a class="doc-card" href="/bugfix-catalog/" data-page="bugfix-catalog">
       <span class="doc-type">Reference</span>
       <div class="doc-name">Bug Fix Catalog</div>
       <div class="doc-summary">Upstream WinQuake fixes carried by NexQuake for safety and stability.</div>
@@ -1006,21 +1029,21 @@
       </div>
       <div class="doc-grid">
         
-    <a class="doc-card" href="docs/README.md" data-page="docs-index">
+    <a class="doc-card" href="/docs-index/" data-page="docs-index">
       <span class="doc-type">Index</span>
       <div class="doc-name">Documentation Index</div>
       <div class="doc-summary">Role-oriented list of every product-facing document under src/.</div>
       <div class="doc-cta">Open Document</div>
     </a>
   
-    <a class="doc-card" href="CHANGELOG.md" data-page="changelog">
+    <a class="doc-card" href="/changelog/" data-page="changelog">
       <span class="doc-type">Release</span>
       <div class="doc-name">Release Notes</div>
       <div class="doc-summary">Product-visible changes organized by SemVer release.</div>
       <div class="doc-cta">Open Document</div>
     </a>
   
-    <a class="doc-card" href="ATTRIBUTIONS.md" data-page="attributions">
+    <a class="doc-card" href="/attributions/" data-page="attributions">
       <span class="doc-type">Legal</span>
       <div class="doc-name">Attributions</div>
       <div class="doc-summary">GPL lineage, third-party credits, and product provenance notes.</div>
@@ -1030,7 +1053,7 @@
       </div>
     </section>
   
-      
+        
     <section class="hub-section">
       <div class="section-head">
         <span class="section-kicker">Layout</span>
@@ -1039,52 +1062,52 @@
       </div>
       <div class="layout-grid">
         
-    <a class="layout-card" href="README.md" data-page="overview">
+    <a class="layout-card" href="/overview/" data-page="overview">
       <div class="layout-path">README.md</div>
       <div class="layout-summary">Top-level product overview and broad project narrative.</div>
     </a>
   
-    <a class="layout-card" href="docs/README.md" data-page="docs-index">
+    <a class="layout-card" href="/docs-index/" data-page="docs-index">
       <div class="layout-path">docs/</div>
       <div class="layout-summary">Task-oriented operator and player guides.</div>
     </a>
   
-    <a class="layout-card" href="etc/README.md" data-page="catalog">
+    <a class="layout-card" href="/catalog/" data-page="catalog">
       <div class="layout-path">etc/</div>
       <div class="layout-summary">Game catalog and quickstart entry definitions.</div>
     </a>
   
-    <a class="layout-card" href="client/README.md" data-page="web-client">
+    <a class="layout-card" href="/web-client/" data-page="web-client">
       <div class="layout-path">client/</div>
       <div class="layout-summary">WASM client implementation and browser-side runtime details.</div>
     </a>
   
-    <a class="layout-card" href="nexus/README.md" data-page="nexus-service">
+    <a class="layout-card" href="/nexus-service/" data-page="nexus-service">
       <div class="layout-path">nexus/</div>
       <div class="layout-summary">Relay and orchestration service plus nested packages.</div>
     </a>
   
-    <a class="layout-card" href="server/README.md" data-page="dedicated-server">
+    <a class="layout-card" href="/dedicated-server/" data-page="dedicated-server">
       <div class="layout-path">server/</div>
       <div class="layout-summary">Dedicated server build and runtime behavior.</div>
     </a>
   
-    <a class="layout-card" href="build/README.md" data-page="build-system">
+    <a class="layout-card" href="/build-system/" data-page="build-system">
       <div class="layout-path">build/</div>
       <div class="layout-summary">Build pipeline, upstream staging, and artifact generation.</div>
     </a>
   
-    <a class="layout-card" href="bugfix/README.md" data-page="bugfix-catalog">
+    <a class="layout-card" href="/bugfix-catalog/" data-page="bugfix-catalog">
       <div class="layout-path">bugfix/</div>
       <div class="layout-summary">Curated WinQuake patch catalog carried by NexQuake.</div>
     </a>
   
-    <a class="layout-card" href="CHANGELOG.md" data-page="changelog">
+    <a class="layout-card" href="/changelog/" data-page="changelog">
       <div class="layout-path">CHANGELOG.md</div>
       <div class="layout-summary">Release history for shipped product changes.</div>
     </a>
   
-    <a class="layout-card" href="ATTRIBUTIONS.md" data-page="attributions">
+    <a class="layout-card" href="/attributions/" data-page="attributions">
       <div class="layout-path">ATTRIBUTIONS.md</div>
       <div class="layout-summary">Licenses, provenance, and third-party credits.</div>
     </a>
@@ -1092,6 +1115,7 @@
       </div>
     </section>
   
+      </div>
     <!-- static-main:end -->
     </main>
   </div>
@@ -1379,29 +1403,40 @@ const REPO_LAYOUT = [
 ];
 // <!-- site-data:end -->
 
+function pageHref(id) {
+  if (id === 'home') {
+    return '/';
+  }
+
+  return '/' + id + '/';
+}
+
+function pageUrl(id, anchor) {
+  return pageHref(id) + (anchor ? ('#' + anchor) : '');
+}
+
 const LOCAL_PATH_TO_ID = {};
+const ROUTE_PATH_TO_ID = { '/': 'home' };
 for (const page of PAGE_LIST) {
   LOCAL_PATH_TO_ID[normalizePath(page.path)] = page.id;
+  ROUTE_PATH_TO_ID[pageHref(page.id)] = page.id;
 }
 
-function buildRoute(page, anchor) {
-  return '#' + page + (anchor ? ('::' + anchor) : '');
+function normalizeRoutePath(pathname) {
+  const value = String(pathname || '').trim();
+  if (!value || value === '/') {
+    return '/';
+  }
+
+  const normalized = value.replace(/\/+/g, '/');
+  return normalized.endsWith('/') ? normalized : (normalized + '/');
 }
 
-function parseRouteHash(hash) {
-  const value = String(hash || '').replace(/^#/, '');
-  if (!value) {
-    return { page: 'home', anchor: '' };
-  }
-
-  const separator = value.indexOf('::');
-  if (separator === -1) {
-    return { page: value, anchor: '' };
-  }
-
+function parseRouteLocation(loc) {
+  const routePath = normalizeRoutePath(loc && loc.pathname ? loc.pathname : '/');
   return {
-    page: value.slice(0, separator),
-    anchor: value.slice(separator + 2)
+    page: ROUTE_PATH_TO_ID[routePath] || 'home',
+    anchor: String(loc && loc.hash ? loc.hash : '').replace(/^#/, '')
   };
 }
 
@@ -1437,34 +1472,12 @@ function resolveSourcePath(basePath, targetPath) {
   return resolved.join('/');
 }
 
-function slugifyHeading(text) {
-  return String(text || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
 function applyCodeComments(container) {
   container.querySelectorAll('.md pre code').forEach((block) => {
     block.innerHTML = block.innerHTML
       .split('\n')
       .map((line) => /^\s*#/.test(line) ? '<span class="code-comment">' + line + '</span>' : line)
       .join('\n');
-  });
-}
-
-function applyHeadingIds(container) {
-  const used = new Map();
-
-  container.querySelectorAll('.md h1, .md h2, .md h3, .md h4, .md h5, .md h6').forEach((heading) => {
-    const base = slugifyHeading(heading.textContent) || 'section';
-    const count = used.get(base) || 0;
-    const id = count ? (base + '-' + count) : base;
-    used.set(base, count + 1);
-    heading.id = id;
   });
 }
 
@@ -1482,7 +1495,7 @@ function scrollToAnchor(anchor) {
 function renderDocCard(id) {
   const doc = PAGES[id];
   return `
-    <a class="doc-card" href="${buildRoute(id)}" data-page="${id}">
+    <a class="doc-card" href="${pageHref(id)}" data-page="${id}">
       <span class="doc-type">${doc.kind}</span>
       <div class="doc-name">${doc.title}</div>
       <div class="doc-summary">${doc.summary}</div>
@@ -1509,7 +1522,7 @@ function renderMapSection(section) {
 
 function renderLayoutCard(item) {
   return `
-    <a class="layout-card" href="${buildRoute(item.page)}" data-page="${item.page}">
+    <a class="layout-card" href="${pageHref(item.page)}" data-page="${item.page}">
       <div class="layout-path">${item.path}</div>
       <div class="layout-summary">${item.summary}</div>
     </a>
@@ -1546,16 +1559,16 @@ const DOCUMENTATION_MAP = buildDocumentationMapMarkup();
 function buildHomeMarkup(features) {
   return `
     <div class="hero-banner">
-      <div class="hero-logo"><span class="nex">Nex</span><span class="quake">Quake</span></div>
+      <h1 class="hero-logo"><span class="nex">Nex</span><span class="quake">Quake</span></h1>
       <p class="hero-tagline">
         Click. Frag.
       </p>
-      <div class="hero-cmd">
+      <div class="hero-cmd" data-nosnippet>
         <span class="comment"># launch NexQuake, then browse to http://your-server:1337</span><br>
         docker run -p 1337:1337 -e CL_ARGS=+connect ghcr.io/0xbrsm/nexquake
       </div>
       <div class="hero-buttons">
-        <a class="btn btn-primary" href="${buildRoute('quickstart')}" data-page="quickstart">QUICKSTART</a>
+        <a class="btn btn-primary" href="https://kitty1.quake.nexus?autostart=1">PLAY NOW</a>
       </div>
     </div>
 
@@ -1563,13 +1576,15 @@ function buildHomeMarkup(features) {
       ${renderHomeFeatures(features)}
     </div>
 
-    ${DOCUMENTATION_MAP}
+    <div class="home-docs" data-nosnippet>
+      ${DOCUMENTATION_MAP}
+    </div>
   `;
 }
 
 function renderNavItem(id) {
   const label = id === 'home' ? 'Home' : PAGES[id].navLabel;
-  return `<a class="nav-item" data-page="${id}" href="${buildRoute(id)}">${label}</a>`;
+  return `<a class="nav-item" data-page="${id}" href="${pageHref(id)}">${label}</a>`;
 }
 
 function renderSidebar() {
@@ -1604,7 +1619,7 @@ function mapMarkdownHref(href, currentPath) {
   const localId = LOCAL_PATH_TO_ID[normalizePath(resolvedPath)];
 
   if (localId) {
-    return buildRoute(localId, anchorPart);
+    return pageUrl(localId, anchorPart);
   }
 
   if (resolvedPath) {
@@ -1618,7 +1633,7 @@ function bindDocumentLinks(container, currentPath) {
   container.querySelectorAll('a[href]').forEach((anchor) => {
     const dataPage = anchor.getAttribute('data-page');
     if (dataPage && PAGE_IDS.has(dataPage)) {
-      anchor.setAttribute('href', buildRoute(dataPage));
+      anchor.setAttribute('href', pageHref(dataPage));
       anchor.addEventListener('click', (e) => {
         e.preventDefault();
         navigate(dataPage);
@@ -1639,19 +1654,24 @@ function bindDocumentLinks(container, currentPath) {
       return;
     }
 
-    if (mapped && mapped.startsWith('#')) {
-      const route = parseRouteHash(mapped);
-      if (PAGE_IDS.has(route.page)) {
-        anchor.addEventListener('click', (e) => {
-          e.preventDefault();
-          navigate(route.page, route.anchor);
-        });
-      }
+    if (!mapped) {
+      return;
+    }
+
+    const url = new URL(mapped, location.origin);
+    const route = parseRouteLocation(url);
+    if (PAGE_IDS.has(route.page)) {
+      anchor.addEventListener('click', (e) => {
+        e.preventDefault();
+        navigate(route.page, route.anchor);
+      });
     }
   });
 }
 
 const HOME_FEATURES_PATH = 'data/home-features.json';
+const HOME_TITLE = 'NexQuake | Play Multiplayer Quake in Your Browser';
+const HOME_DESCRIPTION = 'Play authentic multiplayer Quake in the browser with a WebAssembly client, real dedicated servers, and a self-hostable Go relay.';
 let homeFeaturesPromise = null;
 let currentPage = null;
 let currentAnchor = '';
@@ -1680,9 +1700,36 @@ function normalizeRequestedPage(page) {
   return PAGES[page] ? page : 'home';
 }
 
-async function navigate(page, anchor) {
+function updateMetaTag(selector, value) {
+  const node = document.querySelector(selector);
+  if (!node) {
+    return;
+  }
+  node.setAttribute('content', value);
+}
+
+function setPageMetadata(title, description) {
+  document.title = title;
+  updateMetaTag('meta[name="description"]', description);
+  updateMetaTag('meta[property="og:title"]', title);
+  updateMetaTag('meta[property="og:description"]', description);
+  updateMetaTag('meta[property="og:url"]', location.href);
+  updateMetaTag('meta[name="twitter:title"]', title);
+  updateMetaTag('meta[name="twitter:description"]', description);
+}
+
+async function navigate(page, anchor, options) {
   const targetPage = normalizeRequestedPage(page);
   const targetAnchor = anchor || '';
+  const updateHistory = !options || options.updateHistory !== false;
+  const historyMode = options && options.historyMode === 'replace' ? 'replaceState' : 'pushState';
+
+  if (targetPage === currentPage && targetAnchor === currentAnchor) {
+    if (targetAnchor) {
+      requestAnimationFrame(() => scrollToAnchor(targetAnchor));
+    }
+    return;
+  }
 
   document.querySelectorAll('.nav-item[data-page]').forEach((el) => {
     el.classList.toggle('active', el.dataset.page === targetPage);
@@ -1698,8 +1745,10 @@ async function navigate(page, anchor) {
     const homeFeatures = await loadHomeFeatures();
     content.innerHTML = buildHomeMarkup(homeFeatures);
     bindDocumentLinks(content, '');
-    document.title = 'NexQuake - Documentation';
-    history.replaceState(null, '', location.pathname);
+    setPageMetadata(HOME_TITLE, HOME_DESCRIPTION);
+    if (updateHistory) {
+      history[historyMode](null, '', pageHref('home'));
+    }
     wrap.scrollTop = 0;
     return;
   }
@@ -1710,19 +1759,24 @@ async function navigate(page, anchor) {
   }
 
   content.innerHTML = '<p class="loading-msg">loading...</p>';
-  document.title = 'NexQuake - ' + doc.title;
-  history.replaceState(null, '', buildRoute(targetPage, targetAnchor));
+  setPageMetadata('NexQuake Docs | ' + doc.title, doc.summary);
+  if (updateHistory) {
+    history[historyMode](null, '', pageUrl(targetPage, targetAnchor));
+  }
 
   try {
-    const res = await fetch(doc.path);
+    const res = await fetch(pageHref(targetPage));
     if (!res.ok) {
       throw new Error(res.status + ' ' + res.statusText);
     }
 
-    const md = await res.text();
-    const html = marked.parse(md);
-    content.innerHTML = '<div class="md">' + html + '</div>';
-    applyHeadingIds(content);
+    const html = await res.text();
+    const parsed = new DOMParser().parseFromString(html, 'text/html');
+    const docContent = parsed.querySelector('.md');
+    if (!docContent) {
+      throw new Error('missing doc content');
+    }
+    content.innerHTML = docContent.outerHTML;
     applyCodeComments(content);
     bindDocumentLinks(content, doc.path);
     wrap.scrollTop = 0;
@@ -1737,13 +1791,13 @@ async function navigate(page, anchor) {
 
 renderSidebar();
 
-const initRoute = parseRouteHash(location.hash);
-navigate(initRoute.page, initRoute.anchor);
+const initRoute = parseRouteLocation(location);
+navigate(initRoute.page, initRoute.anchor, { updateHistory: false });
 
 window.addEventListener('popstate', () => {
-  const route = parseRouteHash(location.hash);
+  const route = parseRouteLocation(location);
   if (route.page !== currentPage || route.anchor !== currentAnchor) {
-    navigate(route.page, route.anchor);
+    navigate(route.page, route.anchor, { updateHistory: false });
   }
 });
 </script>
