@@ -16,7 +16,6 @@ Versioning note: entries through `0.19.x` represent pre-1.0 development history.
 
 ### Fixed
 - Video mode menu no longer shows the "Weapon hidden in widescreen" notice; with Hor+ in place, the weapon renders correctly at any aspect.
-- Client build cache now invalidates when patch files change; stale fingerprint paths previously caused artifacts to be reused across patch edits.
 
 ## 1.8.4
 
