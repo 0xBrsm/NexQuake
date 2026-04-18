@@ -4,6 +4,20 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.8.5
+
+### Added
+- `fov_adapt` cvar (default `0.5`) controls the blend between literal horizontal FOV and pure Hor+ aspect scaling. `0` gives stock Quake behavior (vertical FOV shrinks on widescreens); `1` gives pure Hor+ (vertical preserved, horizontal widens aggressively on ultrawide); values in between trade peripheral vision for edge comfort.
+
+### Changed
+- Browser client applies Hor+ aspect scaling at refdef calculation time: `fov` is interpreted as the intended horizontal FOV at 4:3 and wider viewports widen fov_x based on `fov_adapt`. Previously an ultrawide mode left the vertical view as a narrow slit; the `fov` cvar is no longer mutated on mode changes.
+- Nexus watches `GAME_DIR/<mod>/{common,server}/` with fsnotify and reconciles the dedicated server's runtime filesystem per event. Files dropped into the game directory after server start are visible to running servers without a restart. `.pak` archives still require a server restart because the engine caches pak directories at load.
+- Browser client recovers from VFS-manifest misses transparently within a single `fopen`: both stale-hash XHR 404s and brand-new paths trigger a synchronous manifest refresh and retry in place. Files dropped into the game directory are reachable in the current session without a page reload.
+
+### Fixed
+- Video mode menu no longer shows the "Weapon hidden in widescreen" notice; with Hor+ in place, the weapon renders correctly at any aspect.
+- Client build cache now invalidates when patch files change; stale fingerprint paths previously caused artifacts to be reused across patch edits.
+
 ## 1.8.4
 
 ### Added

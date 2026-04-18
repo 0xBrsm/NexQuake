@@ -27,7 +27,6 @@ package assets
 import (
 	"cmp"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -373,95 +372,3 @@ func dirIsEmpty(modDir string) bool {
 	return len(ents) == 0
 }
 
-// PrepareRuntimeBasedir creates an ephemeral overlay basedir with symlinks into
-// sourceGameDir for each mod. The returned directory is writable for the server.
-func PrepareRuntimeBasedir(sourceGameDir string, mods []string) (string, error) {
-	runtimeRoot, err := os.MkdirTemp("", "nexquake-nexus-basedir-")
-	if err != nil {
-		return "", fmt.Errorf("create runtime basedir: %w", err)
-	}
-
-	// Materialize each detected mod as a merged directory:
-	//   <mod>/common < <mod>/server
-	for _, mod := range mods {
-		if err := materializeMergedModDir(runtimeRoot, sourceGameDir, mod); err != nil {
-			return "", err
-		}
-	}
-
-	return runtimeRoot, nil
-}
-
-func materializeMergedModDir(runtimeRoot, sourceDataDir, mod string) error {
-	dst := filepath.Join(runtimeRoot, mod)
-	_ = os.RemoveAll(dst)
-	if err := os.MkdirAll(dst, 0o755); err != nil {
-		return fmt.Errorf("create runtime mod dir %q: %w", mod, err)
-	}
-
-	layers := []string{
-		filepath.Join(sourceDataDir, mod, "common"),
-		filepath.Join(sourceDataDir, mod, "server"),
-	}
-	for _, src := range layers {
-		st, err := os.Stat(src)
-		if err != nil || !st.IsDir() {
-			continue
-		}
-		if err := overlaySymlinks(dst, src); err != nil {
-			return fmt.Errorf("overlay %s into %s: %w", src, dst, err)
-		}
-	}
-	return nil
-}
-
-func overlaySymlinks(dstRoot, srcRoot string) error {
-	seen := make(map[string]string)
-
-	return filepath.WalkDir(srcRoot, func(full string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-
-		rel, err := filepath.Rel(srcRoot, full)
-		if err != nil {
-			return nil
-		}
-		if rel == "." {
-			return nil
-		}
-
-		lowerRel := strings.ToLower(filepath.ToSlash(rel))
-		if prev, ok := seen[lowerRel]; ok && prev != rel {
-			return fmt.Errorf("case-colliding paths in %s: %s and %s", srcRoot, prev, rel)
-		}
-		seen[lowerRel] = rel
-
-		dst := filepath.Join(dstRoot, filepath.FromSlash(lowerRel))
-
-		// Never symlink directories. If we symlink a directory from a read-only
-		// source tree (e.g. /data), then later overlays that try to remove/replace
-		// a file inside that directory will target the source path and fail with
-		// EROFS/EPERM (and ultimately "file exists" on the new symlink).
-		if d.IsDir() {
-			// If a previous layer created a symlink here, replace it with a real dir.
-			if st, err := os.Lstat(dst); err == nil && st.Mode()&os.ModeSymlink != 0 {
-				_ = os.Remove(dst)
-			}
-			return os.MkdirAll(dst, 0o755)
-		}
-
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-			return err
-		}
-
-		// Remove anything at the destination (file, symlink, or directory).
-		if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
-			_ = os.RemoveAll(dst)
-		}
-
-		// Always link to the source path. This keeps runtimeRoot writable and
-		// avoids copying large PAKs.
-		return os.Symlink(full, dst)
-	})
-}

@@ -157,9 +157,7 @@ The mode list is split into two sections:
 
 **Fullscreen Modes** — match the current browser viewport aspect ratio, scaled at 25%, 50%, and 100% of the maximum render dimension. Exact resolutions depend on the viewport at startup.
 
-FOV scales automatically when switching modes to preserve the vertical field of view. Switching from 4:3 to a widescreen mode widens the horizontal view; the vertical play area stays the same.
-
-A widescreen warning appears in the Video Modes menu when the selected mode hides the weapon model (standard Quake behavior for FOV above 90).
+FOV scales automatically when switching modes. `fov` is interpreted as the user's horizontal FOV at 4:3; wider viewports blend between that literal value and pure Hor+ expansion based on `fov_adapt` (default `0.5`). `fov_adapt 0` disables scaling (literal fov_x, stock Quake behavior — vertical shrinks on widescreens). `fov_adapt 1` is pure Hor+ (vertical preserved, horizontal widens aggressively on ultrawide). Values in between trade peripheral vision for edge comfort.
 
 ## All New Cvars at a Glance
 
@@ -178,5 +176,6 @@ A widescreen warning appears in the Video Modes menu when the selected mode hide
 | `joy_invertpitch` | `0` | yes | Gamepad look |
 | `analog_speed` | `400` | no | Analog shared |
 | `vid_mode` | `0` | yes | Video |
+| `fov_adapt` | `0.5` | no | Video |
 
 Archived cvars are written to `config.cfg` automatically and restored on next load. Non-archived cvars reset to their defaults on each startup unless set explicitly in `autoexec.cfg`.

@@ -61,11 +61,12 @@ func (m *ServerManager) StartAll() error {
 	}
 	m.infof("Launching %d servers...", len(launches))
 
-	runtimeBasedir, err := assets.PrepareRuntimeBasedir(m.gameDir, mods)
+	runtimeBasedir, stopOverlay, err := assets.PrepareRuntimeBasedir(m.gameDir, mods)
 	if err != nil {
 		return err
 	}
 	m.runtimeBasedir = runtimeBasedir
+	m.stopOverlay = stopOverlay
 
 	m.mu.Lock()
 	m.serversByID = make(map[int]*serverRecord, len(launches))
@@ -279,6 +280,10 @@ func (m *ServerManager) StopAll(ctx context.Context, killAfter time.Duration) er
 		}
 	}
 
+	if m.stopOverlay != nil {
+		m.stopOverlay()
+		m.stopOverlay = nil
+	}
 	if m.runtimeBasedir != "" {
 		_ = os.RemoveAll(m.runtimeBasedir)
 		m.runtimeBasedir = ""

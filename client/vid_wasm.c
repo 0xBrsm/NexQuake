@@ -74,39 +74,6 @@ char *VID_GetModeDescription(int n);
 #define MAX_COLUMN_SIZE 5
 #define MODE_AREA_HEIGHT (MAX_COLUMN_SIZE + 6)
 
-static qboolean mode_is_widescreen(int modenum)
-{
-	if (modenum < 0 || modenum >= vid_nummodes)
-		return false;
-	return modelist[modenum].width * 3 > modelist[modenum].height * 4;
-}
-
-static void update_mode_fov(int old_w, int old_h, int new_w, int new_h)
-{
-	cvar_t *fovvar;
-	double old_aspect, new_aspect, old_fov, old_half, new_fov;
-
-	if (new_w <= 0 || new_h <= 0)
-		return;
-
-	fovvar = Cvar_FindVar("fov");
-	if (!fovvar)
-		return;
-
-	old_aspect = (old_w > 0 && old_h > 0)
-		? (double)old_w / old_h
-		: VID_ASPECT_RATIO;
-	new_aspect = (double)new_w / new_h;
-	if (old_aspect <= 0.0 || new_aspect <= 0.0 || fabs(new_aspect - old_aspect) < 0.0001)
-		return;
-
-	old_fov = fovvar->value;
-	old_half = old_fov * (M_PI / 360.0);
-	new_fov = atan(tan(old_half) * (new_aspect / old_aspect)) * (360.0 / M_PI);
-	if (fabs(new_fov - old_fov) > 0.01)
-		Cvar_SetValue("fov", (float)new_fov);
-}
-
 // Compute (w,h) from one anchored dimension; anchor_w true = width anchor.
 static void mode_size(double aspect, qboolean anchor_w, int anchor, int *w, int *h)
 {
@@ -261,8 +228,6 @@ static void VID_MenuDraw(void)
 		draw_mode_grid(fixed_modes, fullscreen_modes, fs_modes_y);
 	}
 
-	if (mode_is_widescreen(vid_line))
-		M_Print(6 * 8, 36 + MODE_AREA_HEIGHT * 8 - 8, "Weapon hidden in widescreen");
 	M_Print(9 * 8, 36 + MODE_AREA_HEIGHT * 8 + 8, "Press Enter to set mode");
 	M_Print(15 * 8, 36 + MODE_AREA_HEIGHT * 8 + 8 * 2, "Esc to exit");
 
@@ -395,7 +360,6 @@ int VID_SetMode(int modenum, unsigned char *palette)
 		return 0;
 
 	int w = modelist[modenum].width, h = modelist[modenum].height;
-	int old_w = VGA_width, old_h = VGA_height;
 
 	free(pixels);
 	pixels = malloc(w * h);
@@ -413,7 +377,6 @@ int VID_SetMode(int modenum, unsigned char *palette)
 	emscripten_set_canvas_element_size("#canvas", w, h);
 	js_update_canvas_ar((double)w / h);
 	disp_w = disp_h = 0;
-	update_mode_fov(old_w, old_h, w, h);
 
 	VGA_width = vid.width = vid.conwidth = w;
 	VGA_height = vid.height = vid.conheight = h;

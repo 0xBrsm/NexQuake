@@ -114,37 +114,38 @@
         if (node.nqRetryAfterMs && Date.now() < node.nqRetryAfterMs)
           throw new FS.ErrnoError(44); // ENOENT
 
-        function markErrorAndThrow(error) {
-          node.nqErrorCount++;
-          node.nqRetryAfterMs = Date.now() + Math.min(15000, 500 * Math.pow(2, Math.min(node.nqErrorCount, 5)));
-          node.nqLastLoadError = String(error && error.message ? error.message : error);
-          requestOnDemandManifestRefresh();
-          throw new FS.ErrnoError(44); // ENOENT
-        }
-
         // Synchronous XHR is still permitted on the main thread, but Chrome disallows
         // setting responseType for sync requests. Use the classic "x-user-defined" path
-        // and convert responseText -> Uint8Array.
-        var xhr = new XMLHttpRequest();
-        try {
-          xhr.open('GET', node.url, false);
-          try { xhr.overrideMimeType('text/plain; charset=x-user-defined'); } catch (e) {}
-          xhr.send(null);
-
-          if (xhr.status !== 200 && xhr.status !== 0)
-            throw new Error('remote file fetch failed: ' + xhr.status + ' for ' + node.url);
-
-          var text = xhr.responseText || '';
-          var bytes = new Uint8Array(text.length);
-          for (var i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i) & 0xFF;
-          node.contents = bytes;
-          node.usedBytes = bytes.length;
-          node.nqErrorCount = 0;
-          node.nqRetryAfterMs = 0;
-          node.nqLastLoadError = '';
-        } catch (e) {
-          markErrorAndThrow(e);
+        // and convert responseText -> Uint8Array. On 404, try a single manifest
+        // refresh (which may update node.url in place) and retry once before
+        // giving up; this lets mid-session hash rotations recover transparently.
+        var lastErr = null;
+        for (var attempt = 0; attempt < 2; attempt++) {
+          if (attempt > 0 && !refreshAndRetry()) break;
+          try {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', node.url, false);
+            try { xhr.overrideMimeType('text/plain; charset=x-user-defined'); } catch (e) {}
+            xhr.send(null);
+            if (xhr.status !== 200 && xhr.status !== 0)
+              throw new Error('remote file fetch failed: ' + xhr.status + ' for ' + node.url);
+            var text = xhr.responseText || '';
+            var bytes = new Uint8Array(text.length);
+            for (var i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i) & 0xFF;
+            node.contents = bytes;
+            node.usedBytes = bytes.length;
+            node.nqErrorCount = 0;
+            node.nqRetryAfterMs = 0;
+            node.nqLastLoadError = '';
+            return;
+          } catch (e) {
+            lastErr = e;
+          }
         }
+        node.nqErrorCount++;
+        node.nqRetryAfterMs = Date.now() + Math.min(15000, 500 * Math.pow(2, Math.min(node.nqErrorCount, 5)));
+        node.nqLastLoadError = String(lastErr && lastErr.message ? lastErr.message : lastErr);
+        throw new FS.ErrnoError(44); // ENOENT
       }
 
       node.stream_ops = {
@@ -439,6 +440,24 @@
       Module.nexquakeApplyClientConfig(config);
     }
 
+    function normalizeRawBundle(rawBundle) {
+      var rawGame = (rawBundle && rawBundle.game && typeof rawBundle.game === 'object') ? rawBundle.game : {};
+      var rawCd = (rawBundle && Array.isArray(rawBundle.cd)) ? rawBundle.cd : [];
+      var game = Object.create(null);
+
+      applyClientConfig(rawBundle && rawBundle.client);
+      Object.keys(rawGame).forEach(function(rawMod) {
+        var mod = normalizeGameName(rawMod);
+        if (mod)
+          game[mod] = Array.isArray(rawGame[rawMod]) ? rawGame[rawMod] : [];
+      });
+
+      if (!game[baseGame])
+        throw new Error('manifest bundle missing base game: ' + baseGame);
+
+      return { game: game, cd: rawCd };
+    }
+
     function fetchStartBundle() {
       var rawBundle = Module.nexquakeStartBundle;
       var bundlePromise;
@@ -455,23 +474,20 @@
           return response.text();
         }).then(nqParseStartBundle);
 
-      return bundlePromise.then(function(rawBundle) {
-        var rawGame = (rawBundle && rawBundle.game && typeof rawBundle.game === 'object') ? rawBundle.game : {};
-        var rawCd = (rawBundle && Array.isArray(rawBundle.cd)) ? rawBundle.cd : [];
-        var game = Object.create(null);
+      return bundlePromise.then(normalizeRawBundle);
+    }
 
-        applyClientConfig(rawBundle && rawBundle.client);
-        Object.keys(rawGame).forEach(function(rawMod) {
-          var mod = normalizeGameName(rawMod);
-          if (mod)
-            game[mod] = Array.isArray(rawGame[rawMod]) ? rawGame[rawMod] : [];
-        });
-
-        if (!game[baseGame])
-          throw new Error('manifest bundle missing base game: ' + baseGame);
-
-        return { game: game, cd: rawCd };
-      });
+    function fetchStartBundleSync() {
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', '/start', false);
+      xhr.send(null);
+      if (xhr.status !== 200)
+        throw new Error('start bundle fetch failed: ' + xhr.status);
+      var ref = String(xhr.getResponseHeader('X-NexQuake-Ref') || '');
+      if (!ref)
+        throw new Error('start bundle missing X-NexQuake-Ref header');
+      Module.nexquakeAssetRef = ref;
+      return normalizeRawBundle(nqParseStartBundle(xhr.responseText));
     }
 
     function installManifest(mod, entries) {
@@ -541,19 +557,34 @@
       return manifestRefreshState.inFlight;
     }
 
-    function requestOnDemandManifestRefresh() {
+    function refreshStartBundleSync() {
+      installStartBundle(fetchStartBundleSync());
+    }
+
+    // Cooldown-gated sync refresh. Returns true iff the refresh ran successfully
+    // and the caller should retry the failing operation once. Shared by
+    // ensureLoaded (XHR 404) and FS.lookupPath (missing path under REMOTE_ROOT).
+    // installStartBundle re-enters FS.lookupPath for every file; isRefreshing
+    // short-circuits those reentries cheaply instead of re-checking the clock.
+    function refreshAndRetry() {
+      if (manifestRefreshState.isRefreshing) return false;
       var now = Date.now();
-      if (now < manifestRefreshState.retryAfterMs)
-        return;
+      if (now < manifestRefreshState.retryAfterMs) return false;
+      manifestRefreshState.isRefreshing = true;
       manifestRefreshState.retryAfterMs = now + 5000;
-      refreshStartBundle().then(function() {
+      try {
+        refreshStartBundleSync();
         manifestRefreshState.failureCount = 0;
-      }, function(err) {
+        return true;
+      } catch (err) {
         manifestRefreshState.failureCount++;
-        manifestRefreshState.retryAfterMs =
-          Date.now() + Math.min(60000, 1000 * Math.pow(2, Math.min(manifestRefreshState.failureCount, 6)));
+        manifestRefreshState.retryAfterMs = Date.now() +
+          Math.min(60000, 1000 * Math.pow(2, Math.min(manifestRefreshState.failureCount, 6)));
         console.warn('Failed to refresh manifest bundle:', err);
-      });
+        return false;
+      } finally {
+        manifestRefreshState.isRefreshing = false;
+      }
     }
 
     function startManifestRefreshLoop() {
@@ -571,6 +602,40 @@
       refreshStartBundle().catch(function(err) {
         console.warn('Failed to refresh manifest bundle on websocket open:', err);
       });
+    };
+
+    // Recover from VFS misses for paths the initial manifest didn't know about
+    // (files dropped into GAME_DIR after the client connected). Funnels through
+    // the same refreshAndRetry() helper as ensureLoaded's XHR-404 path.
+    //
+    // Two miss shapes to catch:
+    //   - origLookupPath throws ErrnoError(ENOENT)          (the default)
+    //   - origLookupPath returns { node: null }             (when caller passed
+    //                                                        opts.noent_okay,
+    //                                                        e.g. FS.open)
+    var origLookupPath = FS.lookupPath.bind(FS);
+    function shouldAttemptRefresh(path) {
+      var pathStr = typeof path === 'string' ? path : '';
+      // Quake's cwd is REMOTE_ROOT, so bare/relative paths (e.g. "./id1/foo.bsp"
+      // from Sys_FileTime) resolve under it — accept those too. Only reject
+      // absolute paths outside the remote tree (user data, /tmp, /dev, ...).
+      return !(pathStr.charAt(0) === '/' && (pathStr + '/').indexOf(REMOTE_ROOT + '/') !== 0);
+    }
+    FS.lookupPath = function(path, opts) {
+      try {
+        var result = origLookupPath(path, opts);
+        if (result && result.node) return result;
+        // noent_okay: null node instead of throw.
+        if (!shouldAttemptRefresh(path)) return result;
+        if (!refreshAndRetry()) return result;
+        var retried = origLookupPath(path, opts);
+        return retried && retried.node ? retried : result;
+      } catch (e) {
+        if (!e || e.errno !== 44) throw e;
+        if (!shouldAttemptRefresh(path)) throw e;
+        if (!refreshAndRetry()) throw e;
+        return origLookupPath(path, opts);
+      }
     };
 
     Module.nexquakeSwitchGameData = function(mod) {

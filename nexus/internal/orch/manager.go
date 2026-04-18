@@ -50,6 +50,10 @@ type ServerManager struct {
 	poolMaxSize         int
 	nextServerID        int
 	runtimeBasedir      string
+	// stopOverlay halts the assets overlay watcher started alongside
+	// runtimeBasedir; must be invoked before RemoveAll(runtimeBasedir)
+	// so in-flight fsnotify events don't race the teardown.
+	stopOverlay func()
 }
 
 func (m *ServerManager) serverConsoleLabel(rec *serverRecord) string {

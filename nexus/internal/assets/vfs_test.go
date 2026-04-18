@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBuildVFSManifest_LayersAndPakExplode(t *testing.T) {
@@ -311,20 +312,26 @@ func TestListMods_IncludesEmptyModDirs(t *testing.T) {
 	}
 }
 
-func TestMaterializeMergedModDir_ServerOverridesCommon_AndIgnoresRoot(t *testing.T) {
-	gameDir := t.TempDir()
-	runtimeRoot := t.TempDir()
-	mod := "id1"
+func prepareOverlay(t *testing.T, gameDir, mod string) string {
+	t.Helper()
+	root, stop, err := PrepareRuntimeBasedir(gameDir, []string{mod})
+	if err != nil {
+		t.Fatalf("PrepareRuntimeBasedir: %v", err)
+	}
+	t.Cleanup(func() { stop(); _ = os.RemoveAll(root) })
+	return root
+}
 
+func TestOverlay_ServerOverridesCommon_AndIgnoresRoot(t *testing.T) {
+	gameDir := t.TempDir()
+	mod := "id1"
 	commonDir := filepath.Join(gameDir, mod, "common")
 	serverDir := filepath.Join(gameDir, mod, "server")
-	if err := os.MkdirAll(commonDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
+	for _, d := range []string{commonDir, serverDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
 	}
-	if err := os.MkdirAll(serverDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
 	if err := os.WriteFile(filepath.Join(commonDir, "file.txt"), []byte("common"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -335,9 +342,7 @@ func TestMaterializeMergedModDir_ServerOverridesCommon_AndIgnoresRoot(t *testing
 		t.Fatalf("write: %v", err)
 	}
 
-	if err := materializeMergedModDir(runtimeRoot, gameDir, mod); err != nil {
-		t.Fatalf("materializeMergedModDir: %v", err)
-	}
+	runtimeRoot := prepareOverlay(t, gameDir, mod)
 
 	got, err := os.ReadFile(filepath.Join(runtimeRoot, mod, "file.txt"))
 	if err != nil {
@@ -346,27 +351,21 @@ func TestMaterializeMergedModDir_ServerOverridesCommon_AndIgnoresRoot(t *testing
 	if string(got) != "server" {
 		t.Fatalf("expected server override, got %q", string(got))
 	}
-
 	if _, err := os.Stat(filepath.Join(runtimeRoot, mod, "root.txt")); !os.IsNotExist(err) {
 		t.Fatalf("expected root.txt to be ignored, stat err=%v", err)
 	}
 }
 
-func TestMaterializeMergedModDir_DoesNotSymlinkDirs(t *testing.T) {
+func TestOverlay_DoesNotSymlinkDirs(t *testing.T) {
 	gameDir := t.TempDir()
-	runtimeRoot := t.TempDir()
 	mod := "ctf"
-
 	commonDir := filepath.Join(gameDir, mod, "common", "maps")
 	serverDir := filepath.Join(gameDir, mod, "server", "maps")
-	if err := os.MkdirAll(commonDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
+	for _, d := range []string{commonDir, serverDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
 	}
-	if err := os.MkdirAll(serverDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
-	// Common provides a baseline file, server overrides it.
 	if err := os.WriteFile(filepath.Join(commonDir, "dm3.ent"), []byte("common"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -374,12 +373,8 @@ func TestMaterializeMergedModDir_DoesNotSymlinkDirs(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	if err := materializeMergedModDir(runtimeRoot, gameDir, mod); err != nil {
-		t.Fatalf("materializeMergedModDir: %v", err)
-	}
+	runtimeRoot := prepareOverlay(t, gameDir, mod)
 
-	// The maps directory must be a real directory in the runtime overlay, not a symlink
-	// into the (potentially read-only) source tree.
 	mapsPath := filepath.Join(runtimeRoot, mod, "maps")
 	if st, err := os.Lstat(mapsPath); err != nil {
 		t.Fatalf("lstat maps: %v", err)
@@ -396,20 +391,16 @@ func TestMaterializeMergedModDir_DoesNotSymlinkDirs(t *testing.T) {
 	}
 }
 
-func TestMaterializeMergedModDir_LowercasesRuntimePaths(t *testing.T) {
+func TestOverlay_LowercasesRuntimePaths(t *testing.T) {
 	gameDir := t.TempDir()
-	runtimeRoot := t.TempDir()
 	mod := "id1"
-
 	commonDir := filepath.Join(gameDir, mod, "common")
 	serverDir := filepath.Join(gameDir, mod, "server")
-	if err := os.MkdirAll(commonDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
+	for _, d := range []string{commonDir, serverDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
 	}
-	if err := os.MkdirAll(serverDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
 	if err := os.WriteFile(filepath.Join(commonDir, "PROGS.DAT"), []byte("common"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -417,9 +408,7 @@ func TestMaterializeMergedModDir_LowercasesRuntimePaths(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	if err := materializeMergedModDir(runtimeRoot, gameDir, mod); err != nil {
-		t.Fatalf("materializeMergedModDir: %v", err)
-	}
+	runtimeRoot := prepareOverlay(t, gameDir, mod)
 
 	got, err := os.ReadFile(filepath.Join(runtimeRoot, mod, "progs.dat"))
 	if err != nil {
@@ -440,28 +429,30 @@ func TestMaterializeMergedModDir_LowercasesRuntimePaths(t *testing.T) {
 	}
 }
 
-func TestMaterializeMergedModDir_FailsOnCaseCollisionWithinLayer(t *testing.T) {
+func TestOverlay_ReconcilesFileAddedAfterStart(t *testing.T) {
 	gameDir := t.TempDir()
-	runtimeRoot := t.TempDir()
 	mod := "id1"
-
-	commonDir := filepath.Join(gameDir, mod, "common")
-	if err := os.MkdirAll(commonDir, 0o755); err != nil {
+	mapsDir := filepath.Join(gameDir, mod, "common", "maps")
+	if err := os.MkdirAll(mapsDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-
-	if err := os.WriteFile(filepath.Join(commonDir, "PROGS.DAT"), []byte("upper"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(commonDir, "progs.dat"), []byte("lower"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(mapsDir, "existing.bsp"), []byte("old"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
-	err := materializeMergedModDir(runtimeRoot, gameDir, mod)
-	if err == nil {
-		t.Fatalf("expected case-collision error, got nil")
+	runtimeRoot := prepareOverlay(t, gameDir, mod)
+
+	if err := os.WriteFile(filepath.Join(mapsDir, "fresh.bsp"), []byte("new"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
 	}
-	if !strings.Contains(err.Error(), "case-colliding paths") {
-		t.Fatalf("expected case-collision error, got: %v", err)
+
+	deadline := time.Now().Add(2 * time.Second)
+	target := filepath.Join(runtimeRoot, mod, "maps", "fresh.bsp")
+	for time.Now().Before(deadline) {
+		if got, err := os.ReadFile(target); err == nil && string(got) == "new" {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
+	t.Fatalf("fresh.bsp did not appear in runtime within deadline")
 }

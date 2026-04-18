@@ -1,0 +1,56 @@
+--- screen.c
++++ screen.c
+@@ -33,3 +33,4 @@
+ cvar_t		scr_viewsize = {"viewsize","100", true};
+ cvar_t		scr_fov = {"fov","90"};	// 10 - 170
++cvar_t		scr_fov_adapt = {"fov_adapt","0.5"};	// 0=stock fov_x, 1=pure Hor+
+ cvar_t		scr_conspeed = {"scr_conspeed","300"};
+@@ -242,8 +243,27 @@
+ 	if (scr_fov.value > 170)
+ 		Cvar_Set ("fov","170");
+ 
+-	r_refdef.fov_x = scr_fov.value;
+-	r_refdef.fov_y = CalcFov (r_refdef.fov_x, r_refdef.vrect.width, r_refdef.vrect.height);
++	// fov_adapt blends between literal fov_x (0) and pure Hor+ (1).
++	// tan(new_half) = tan(fov/2) * (1 + adapt * (aspect/ref - 1)), ref = 4:3.
++	{
++		double fov = scr_fov.value;
++		double fov_x = fov;
++		int vw = r_refdef.vrect.width  > 0 ? r_refdef.vrect.width  : vid.width;
++		int vh = r_refdef.vrect.height > 0 ? r_refdef.vrect.height : vid.height;
++		if (vh > 0) {
++			double aspect = (double)vw / (double)vh;
++			double ref = 4.0 / 3.0;
++			double adapt = scr_fov_adapt.value;
++			if (adapt < 0.0) adapt = 0.0;
++			if (adapt > 1.0) adapt = 1.0;
++			if (adapt > 0.0 && aspect > ref) {
++				double half = fov * (M_PI / 360.0);
++				fov_x = atan(tan(half) * (1.0 + adapt * (aspect / ref - 1.0))) * (360.0 / M_PI);
++			}
++		}
++		r_refdef.fov_x = (float)fov_x;
++		r_refdef.fov_y = CalcFov (r_refdef.fov_x, vw, vh);
++	}
+ 
+ // intermission is always full screen
+ 	if (cl.intermission)
+@@ -315,3 +334,4 @@
+ {
+ 	Cvar_RegisterVariable (&scr_fov);
++	Cvar_RegisterVariable (&scr_fov_adapt);
+ 	Cvar_RegisterVariable (&scr_viewsize);
+@@ -810,2 +830,3 @@
+ 	static float	oldscr_viewsize;
++	static float	oldfov_adapt;
+ 	static float	oldlcd_x;
+@@ -850,3 +871,9 @@
+ 	}
+ 	
++	if (oldfov_adapt != scr_fov_adapt.value)
++	{
++		oldfov_adapt = scr_fov_adapt.value;
++		vid.recalc_refdef = true;
++	}
++	
+ 	if (oldlcd_x != lcd_x.value)
