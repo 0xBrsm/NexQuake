@@ -127,7 +127,7 @@ Instances move to `draining` only when at least two active instances remain and 
 
 `slist` in the console shows one row per autoscaled server with the instance count appended to the users column (e.g. `2/16 ×3` means 2 players across 3 instances with a 16-player aggregate cap). Entries that are not autoscaling omit the instance suffix.
 
-Target a specific instance with `rcon <port> <cmd>` using the listen port shown in `rcon nexus server list <idx>`.
+Target a specific instance with `rcon <port> <cmd...>` using the listen port shown in `rcon nexus server list <idx>`.
 
 ## Background Music (BGM)
 

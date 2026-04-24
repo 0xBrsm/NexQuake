@@ -58,7 +58,7 @@ const defaultServerTailLines = 10
 // off HelpForm) and rpc.discover (structured self-description, keyed off
 // Method). Commands with an empty HelpForm are omitted from rcon.help —
 // they are not user-typed (e.g. [server.instance.command] is reached via
-// `rcon <port> <cmd>`).
+// `rcon <port> <cmd...>`).
 type Command struct {
 	Method      string
 	HelpForm    string
@@ -94,7 +94,7 @@ var adminCommands = []Command{
 		ParseParams: parseSessionLookup, Handler: sessionInfoHandler},
 	{Method: "session.ban", HelpForm: "session ban <nqip>", Description: "ban session until Nexus restart",
 		ParseParams: parseSessionLookup, Handler: sessionBanHandler},
-	{Method: "server.instance.command", HelpForm: "server <port> <cmd...>", Description: "forward command to a specific instance",
+	{Method: "server.instance.command", Description: "forward command to a specific instance",
 		ParseParams: parseInstanceCommand, Handler: instanceCommandHandler},
 }
 
@@ -530,7 +530,7 @@ func buildHelpText() string {
 		}
 		fmt.Fprintf(&b, "  rcon %-*s  %s\n", formWidth, c.HelpForm, c.Description)
 	}
-	b.WriteString("\nShortcuts (equivalent to `rcon server <port> <cmd...>`):\n")
+	b.WriteString("\nInstance console forms (target one server's console):\n")
 	b.WriteString("  rcon <port> <cmd...>\n")
 	b.WriteString("  rcon <cmd...>             when connected, uses the current listen port\n")
 	b.WriteString("\nPrefix any admin command with `nexus` while connected (e.g. `rcon nexus server list`).\n\n")

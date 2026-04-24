@@ -10,18 +10,16 @@ External tools can reach the same command surface over HTTP by POSTing JSON-RPC 
 
 | Form | Behavior |
 |------|----------|
-| `rcon <cmd>` | If connected to a server, forwards to that server's console. If disconnected, dispatches to Nexus admin. |
-| `rcon nexus <cmd>` | Forces a Nexus admin dispatch even while connected to a game server. |
-| `rcon server <port> <cmd>` | Forwards a raw console command to the instance listening on that port (1–65535). |
-| `rcon <port> <cmd>` | Shorthand for `rcon server <port> <cmd>`. |
+| `rcon <cmd...>` | If connected to a server, forwards to that server's console. If disconnected, dispatches to Nexus admin. |
+| `rcon nexus <cmd...>` | Forces a Nexus admin dispatch even while connected to a game server. |
+| `rcon <port> <cmd...>` | Forwards a raw console command to the instance listening on that port (1–65535). |
 
 ## Nexus Command Reference
 
 | Command | Usage | Description |
 |---------|-------|-------------|
 | **help** | `rcon nexus help` | Show the list of Nexus rcon commands. |
-| **tail** | `rcon nexus tail` | Show the last 10 Nexus log lines. Instance tail is `rcon server <port> tail`. |
-| **server &lt;port&gt;** | `rcon nexus server <port> <cmd...>` | Forward a raw console command to the instance listening on that port. |
+| **tail** | `rcon nexus tail` | Show the last 10 Nexus log lines. Instance tail is `rcon <port> tail`. |
 | **server list** | `rcon nexus server list [<idx\|all>]` | With no argument, list managed servers (name, candidate connect port, game directory, player count, state). With `all` or a server index, list instances in the grouped format for every server or the selected one. |
 | **server start** | `rcon nexus server start <idx\|all>` | Start a specific server by the server index shown in `rcon nexus server list`. Use `all` to start every server defined in `servers.ini`. |
 | **server stop** | `rcon nexus server stop <idx\|all> [secs]` | Stop a specific server or all servers. Sends a graceful `quit` command first, then terminates if it doesn't exit within the grace window. |

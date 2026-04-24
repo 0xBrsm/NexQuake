@@ -12,21 +12,18 @@
 //   logs.tail
 //
 // Addressing rules:
-//   - `rcon nexus <cmd>` — explicit Nexus admin dispatch (always).
-//   - `rcon <cmd>` when connected — forwarded to that server's console via
+//   - `rcon nexus <cmd...>` — explicit Nexus admin dispatch (always).
+//   - `rcon <cmd...>` when connected — forwarded to that server's console via
 //     server.instance.command (use `rcon nexus ...` to reach admin).
-//   - `rcon <cmd>` when not connected — implicit admin dispatch.
+//   - `rcon <cmd...>` when not connected — implicit admin dispatch.
 //
-// Instance command canonical form is `rcon server <port> <cmd...>`. Two
-// shorthands fold to the same RPC:
-//   - `rcon <port> <cmd...>`         — elides the leading "server".
-//   - `rcon <cmd...>` when connected — elides both "server" and the port,
-//     using the currently-connected listen port.
+// Instance-console forms both resolve to server.instance.command:
+//   - `rcon <port> <cmd...>`         — target that instance's console.
+//   - `rcon <cmd...>` when connected — target the currently-connected listen port.
 //
 // Admin commands (preceded by "nexus" when connected, implicit otherwise):
 //   help                             — rcon.help (server-rendered, auth-gated)
 //   tail [N]                         — logs.tail
-//   server <port> <cmd...>           — server.instance.command
 //   server list                      — server.list
 //   server list all                  — server.instances (all servers, grouped)
 //   server list <idx>                — server.instances {index: idx}
@@ -84,7 +81,7 @@
   // Dispatch an in-game rcon line to the right JSON-RPC method.
   // Returns { method, params } or { error } for client-side errors.
   // connectedPort is the currently-connected game-server listen port (or 0),
-  // used as a fallback target for bare `rcon <cmd>` while in-game.
+  // used as a fallback target for bare `rcon <cmd...>` while in-game.
   function planCall(tokens, connectedPort) {
     if (tokens.length === 0) return { method: 'rcon.help', params: {} };
 
@@ -98,11 +95,11 @@
     }
 
     // Explicit "nexus" prefix forces admin dispatch. When connected, this is
-    // required to reach admin (bare `rcon <cmd>` otherwise forwards to the
+    // required to reach admin (bare `rcon <cmd...>` otherwise forwards to the
     // connected server's console).
     var explicitAdmin = false;
     if (tokens[0].toLowerCase() === 'nexus') {
-      if (tokens.length < 2) return { error: 'usage: rcon nexus <cmd>\n' };
+      if (tokens.length < 2) return { error: 'usage: rcon nexus <cmd...>\n' };
       tokens = tokens.slice(1);
       explicitAdmin = true;
     }
@@ -130,17 +127,9 @@
     }
 
     if (head === 'server') {
-      // `rcon server <port> <cmd...>` — forward to a specific instance.
-      if (rest.length >= 2 && isIntegerString(rest[0])) {
-        var serverPort = parseInt(rest[0], 10);
-        if (serverPort >= 1 && serverPort <= 65535) {
-          return { method: 'server.instance.command', params: { port: serverPort, cmd: rest.slice(1).join(' ') } };
-        }
-      }
-
       var sVerb = rest.length > 0 ? rest[0].toLowerCase() : '';
       var sArgs = rest.slice(1);
-      var serverUsage = 'usage: rcon server <port> <cmd...> | list|start|stop|restart|remove|launch ...\n';
+      var serverUsage = 'usage: rcon server list|start|stop|restart|remove|launch ...\n';
 
       if (sVerb === 'list') {
         if (sArgs.length === 0) return { method: 'server.list', params: {} };
