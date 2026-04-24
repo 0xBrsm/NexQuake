@@ -1,27 +1,98 @@
 // Package admin implements the Nexus admin subsystem: authentication,
-// WebSocket admin-frame dispatch, rcon command routing, and session management.
+// JSON-RPC envelope + dispatch, and admin command handlers.
 //
 // The entry points for callers are:
 //   - [InitAuth] — construct an [Auth] from environment variables once at startup.
-//   - [HandleAdminFrameWithIdentityAndPromotionHook] — process
-//     an incoming admin (port-0) WebSocket frame.
+//   - [ParseRequest] / [Dispatch] — JSON-RPC envelope + method dispatch.
 //   - [Env] — dependency-injection struct wiring the admin layer to the server
 //     manager and session registry.
 //
 // Authentication supports two modes, which can be combined:
 //
 //	AUTH_ISSUER + AUTH_AUDIENCE   OIDC/JWT via an external identity provider.
-//	AUTH_RCON_PASSWORD            Shared-secret rcon password (classic Quake style).
+//	AUTH_RCON_PASSWORD            Shared-secret rcon password, carried in the
+//	                              standard Authorization header as
+//	                              "Authorization: Rcon <password>".
+//
+// User identity (source IP resolution for all clients, admin or not) is a
+// separate concern handled by [Identity] in id.go.
 package admin
 
 import (
 	"context"
+	"crypto/subtle"
 	"net/http"
 	"os"
 	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 )
+
+// Actor identifies the caller of an admin RPC request. Populated by
+// [Auth.Authorize] from the HTTP request's credentials and the resolved source
+// IP. ID is an audit-safe label (email, source IP, or "admin").
+type Actor struct {
+	ID       string
+	SourceIP string
+	IsAdmin  bool
+}
+
+// ActorID computes a stable actor label for audit logs from transport-provided
+// bits. Prefers identity (unless empty or "anonymous"), then sourceIP, then
+// nqip, then "admin". Pass nqip as "" when not applicable (HTTP).
+func ActorID(identity, sourceIP, nqip string) string {
+	trimmed := strings.TrimSpace(identity)
+	if trimmed != "" && !strings.EqualFold(trimmed, "anonymous") {
+		return trimmed
+	}
+	if ip := strings.TrimSpace(sourceIP); ip != "" {
+		return ip
+	}
+	if ip := strings.TrimSpace(nqip); ip != "" {
+		return ip
+	}
+	if trimmed != "" {
+		return trimmed
+	}
+	return "admin"
+}
+
+// authorizationToken extracts the credential value for scheme from the
+// standard Authorization header. Scheme match is case-insensitive (RFC 7235).
+// Returns "" if the header is absent, empty, or carries a different scheme.
+func authorizationToken(r *http.Request, scheme string) string {
+	raw := strings.TrimSpace(r.Header.Get("Authorization"))
+	prefix := scheme + " "
+	if len(raw) <= len(prefix) || !strings.EqualFold(raw[:len(prefix)], prefix) {
+		return ""
+	}
+	return strings.TrimSpace(raw[len(prefix):])
+}
+
+// Authorize builds an [Actor] from the request. Tries OIDC JWT first
+// (via [Auth.IdentifyRequest]); falls back to "Authorization: Rcon <password>".
+// passwordMatched is true iff authorization succeeded via the Rcon scheme,
+// letting callers label matching sessions for display/ban purposes.
+func (a *Auth) Authorize(r *http.Request, sourceIP string) (actor Actor, passwordMatched bool) {
+	isAdmin, identity := a.IdentifyRequest(r)
+	actor = Actor{
+		ID:       ActorID(identity, sourceIP, ""),
+		SourceIP: sourceIP,
+		IsAdmin:  isAdmin,
+	}
+	if actor.IsAdmin || a == nil || a.rconPassword == "" {
+		return actor, false
+	}
+	supplied := authorizationToken(r, "Rcon")
+	if supplied == "" {
+		return actor, false
+	}
+	if subtle.ConstantTimeCompare([]byte(supplied), []byte(a.rconPassword)) != 1 {
+		return actor, false
+	}
+	actor.IsAdmin = true
+	return actor, true
+}
 
 const adminMatchEmail = "email"
 
@@ -116,14 +187,10 @@ func InitAuth(ctx context.Context, infof, debugf func(string, ...any)) (*Auth, e
 	return auth, nil
 }
 
-func (a *Auth) rconPasswordValue() string {
-	return a.rconPassword
-}
-
 // IdentifyRequest inspects the request for credentials and returns
 // (isAdmin, identity) where identity is an email, username, or "anonymous".
 // Only OIDC JWTs are checked here; rcon_password authentication happens
-// per-frame in [HandleAdminFrameWithIdentityAndPromotionHook].
+// per-request in [Authorize].
 func (a *Auth) IdentifyRequest(r *http.Request) (bool, string) {
 	if a == nil {
 		return false, "anonymous"
@@ -154,8 +221,10 @@ func (a *Auth) isAdmin(r *http.Request) bool {
 
 func (v *oidcValidator) validate(r *http.Request, debugf func(string, ...any)) (bool, map[string]any) {
 	raw := r.Header.Get(v.headerName)
-	if strings.EqualFold(v.headerName, "Authorization") && len(raw) > 7 && strings.EqualFold(raw[:7], "Bearer ") {
-		raw = strings.TrimSpace(raw[7:])
+	if strings.EqualFold(v.headerName, "Authorization") {
+		if token := authorizationToken(r, "Bearer"); token != "" {
+			raw = token
+		}
 	}
 	if raw == "" {
 		return false, nil

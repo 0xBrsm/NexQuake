@@ -29,7 +29,7 @@ func decodeStartBundle(t *testing.T, body []byte) startManifestBundle {
 	return bundle
 }
 
-func TestHashedAssetGateway_StartAndAssetFetch(t *testing.T) {
+func TestHashedAssetServer_StartAndAssetFetch(t *testing.T) {
 	gameDir := t.TempDir()
 	cdDir := t.TempDir()
 
@@ -44,7 +44,7 @@ func TestHashedAssetGateway_StartAndAssetFetch(t *testing.T) {
 		t.Fatalf("write cd file: %v", err)
 	}
 
-	gateway := NewHashedAssetGateway(
+	gateway := NewHashedAssetServer(
 		gameDir,
 		cdDir,
 		NewPakIndexCache(),
@@ -124,7 +124,7 @@ func TestHashedAssetGateway_StartAndAssetFetch(t *testing.T) {
 	}
 }
 
-func TestHashedAssetGateway_RangeRequests(t *testing.T) {
+func TestHashedAssetServer_RangeRequests(t *testing.T) {
 	gameDir := t.TempDir()
 	commonDir := filepath.Join(gameDir, "id1", "common")
 	if err := os.MkdirAll(commonDir, 0o755); err != nil {
@@ -135,7 +135,7 @@ func TestHashedAssetGateway_RangeRequests(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	gateway := NewHashedAssetGateway(
+	gateway := NewHashedAssetServer(
 		gameDir,
 		filepath.Join(t.TempDir(), "missing"),
 		NewPakIndexCache(),
@@ -189,7 +189,7 @@ func TestHashedAssetGateway_RangeRequests(t *testing.T) {
 	}
 }
 
-func TestHashedAssetGateway_StartIgnoresCorruptPakInOtherMod(t *testing.T) {
+func TestHashedAssetServer_StartIgnoresCorruptPakInOtherMod(t *testing.T) {
 	gameDir := t.TempDir()
 	id1CommonDir := filepath.Join(gameDir, "id1", "common")
 	if err := os.MkdirAll(id1CommonDir, 0o755); err != nil {
@@ -212,7 +212,7 @@ func TestHashedAssetGateway_StartIgnoresCorruptPakInOtherMod(t *testing.T) {
 		t.Fatalf("write corrupt pak: %v", err)
 	}
 
-	gateway := NewHashedAssetGateway(
+	gateway := NewHashedAssetServer(
 		gameDir,
 		filepath.Join(t.TempDir(), "missing"),
 		NewPakIndexCache(),

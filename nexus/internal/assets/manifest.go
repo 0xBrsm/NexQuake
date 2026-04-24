@@ -19,7 +19,7 @@ import (
 )
 
 const headerNexQuakeRef = "X-NexQuake-Ref"
-const defaultGatewaySessionTTL = 37 * time.Minute
+const defaultManifestTTL = 37 * time.Minute
 
 type startManifestEntry struct {
 	Path string `json:"path"`
@@ -64,17 +64,17 @@ type hashedSnapshot struct {
 	assets map[string]hashedAsset
 }
 
-type gatewaySession struct {
+type issuedManifest struct {
 	createdAt time.Time
 	assets    map[string]hashedAsset
 }
 
-// HashedAssetGateway serves a bootstrap manifest and hash-addressed asset
+// HashedAssetServer serves a bootstrap manifest and hash-addressed asset
 // requests for both VFS game data and CD tracks.
 //
 // Call StartHandler to obtain a per-session manifest, then AssetHandler to
 // serve the individual assets referenced by that manifest.
-type HashedAssetGateway struct {
+type HashedAssetServer struct {
 	gameDir             string
 	cdDir               string
 	pakCache            *PakIndexCache
@@ -82,15 +82,15 @@ type HashedAssetGateway struct {
 	smenuOnFirstLoad    bool
 	sendArgs            []string
 	urlArgs             bool
-	sessionTTL          time.Duration
+	manifestTTL          time.Duration
 	errorf              func(string, ...any)
 
 	mu           sync.RWMutex
-	sessions     map[string]*gatewaySession
+	manifests    map[string]*issuedManifest
 	assetsByHash map[string]hashedAsset
 }
 
-// NewHashedAssetGateway creates a HashedAssetGateway for the given directories
+// NewHashedAssetServer creates a HashedAssetServer for the given directories
 // and client configuration.
 //
 //   - gameDir is the root of the layered mod tree (GAME_DIR).
@@ -101,11 +101,11 @@ type HashedAssetGateway struct {
 //   - smenuOnFirstLoad instructs the client to open the server menu on first connect.
 //   - sendArgs is an optional list of extra arguments sent to the Quake client.
 //   - urlArgs enables passing launch arguments via URL query string.
-func NewHashedAssetGateway(gameDir, cdDir string, pakCache *PakIndexCache, prefetchConcurrency int, smenuOnFirstLoad bool, sendArgs []string, urlArgs bool) *HashedAssetGateway {
+func NewHashedAssetServer(gameDir, cdDir string, pakCache *PakIndexCache, prefetchConcurrency int, smenuOnFirstLoad bool, sendArgs []string, urlArgs bool) *HashedAssetServer {
 	if pakCache == nil {
 		pakCache = NewPakIndexCache()
 	}
-	return &HashedAssetGateway{
+	return &HashedAssetServer{
 		gameDir:             gameDir,
 		cdDir:               cdDir,
 		pakCache:            pakCache,
@@ -113,16 +113,16 @@ func NewHashedAssetGateway(gameDir, cdDir string, pakCache *PakIndexCache, prefe
 		smenuOnFirstLoad:    smenuOnFirstLoad,
 		sendArgs:            append([]string(nil), sendArgs...),
 		urlArgs:             urlArgs,
-		sessionTTL:          defaultGatewaySessionTTL,
+		manifestTTL:          defaultManifestTTL,
 		errorf:              func(string, ...any) {},
-		sessions:            make(map[string]*gatewaySession),
+		manifests:           make(map[string]*issuedManifest),
 		assetsByHash:        make(map[string]hashedAsset),
 	}
 }
 
 // SetErrorf sets the error-logging function used for non-fatal warnings (e.g.
 // unreadable pak files). A nil logf silences all error output.
-func (g *HashedAssetGateway) SetErrorf(logf func(string, ...any)) {
+func (g *HashedAssetServer) SetErrorf(logf func(string, ...any)) {
 	if logf == nil {
 		g.errorf = func(string, ...any) {}
 		return
@@ -138,14 +138,14 @@ func (g *HashedAssetGateway) SetErrorf(logf func(string, ...any)) {
 // sets the X-NexQuake-Ref header to the session identifier.
 //
 // Returns 404 when no mod directories are found, 500 on internal errors.
-func (g *HashedAssetGateway) StartHandler() http.HandlerFunc {
+func (g *HashedAssetServer) StartHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 
-		ref := newGatewayRef()
+		ref := newManifestRef()
 		snap, err := g.buildSnapshot(ref)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -159,7 +159,7 @@ func (g *HashedAssetGateway) StartHandler() http.HandlerFunc {
 		now := time.Now()
 		g.mu.Lock()
 		g.pruneExpiredLocked(now)
-		g.sessions[ref] = &gatewaySession{
+		g.manifests[ref] = &issuedManifest{
 			createdAt: now,
 			assets:    snap.assets,
 		}
@@ -187,7 +187,7 @@ func (g *HashedAssetGateway) StartHandler() http.HandlerFunc {
 //
 // The URL path must be /nq/<hash> where hash is a 16-character hex string.
 // Supports GET and HEAD. Returns 404 for unknown or expired hashes.
-func (g *HashedAssetGateway) AssetHandler() http.HandlerFunc {
+func (g *HashedAssetServer) AssetHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -222,7 +222,7 @@ func (g *HashedAssetGateway) AssetHandler() http.HandlerFunc {
 	}
 }
 
-func (g *HashedAssetGateway) lookupAsset(hash string) (hashedAsset, bool) {
+func (g *HashedAssetServer) lookupAsset(hash string) (hashedAsset, bool) {
 	g.mu.RLock()
 	if asset, ok := g.assetsByHash[hash]; ok {
 		g.mu.RUnlock()
@@ -237,19 +237,19 @@ func (g *HashedAssetGateway) lookupAsset(hash string) (hashedAsset, bool) {
 	return asset, ok
 }
 
-func (g *HashedAssetGateway) pruneExpiredLocked(now time.Time) {
-	for ref, session := range g.sessions {
-		if now.Sub(session.createdAt) <= g.sessionTTL {
+func (g *HashedAssetServer) pruneExpiredLocked(now time.Time) {
+	for ref, session := range g.manifests {
+		if now.Sub(session.createdAt) <= g.manifestTTL {
 			continue
 		}
 		for hash := range session.assets {
 			delete(g.assetsByHash, hash)
 		}
-		delete(g.sessions, ref)
+		delete(g.manifests, ref)
 	}
 }
 
-func (g *HashedAssetGateway) buildSnapshot(ref string) (*hashedSnapshot, error) {
+func (g *HashedAssetServer) buildSnapshot(ref string) (*hashedSnapshot, error) {
 	mods, err := ListMods(g.gameDir)
 	if err != nil {
 		return nil, err
@@ -327,7 +327,7 @@ func (g *HashedAssetGateway) buildSnapshot(ref string) (*hashedSnapshot, error) 
 	}, nil
 }
 
-func (g *HashedAssetGateway) resolveVFSAsset(assetURL, fallbackName string) (hashedAsset, error) {
+func (g *HashedAssetServer) resolveVFSAsset(assetURL, fallbackName string) (hashedAsset, error) {
 	switch {
 	case strings.HasPrefix(assetURL, "/game/"):
 		return resolveEscapedFileAsset(g.gameDir, strings.TrimPrefix(assetURL, "/game/"))
@@ -392,7 +392,7 @@ func (g *HashedAssetGateway) resolveVFSAsset(assetURL, fallbackName string) (has
 	}
 }
 
-func (g *HashedAssetGateway) resolveCDAsset(assetURL string) (hashedAsset, error) {
+func (g *HashedAssetServer) resolveCDAsset(assetURL string) (hashedAsset, error) {
 	if !strings.HasPrefix(assetURL, "/cd-stream/") {
 		return hashedAsset{}, fmt.Errorf("unsupported cd url: %s", assetURL)
 	}
@@ -479,7 +479,7 @@ func addAsset(assets map[string]hashedAsset, hash string, asset hashedAsset, pat
 	return nil
 }
 
-func newGatewayRef() string {
+func newManifestRef() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err == nil {
 		return hex.EncodeToString(b[:])

@@ -59,7 +59,7 @@ nqserver @def -game ctf +hostname %game
 | Argument | Purpose |
 |-----|---------|
 | `-dedicated <N>` | Maximum client count. Stock NetQuake caps at 16. Use higher values only with custom binaries that actually support them. Lower the visible limit with `maxplayers <M>` in config (`M` cannot exceed `N`). |
-| `-port 0` | Bind to a random open port. On startup entries, this enables Nexus dynamic scaling for that server line: `rcon nexus slist` shows one pool row with aggregate player counts, and the candidate port shown is a real backend port selected by least-loaded round-robin at browse time. `connect <port>` connects directly to that specific backend. Scaling lifecycle/autoscale keeps one backend routable while draining/despawning idle replicas. |
+| `-port 0` | Bind to a random open port. On startup entries, this enables Nexus dynamic scaling for that server line: `rcon nexus server list` shows one server row with aggregate player counts, and the candidate port shown is a real instance port selected by least-loaded round-robin at browse time. `connect <port>` connects directly to that specific instance. Scaling lifecycle/autoscale keeps one instance routable while draining/despawning idle replicas. |
 | `-mem <MB>` | Specifies the RAM to reserve for game server memory. Default is 8 MB for Linux Quake, which may not be enough for some mods. Generally, `16` is a safe number.
 | `+hostname "Name"` | Set a unique server name. Critical when multiple servers share a game directory, since they share `config.cfg` and may end up with identical hostnames. |
 | `@groupname ...` | Define a reusable macro for common flags like `-dedicated 16 -port 0`. |
@@ -85,7 +85,7 @@ Some mods, like CTF, ship with `.ent` files. These traditionally require extract
 
 ## Server Scaling
 
-Nexus can run multiple backend instances for the same server line and distribute players across them automatically. This is useful when a single server reaches its player cap during peak hours.
+Nexus can run multiple instances for the same server line and distribute players across them automatically. This is useful when a single server reaches its player cap during peak hours.
 
 ### Enabling Scaling
 
@@ -96,38 +96,38 @@ Add `-port 0` to a `servers.ini` line to enable scaling for that entry:
 nqserver @def -game id1 +hostname "FragFest"
 ```
 
-`-port 0` tells the OS to assign a random free port. Nexus detects this, groups all instances launched from that line into a pool, and presents the pool as a single server in the browser list.
+`-port 0` tells the OS to assign a random free port. Nexus detects this, groups all processes launched from that line under one server, and presents the server as a single row in the browser list.
 
-Set `POOL_SIZE` to the maximum number of backend instances Nexus will spawn (default `1`, which disables autoscaling for `-port 0` entries and shows them in `slist` like ordinary single servers):
+Set `SV_MAX_INSTANCES` to the maximum number of instances Nexus will spawn for that server (default `1`, which disables autoscaling for `-port 0` entries and shows them in `slist` like ordinary single servers):
 
 ```env
-POOL_SIZE=10
+SV_MAX_INSTANCES=10
 ```
 
 ### How It Works
 
-When autoscaling is enabled, the pool shows up as one row in the server list with aggregate player counts and an instance count. The port shown to players is one of the running backends, selected by least-loaded round-robin at browse time. Connecting directly to that port connects to that specific backend.
+When autoscaling is enabled, the server shows up as one row in the server list with aggregate player counts and an instance count. The port shown to players is one of the running instances, selected by least-loaded round-robin at browse time. Connecting directly to that port connects to that specific instance.
 
-Nexus tracks how often players browse the pool (`slist` poll hits) over a 30-second window to estimate demand. When free slots across the pool fall below the headroom target — `max(4, ceil(joinRPS × 12s × 1.5))` — and the pool is below `POOL_SIZE`, a new backend instance is spawned.
+Nexus tracks how often players browse the server (`slist` poll hits) over a 30-second window to estimate demand. When free slots across the server fall below the headroom target — `max(4, ceil(joinRPS × 12s × 1.5))` — and the server is below `SV_MAX_INSTANCES`, a new instance is spawned.
 
-### Backend Lifecycle
+### Instance Lifecycle
 
-Each backend in a pool moves through four states:
+Each instance of a server moves through four states:
 
 | State | Meaning |
 |-------|---------|
 | `warming` | Process started; not yet seen in server-info poll. Not routable. |
-| `active` | Seen in polls; eligible for slist backend selection. |
+| `active` | Seen in polls; eligible for slist instance selection. |
 | `draining` | No players, headroom allows removal. Not preferred, but usable as fallback. |
 | `terminating` | Selected for shutdown; removed when process exits. |
 
-Backends move to `draining` only when at least two active backends remain and total free slots minus the backend's cap still meets headroom. Draining backends with zero players for 6 consecutive poll cycles (≈3 seconds) are shut down. The last running backend in a pool is never despawned.
+Instances move to `draining` only when at least two active instances remain and total free slots minus the instance's cap still meets headroom. Draining instances with zero players for 6 consecutive poll cycles (≈3 seconds) are shut down. The last running instance of a server is never despawned.
 
-### Observing Pools
+### Observing Servers
 
-`slist` in the console shows one row per autoscaled pool with the instance count appended to the users column (e.g. `2/16 ×3` means 2 players across 3 instances with a 16-player aggregate cap). Entries that are not autoscaling omit the instance suffix.
+`slist` in the console shows one row per autoscaled server with the instance count appended to the users column (e.g. `2/16 ×3` means 2 players across 3 instances with a 16-player aggregate cap). Entries that are not autoscaling omit the instance suffix.
 
-`rcon` on a pool entry fans the command out to every running backend in that pool. Target a pool by hostname or the pool index shown in `rcon nexus slist`, or target a specific instance by listen port when you want only one backend to receive the command.
+Target a specific instance with `rcon <port> <cmd>` using the listen port shown in `rcon nexus server list <idx>`.
 
 ## Background Music (BGM)
 

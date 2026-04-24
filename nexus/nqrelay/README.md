@@ -15,4 +15,4 @@ Full API documentation is in the Go source — run `go doc ./...` or visit
 2. Port `0` is the control channel. Define your own payload semantics in `HandleControlFrame`.
 3. Override `Upgrader.CheckOrigin` for production deployments.
 4. Set `IsAllowedPort` to restrict clients to specific UDP destinations.
-5. Keep `sourceKey` stable across reconnects if deterministic virtual-IP identity matters.
+5. Keep `sourceKey` stable across reconnects if deterministic NQIP identity matters.

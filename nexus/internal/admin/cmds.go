@@ -2,100 +2,144 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/google/shlex"
+	"github.com/0xBrsm/NexQuake/nexus/internal/session"
 )
 
-// ServerInfo is a point-in-time view of a managed server for admin display.
+// ServerInfo is a point-in-time view of a managed server for RPC responses.
 type ServerInfo struct {
-	Line          int    // 0-based pool line index.
-	Hostname      string // Server hostname reported by the game server.
-	MapName       string // Current map name.
-	CandidatePort int    // Suggested connect port for a pool snapshot.
-	ListenPort    int    // Backend UDP/TCP listen port.
-	GameDir       string // Quake game directory (e.g. "id1", "ctf").
-	Players       int    // Current player count.
-	MaxPlayers    int    // Maximum allowed players; 0 means unknown.
-	Instances     int    // Pool instance count; 0 hides the suffix.
-	State         string // Lifecycle state string (e.g. "running", "stopped").
+	Line          int    `json:"line"`     // 0-based server line index.
+	Hostname      string `json:"hostname"` // Server hostname reported by the game server.
+	MapName       string `json:"map_name,omitempty"`
+	CandidatePort int    `json:"candidate_port,omitempty"`
+	ListenPort    int    `json:"listen_port,omitempty"`
+	GameDir       string `json:"game_dir,omitempty"`
+	Players       int    `json:"players"`
+	MaxPlayers    int    `json:"max_players"`
+	Instances     int    `json:"instances,omitempty"`
+	State         string `json:"state"`
 }
 
 // Env provides all external dependencies for admin command execution.
-// Callers construct an Env at startup and pass it to
-// [HandleAdminFrameWithIdentityAndPromotionHook];
-// all fields are optional unless the corresponding admin command is used.
+// Callers construct an Env at startup and pass it to [Dispatch]; all fields
+// are optional unless the corresponding admin command is used.
 type Env struct {
-	// ServerSnapshots returns a current point-in-time list of managed pools.
-	ServerSnapshots func() []ServerInfo
-	// BackendSnapshots returns a current point-in-time list of backend servers.
-	// target=0 selects all pools; positive targets resolve as a pool index.
-	BackendSnapshots func(target int) ([]ServerInfo, error)
-	// StartServer starts the server identified by pool index.
-	StartServer func(target int) error
-	// StartServersAll starts all managed servers; may be nil if unavailable.
-	StartServersAll func() error
-	// StopServer stops one server; killAfter is the grace period before SIGKILL.
-	StopServer func(ctx context.Context, target int, killAfter time.Duration) error
-	// StopServersAll stops all servers; may be nil if unavailable.
-	StopServersAll func(ctx context.Context, killAfter time.Duration) error
-	// RestartServer restarts one server.
-	RestartServer func(ctx context.Context, target int, killAfter time.Duration) error
-	// RestartServersAll restarts all servers; may be nil if unavailable.
-	RestartServersAll func(ctx context.Context, killAfter time.Duration) error
-	// RemoveServer removes a stopped server from the registry.
-	RemoveServer func(target int) error
-	// LaunchServer starts a new server process and registers it.
-	LaunchServer func(binary string, args []string) error
-	// DispatchServerCmd sends a console command to a managed server selector.
-	// Targets may be a hostname cache entry, listen port, or pool index.
-	DispatchServerCmd func(target, cmd, actorID string) (string, error)
-	// IsManagedListenPort reports whether a port belongs to a managed server that
-	// is not yet reflected in ServerSnapshots (e.g. still starting up).
+	ServerSnapshots     func() []ServerInfo
+	InstanceSnapshots   func(target int) ([]ServerInfo, error)
+	StartServer         func(target int) error
+	StartServersAll     func() error
+	StopServer          func(ctx context.Context, target int, killAfter time.Duration) error
+	StopServersAll      func(ctx context.Context, killAfter time.Duration) error
+	RestartServer       func(ctx context.Context, target int, killAfter time.Duration) error
+	RestartServersAll   func(ctx context.Context, killAfter time.Duration) error
+	RemoveServer        func(target int) error
+	LaunchServer        func(binary string, args []string) error
+	DispatchInstanceCmd func(port int, cmd, actorID string) (string, error)
 	IsManagedListenPort func(port int) bool
-	// TailNexusLog returns the last n buffered Nexus log lines.
-	TailNexusLog func(n int) []string
-	// Auditf writes a structured audit log entry; may be nil to disable auditing.
-	Auditf func(format string, args ...any)
+	TailNexusLog        func(n int) []string
+	Auditf              func(format string, args ...any)
 
-	// SessionSnapshots returns a point-in-time list of all active client sessions.
-	SessionSnapshots func() []SessionInfo
-	// SnapshotByVIP returns the live [Session] handles and active [BanTarget] list
-	// for every connection that holds the given virtual IP.
-	SnapshotByVIP func(vip string) ([]Session, []BanTarget)
-	// ReserveAndBlock permanently reserves the virtual IP slot and blocks the
-	// source key so the banned client cannot reconnect.
-	ReserveAndBlock func(ip [4]byte, sourceKey string)
+	SessionSnapshots func() []session.Snapshot
+	SnapshotByNQIP   func(nqip string) ([]*session.Session, []session.BanTarget)
+	ReserveAndBlock  func(ip [4]byte, sourceKey string)
 }
 
-type adminCommandSpec struct {
-	form        string
-	description string
+const defaultServerTailLines = 10
+
+// --- Command registry -------------------------------------------------------
+
+// Command describes a single JSON-RPC admin method. Description is the
+// shared one-line purpose, used by both rcon.help (in-game rendering, keyed
+// off HelpForm) and rpc.discover (structured self-description, keyed off
+// Method). Commands with an empty HelpForm are omitted from rcon.help —
+// they are not user-typed (e.g. [server.instance.command] is reached via
+// `rcon <port> <cmd>`).
+type Command struct {
+	Method      string
+	HelpForm    string
+	Description string
+	ParseParams func(raw json.RawMessage) (any, error)
+	Handler     func(env *Env, actor Actor, params any) (any, error)
 }
 
-const (
-	topLevelRconUsage = "usage: rcon <cmd> | rcon nexus <cmd> | rcon <host|port|idx> <cmd>\n"
-	nexusRconPrefix   = "rcon nexus "
-	poolTargetForm    = "<all|idx|host>"
+var adminCommands = []Command{
+	{Method: "rcon.help", HelpForm: "help", Description: "show in-game rcon command help",
+		ParseParams: parseEmpty, Handler: rconHelpHandler},
+	{Method: "rpc.discover", Description: "list all RPC methods with descriptions",
+		ParseParams: parseEmpty, Handler: rpcDiscoverHandler},
+	{Method: "logs.tail", HelpForm: "tail [N]", Description: "last N (default 10) Nexus log lines",
+		ParseParams: parseLogsTail, Handler: logsTailHandler},
+	{Method: "server.list", HelpForm: "server list", Description: "list managed servers",
+		ParseParams: parseEmpty, Handler: serverListHandler},
+	{Method: "server.instances", HelpForm: "server list <idx|all>", Description: "list instances of one or all servers",
+		ParseParams: parseServerInstances, Handler: serverInstancesHandler},
+	{Method: "server.start", HelpForm: "server start <idx|all>", Description: "start one or all servers",
+		ParseParams: parseServerTarget, Handler: serverStartHandler},
+	{Method: "server.stop", HelpForm: "server stop <idx|all> [secs]", Description: "stop one or all servers",
+		ParseParams: parseServerStop, Handler: serverStopHandler},
+	{Method: "server.restart", HelpForm: "server restart <idx|all> [secs]", Description: "restart one or all servers",
+		ParseParams: parseServerStop, Handler: serverRestartHandler},
+	{Method: "server.remove", HelpForm: "server remove <idx>", Description: "remove a stopped server",
+		ParseParams: parseIndexOnly, Handler: serverRemoveHandler},
+	{Method: "server.launch", HelpForm: "server launch <binary> [args...]", Description: "launch and register a new server",
+		ParseParams: parseServerLaunch, Handler: serverLaunchHandler},
+	{Method: "session.list", HelpForm: "session list", Description: "list active client sessions",
+		ParseParams: parseEmpty, Handler: sessionListHandler},
+	{Method: "session.info", HelpForm: "session info <nqip>", Description: "detail for one session",
+		ParseParams: parseSessionLookup, Handler: sessionInfoHandler},
+	{Method: "session.ban", HelpForm: "session ban <nqip>", Description: "ban session until Nexus restart",
+		ParseParams: parseSessionLookup, Handler: sessionBanHandler},
+	{Method: "server.instance.command", HelpForm: "server <port> <cmd...>", Description: "forward command to a specific instance",
+		ParseParams: parseInstanceCommand, Handler: instanceCommandHandler},
+}
+
+// helpText and discoverMethods are built once in init() from adminCommands
+// and served by rconHelpHandler / rpcDiscoverHandler. Routing reads through
+// package-level vars (instead of iterating adminCommands inside the handlers)
+// breaks the var-init cycle Go would otherwise flag.
+var (
+	helpText        string
+	discoverMethods []RPCMethodInfo
+	commandByMethod map[string]*Command
 )
 
-var adminCommandSpecs = []adminCommandSpec{
-	{form: "help", description: "show Nexus rcon commands"},
-	{form: "tail", description: "show last 10 Nexus log lines"},
-	{form: "slist [" + poolTargetForm + "]", description: "list managed pools or backend servers"},
-	{form: "session list", description: "list connected client sessions"},
-	{form: "session info <idx>", description: "show detailed info for one session"},
-	{form: "session ban <idx>", description: "ban session until Nexus restart"},
-	{form: "start <idx|host|all>", description: "start one or all pools"},
-	{form: "stop <idx|host|all>", description: "stop one or all pools"},
-	{form: "restart <idx|host|all>", description: "restart one or all pools"},
-	{form: "remove <idx|host>", description: "remove a stopped pool from registry"},
-	{form: "launch <binary> [args...]", description: "launch and register a new server"},
+func init() {
+	helpText = buildHelpText()
+	discoverMethods = buildDiscoverMethods()
+	commandByMethod = make(map[string]*Command, len(adminCommands))
+	for i := range adminCommands {
+		commandByMethod[adminCommands[i].Method] = &adminCommands[i]
+	}
 }
 
+func lookupCommand(method string) (*Command, bool) {
+	cmd, ok := commandByMethod[method]
+	return cmd, ok
+}
+
+// --- Shared helpers ---------------------------------------------------------
+
+func parseEmpty(_ json.RawMessage) (any, error) { return struct{}{}, nil }
+
+func unmarshalParams[T any](raw json.RawMessage) (*T, error) {
+	var p T
+	if len(raw) == 0 || string(raw) == "null" {
+		return &p, nil
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, fmt.Errorf("invalid params: %v", err)
+	}
+	return &p, nil
+}
+
+// displayHostname coerces a potentially empty hostname into a human-readable
+// placeholder for display enrichment (e.g. sessions linking to their current
+// server). Not used for addressing — server identifiers are numeric indices.
 func displayHostname(hostname string) string {
 	if hostname == "" {
 		return "UNNAMED"
@@ -103,384 +147,415 @@ func displayHostname(hostname string) string {
 	return hostname
 }
 
-func displayField(s string) string {
-	if s == "" {
-		return "?"
+// parseServerTargetToken interprets a lifecycle target string. Accepts a
+// positive 1-based server index (as shown in server.list) or the literal
+// "all". Returns (index, isAll, error). Exactly one of index>0 or isAll=true
+// on success. Hostnames are NOT accepted — servers are not guaranteed to
+// carry one, so the registry index is the only stable identifier.
+func parseServerTargetToken(target string) (int, bool, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return 0, false, &MethodError{Code: ErrCodeInvalidParams, Message: "target is required"}
 	}
-	return s
+	if strings.EqualFold(target, "all") {
+		return 0, true, nil
+	}
+	idx, err := strconv.Atoi(target)
+	if err != nil || idx <= 0 {
+		return 0, false, &MethodError{Code: ErrCodeInvalidParams, Message: fmt.Sprintf("invalid target %q: expected 1-based server index or \"all\"", target)}
+	}
+	return idx, false, nil
 }
 
-func formatNexusPoolList(servers []ServerInfo) string {
-	if len(servers) == 0 {
-		return "\nNo Quake pools found.\n\n"
+// --- server.list ------------------------------------------------------------
+
+type ServerListResult struct {
+	Servers []ServerInfo `json:"servers"`
+}
+
+func serverListHandler(env *Env, _ Actor, _ any) (any, error) {
+	if env == nil || env.ServerSnapshots == nil {
+		return nil, &MethodError{Code: ErrCodeUnavailable, Message: "server manager unavailable"}
+	}
+	return ServerListResult{Servers: env.ServerSnapshots()}, nil
+}
+
+// --- server.instances -------------------------------------------------------
+
+type ServerInstancesParams struct {
+	Index int `json:"index,omitempty"` // 1-based server index; 0/omitted = all servers
+}
+
+// ServerWithInstances is one server with its running instances nested.
+// Server-level fields (the aggregate display) match ServerInfo; Instances holds
+// the per-instance ServerInfos for the same server. The instance count is not
+// repeated — len(Instances) serves that role.
+type ServerWithInstances struct {
+	Index         int          `json:"index"` // 1-based registry index
+	Hostname      string       `json:"hostname"`
+	GameDir       string       `json:"game_dir,omitempty"`
+	State         string       `json:"state"`
+	CandidatePort int          `json:"candidate_port,omitempty"`
+	Players       int          `json:"players"`
+	MaxPlayers    int          `json:"max_players"`
+	Instances     []ServerInfo `json:"instances"`
+}
+
+type ServerInstancesResult struct {
+	Servers []ServerWithInstances `json:"servers"`
+}
+
+func parseServerInstances(raw json.RawMessage) (any, error) {
+	p, err := unmarshalParams[ServerInstancesParams](raw)
+	if err != nil {
+		return nil, err
+	}
+	if p.Index < 0 {
+		return nil, fmt.Errorf("invalid index %d: must be positive or omitted", p.Index)
+	}
+	return p, nil
+}
+
+func serverInstancesHandler(env *Env, _ Actor, params any) (any, error) {
+	if env == nil || env.ServerSnapshots == nil || env.InstanceSnapshots == nil {
+		return nil, &MethodError{Code: ErrCodeUnavailable, Message: "server manager unavailable"}
+	}
+	p := params.(*ServerInstancesParams)
+	servers := env.ServerSnapshots()
+	instances, err := env.InstanceSnapshots(p.Index)
+	if err != nil {
+		return nil, &MethodError{Code: ErrCodeDispatch, Message: err.Error()}
 	}
 
-	var b strings.Builder
-	b.WriteByte('\n')
-	b.WriteString("#   Pool            Candidate Game            Users        State\n")
-	b.WriteString("--- --------------- --------- --------------- ------------ --------\n")
+	byLine := make(map[int][]ServerInfo, len(servers))
+	for _, b := range instances {
+		byLine[b.Line] = append(byLine[b.Line], b)
+	}
+
+	out := make([]ServerWithInstances, 0, len(servers))
 	for i, s := range servers {
-		fmt.Fprintf(&b, "%-3d %-15.15s %9d %-15.15s %-12.12s %-8.8s\n",
-			i+1, displayHostname(s.Hostname), s.CandidatePort, displayField(s.GameDir), formatPoolUsers(s), s.State)
-	}
-	b.WriteString("== end list ==\n\n")
-	return b.String()
-}
-
-func formatPoolUsers(s ServerInfo) string {
-	users := "--/--"
-	if s.MaxPlayers > 0 {
-		users = fmt.Sprintf("%d/%d", s.Players, s.MaxPlayers)
-		if s.Instances > 0 {
-			users = fmt.Sprintf("%s (%d)", users, s.Instances)
-		}
-	}
-	return users
-}
-
-func formatBackendUsers(s ServerInfo) string {
-	if s.MaxPlayers <= 0 {
-		return "--/--"
-	}
-	return fmt.Sprintf("%d/%d", s.Players, s.MaxPlayers)
-}
-
-func formatNexusBackendGroup(b *strings.Builder, poolIndex int, pool ServerInfo, servers []ServerInfo) {
-	fmt.Fprintf(b, "[%d] %s  game=%s  users=%s  candidate=%d  state=%s\n",
-		poolIndex, displayHostname(pool.Hostname), displayField(pool.GameDir), formatPoolUsers(pool), pool.CandidatePort, pool.State)
-	b.WriteString("    #  Port  Map             Users   State\n")
-	b.WriteString("    -- ----- --------------- ------- --------\n")
-	for i, s := range servers {
-		fmt.Fprintf(b, "    %-2d %5d %-15.15s %-7.7s %-8.8s\n",
-			i+1, s.ListenPort, displayField(s.MapName), formatBackendUsers(s), s.State)
-	}
-}
-
-func formatNexusBackendList(allPools, selectedPools, servers []ServerInfo) string {
-	grouped := make(map[int][]ServerInfo, len(selectedPools))
-	for _, s := range servers {
-		grouped[s.Line] = append(grouped[s.Line], s)
-	}
-	indexByLine := make(map[int]int, len(allPools))
-	for i, pool := range allPools {
-		indexByLine[pool.Line] = i + 1
-	}
-
-	var b strings.Builder
-	wrote := false
-	for _, pool := range selectedPools {
-		group := grouped[pool.Line]
-		if len(group) == 0 {
+		idx := i + 1
+		if p.Index > 0 && idx != p.Index {
 			continue
 		}
-		b.WriteByte('\n')
-		formatNexusBackendGroup(&b, indexByLine[pool.Line], pool, group)
-		wrote = true
+		out = append(out, ServerWithInstances{
+			Index:         idx,
+			Hostname:      s.Hostname,
+			GameDir:       s.GameDir,
+			State:         s.State,
+			CandidatePort: s.CandidatePort,
+			Players:       s.Players,
+			MaxPlayers:    s.MaxPlayers,
+			Instances:     byLine[s.Line],
+		})
 	}
-	if !wrote {
-		return "\nNo Quake backend servers found.\n\n"
-	}
-	b.WriteString("== end list ==\n\n")
-	return b.String()
+	return ServerInstancesResult{Servers: out}, nil
 }
 
-func formatNexusTailReply(lines []string) string {
-	if len(lines) == 0 {
-		return "No buffered Nexus logs.\n"
-	}
+// --- server.start / stop / restart ------------------------------------------
 
-	var out strings.Builder
-	for _, line := range lines {
+type ServerTargetParams struct {
+	Target string `json:"target"` // 1-based server index (as a string) or "all"
+}
+
+type ServerStopParams struct {
+	Target       string `json:"target"` // 1-based server index (as a string) or "all"
+	GraceSeconds int    `json:"grace_seconds,omitempty"`
+}
+
+type ServerLifecycleResult struct {
+	OK bool `json:"ok"`
+}
+
+func parseServerTarget(raw json.RawMessage) (any, error) {
+	return unmarshalParams[ServerTargetParams](raw)
+}
+
+func parseServerStop(raw json.RawMessage) (any, error) {
+	return unmarshalParams[ServerStopParams](raw)
+}
+
+func serverStartHandler(env *Env, _ Actor, params any) (any, error) {
+	idx, all, err := parseServerTargetToken(params.(*ServerTargetParams).Target)
+	if err != nil {
+		return nil, err
+	}
+	if all {
+		if env == nil || env.StartServersAll == nil {
+			return nil, &MethodError{Code: ErrCodeUnavailable, Message: "start all unavailable"}
+		}
+		if err := env.StartServersAll(); err != nil {
+			return nil, &MethodError{Code: ErrCodeDispatch, Message: err.Error()}
+		}
+		return ServerLifecycleResult{OK: true}, nil
+	}
+	if env == nil || env.StartServer == nil {
+		return nil, &MethodError{Code: ErrCodeUnavailable, Message: "start unavailable"}
+	}
+	if err := env.StartServer(idx); err != nil {
+		return nil, &MethodError{Code: ErrCodeDispatch, Message: err.Error()}
+	}
+	return ServerLifecycleResult{OK: true}, nil
+}
+
+func graceDuration(seconds int) time.Duration {
+	if seconds <= 0 {
+		return 2 * time.Second
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func serverStopHandler(env *Env, _ Actor, params any) (any, error) {
+	p := params.(*ServerStopParams)
+	idx, all, err := parseServerTargetToken(p.Target)
+	if err != nil {
+		return nil, err
+	}
+	grace := graceDuration(p.GraceSeconds)
+	if all {
+		if env == nil || env.StopServersAll == nil {
+			return nil, &MethodError{Code: ErrCodeUnavailable, Message: "stop all unavailable"}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), grace+time.Second)
+		defer cancel()
+		if err := env.StopServersAll(ctx, grace); err != nil {
+			return nil, &MethodError{Code: ErrCodeDispatch, Message: err.Error()}
+		}
+		return ServerLifecycleResult{OK: true}, nil
+	}
+	if env == nil || env.StopServer == nil {
+		return nil, &MethodError{Code: ErrCodeUnavailable, Message: "stop unavailable"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), grace+time.Second)
+	defer cancel()
+	if err := env.StopServer(ctx, idx, grace); err != nil {
+		return nil, &MethodError{Code: ErrCodeDispatch, Message: err.Error()}
+	}
+	return ServerLifecycleResult{OK: true}, nil
+}
+
+func serverRestartHandler(env *Env, _ Actor, params any) (any, error) {
+	p := params.(*ServerStopParams)
+	idx, all, err := parseServerTargetToken(p.Target)
+	if err != nil {
+		return nil, err
+	}
+	grace := graceDuration(p.GraceSeconds)
+	if all {
+		if env == nil || env.RestartServersAll == nil {
+			return nil, &MethodError{Code: ErrCodeUnavailable, Message: "restart all unavailable"}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), grace+3*time.Second)
+		defer cancel()
+		if err := env.RestartServersAll(ctx, grace); err != nil {
+			return nil, &MethodError{Code: ErrCodeDispatch, Message: err.Error()}
+		}
+		return ServerLifecycleResult{OK: true}, nil
+	}
+	if env == nil || env.RestartServer == nil {
+		return nil, &MethodError{Code: ErrCodeUnavailable, Message: "restart unavailable"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), grace+3*time.Second)
+	defer cancel()
+	if err := env.RestartServer(ctx, idx, grace); err != nil {
+		return nil, &MethodError{Code: ErrCodeDispatch, Message: err.Error()}
+	}
+	return ServerLifecycleResult{OK: true}, nil
+}
+
+// --- server.remove ----------------------------------------------------------
+
+type IndexParams struct {
+	Index int `json:"index"` // 1-based server index
+}
+
+type ServerRemoveResult struct {
+	Removed bool `json:"removed"`
+}
+
+func parseIndexOnly(raw json.RawMessage) (any, error) {
+	p, err := unmarshalParams[IndexParams](raw)
+	if err != nil {
+		return nil, err
+	}
+	if p.Index <= 0 {
+		return nil, fmt.Errorf("server index is required (positive 1-based)")
+	}
+	return p, nil
+}
+
+func serverRemoveHandler(env *Env, _ Actor, params any) (any, error) {
+	p := params.(*IndexParams)
+	if env == nil || env.RemoveServer == nil {
+		return nil, &MethodError{Code: ErrCodeUnavailable, Message: "remove unavailable"}
+	}
+	if err := env.RemoveServer(p.Index); err != nil {
+		return nil, &MethodError{Code: ErrCodeDispatch, Message: err.Error()}
+	}
+	return ServerRemoveResult{Removed: true}, nil
+}
+
+// --- server.launch ----------------------------------------------------------
+
+type ServerLaunchParams struct {
+	Binary string   `json:"binary"`
+	Args   []string `json:"args,omitempty"`
+}
+
+type ServerLaunchResult struct {
+	OK bool `json:"ok"`
+}
+
+func parseServerLaunch(raw json.RawMessage) (any, error) {
+	p, err := unmarshalParams[ServerLaunchParams](raw)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.Binary) == "" {
+		return nil, fmt.Errorf("binary is required")
+	}
+	return p, nil
+}
+
+func serverLaunchHandler(env *Env, _ Actor, params any) (any, error) {
+	p := params.(*ServerLaunchParams)
+	if env == nil || env.LaunchServer == nil {
+		return nil, &MethodError{Code: ErrCodeUnavailable, Message: "launch unavailable"}
+	}
+	if err := env.LaunchServer(p.Binary, append([]string(nil), p.Args...)); err != nil {
+		return nil, &MethodError{Code: ErrCodeDispatch, Message: err.Error()}
+	}
+	return ServerLaunchResult{OK: true}, nil
+}
+
+// --- server.command (escape hatch: forward raw text to a server console) ---
+
+type InstanceCommandParams struct {
+	Port int    `json:"port"` // listen port of a live instance
+	Cmd  string `json:"cmd"`
+}
+
+type InstanceCommandResult struct {
+	Reply string `json:"reply"`
+}
+
+func parseInstanceCommand(raw json.RawMessage) (any, error) {
+	p, err := unmarshalParams[InstanceCommandParams](raw)
+	if err != nil {
+		return nil, err
+	}
+	if p.Port <= 0 || p.Port > 65535 {
+		return nil, fmt.Errorf("port is required (1..65535)")
+	}
+	if strings.TrimSpace(p.Cmd) == "" {
+		return nil, fmt.Errorf("cmd is required")
+	}
+	return p, nil
+}
+
+func instanceCommandHandler(env *Env, actor Actor, params any) (any, error) {
+	p := params.(*InstanceCommandParams)
+	if env == nil || env.DispatchInstanceCmd == nil {
+		return nil, &MethodError{Code: ErrCodeUnavailable, Message: "server manager unavailable"}
+	}
+	reply, err := env.DispatchInstanceCmd(p.Port, p.Cmd, actor.ID)
+	if err != nil {
+		return nil, &MethodError{Code: ErrCodeDispatch, Message: err.Error()}
+	}
+	return InstanceCommandResult{Reply: reply}, nil
+}
+
+// --- logs.tail --------------------------------------------------------------
+
+type LogsTailParams struct {
+	Lines int `json:"lines,omitempty"`
+}
+
+type LogsTailResult struct {
+	Lines []string `json:"lines"`
+}
+
+func parseLogsTail(raw json.RawMessage) (any, error) {
+	return unmarshalParams[LogsTailParams](raw)
+}
+
+func logsTailHandler(env *Env, _ Actor, params any) (any, error) {
+	if env == nil || env.TailNexusLog == nil {
+		return nil, &MethodError{Code: ErrCodeUnavailable, Message: "log tail unavailable"}
+	}
+	p := params.(*LogsTailParams)
+	n := p.Lines
+	if n <= 0 {
+		n = defaultServerTailLines
+	}
+	raw := env.TailNexusLog(n)
+	out := make([]string, 0, len(raw))
+	for _, line := range raw {
 		line = strings.ReplaceAll(line, "\r", "")
+		line = strings.TrimRight(line, "\n")
 		if line == "" {
 			continue
 		}
-		out.WriteString(line)
-		if !strings.HasSuffix(line, "\n") {
-			out.WriteByte('\n')
-		}
+		out = append(out, line)
 	}
-	if out.Len() == 0 {
-		return "No buffered Nexus logs.\n"
-	}
-	return out.String()
+	return LogsTailResult{Lines: out}, nil
 }
 
-func parseAdminIndex(text string) (int, error) {
-	target, err := strconv.Atoi(strings.TrimSpace(text))
-	if err != nil || target <= 0 {
-		return 0, fmt.Errorf("invalid target %q", text)
-	}
-	return target, nil
+// --- rcon.help --------------------------------------------------------------
+
+type RconHelpResult struct {
+	Text string `json:"text"`
 }
 
-func normalizePoolTargetName(hostname string) string {
-	hostname = strings.TrimSpace(hostname)
-	if hostname == "" {
-		return "UNNAMED"
-	}
-	return hostname
+func rconHelpHandler(_ *Env, _ Actor, _ any) (any, error) {
+	return RconHelpResult{Text: helpText}, nil
 }
 
-func resolvePoolTarget(text string, env *Env) (int, error) {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return 0, fmt.Errorf("invalid target %q", text)
-	}
-
-	hasSnapshots := env != nil && env.ServerSnapshots != nil
-	var snapshots []ServerInfo
-	if hasSnapshots {
-		snapshots = env.ServerSnapshots()
-	}
-
-	if idx, err := parseAdminIndex(text); err == nil {
-		if !hasSnapshots || idx <= len(snapshots) {
-			return idx, nil
-		}
-		return 0, fmt.Errorf("unknown target %q", text)
-	}
-
-	if !hasSnapshots {
-		return 0, fmt.Errorf("unknown target %q", text)
-	}
-
-	match := 0
-	for i, snap := range snapshots {
-		if !strings.EqualFold(text, normalizePoolTargetName(snap.Hostname)) {
+func buildHelpText() string {
+	formWidth := 0
+	for _, c := range adminCommands {
+		if c.HelpForm == "" {
 			continue
 		}
-		if match != 0 {
-			return 0, fmt.Errorf("ambiguous target %q", text)
+		if n := len(c.HelpForm); n > formWidth {
+			formWidth = n
 		}
-		match = i + 1
 	}
-	if match == 0 {
-		return 0, fmt.Errorf("unknown target %q", text)
-	}
-	return match, nil
-}
 
-func adminCommandForm(form string) string {
-	return nexusRconPrefix + form
-}
-
-func adminUsageLine(form string) string {
-	return "usage: " + adminCommandForm(form)
-}
-
-func adminUsage(form string) error {
-	return fmt.Errorf("%s", adminUsageLine(form))
-}
-
-func adminUsageAlternatives(forms ...string) error {
-	alternatives := make([]string, 0, len(forms))
-	for _, form := range forms {
-		alternatives = append(alternatives, adminCommandForm(form))
-	}
-	return fmt.Errorf("usage: %s", strings.Join(alternatives, " | "))
-}
-
-func adminHelpError(detail string) error {
-	return fmt.Errorf("%s\n%s", detail, adminUsageLine("help"))
-}
-
-func withAdminUsage(err error, form string) error {
-	if err == nil {
-		return nil
-	}
-	return fmt.Errorf("%v\n%v", err, adminUsage(form))
-}
-
-func requireAdminArgs(got []string, want int, form string) error {
-	if len(got) != want {
-		return adminUsage(form)
-	}
-	return nil
-}
-
-func formatAdminCommandHelp() string {
 	var b strings.Builder
-	b.WriteByte('\n')
-	b.WriteString("Nexus commands:\n")
-	for _, spec := range adminCommandSpecs {
-		fmt.Fprintf(&b, "  %-35s %s\n", adminCommandForm(spec.form), spec.description)
+	b.WriteString("\nNexQuake commands:\n")
+	for _, c := range adminCommands {
+		if c.HelpForm == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "  rcon %-*s  %s\n", formWidth, c.HelpForm, c.Description)
 	}
-	b.WriteString("\n\n")
+	b.WriteString("\nShortcuts (equivalent to `rcon server <port> <cmd...>`):\n")
+	b.WriteString("  rcon <port> <cmd...>\n")
+	b.WriteString("  rcon <cmd...>             when connected, uses the current listen port\n")
+	b.WriteString("\nPrefix any admin command with `nexus` while connected (e.g. `rcon nexus server list`).\n\n")
 	return b.String()
 }
 
-func runServerLifecycleOne(cmd string, target int, env *Env) error {
-	switch cmd {
-	case "start":
-		return env.StartServer(target)
-	case "stop":
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		return env.StopServer(ctx, target, 2*time.Second)
-	default:
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return env.RestartServer(ctx, target, 2*time.Second)
-	}
+// --- rpc.discover -----------------------------------------------------------
+
+type RPCMethodInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 }
 
-func runServerLifecycleAll(cmd string, env *Env) error {
-	switch cmd {
-	case "start":
-		if env.StartServersAll == nil {
-			return fmt.Errorf("start all unavailable")
-		}
-		return env.StartServersAll()
-	case "stop":
-		if env.StopServersAll == nil {
-			return fmt.Errorf("stop all unavailable")
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		return env.StopServersAll(ctx, 2*time.Second)
-	default:
-		if env.RestartServersAll == nil {
-			return fmt.Errorf("restart all unavailable")
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return env.RestartServersAll(ctx, 2*time.Second)
-	}
+type RPCDiscoverResult struct {
+	Methods []RPCMethodInfo `json:"methods"`
 }
 
-func execServerLifecycleCommand(cmd string, cmdArgs []string, env *Env) (string, error) {
-	form := cmd + " <idx|host|all>"
-	if err := requireAdminArgs(cmdArgs, 1, form); err != nil {
-		return "", err
-	}
-
-	targetArg := strings.TrimSpace(cmdArgs[0])
-	var err error
-	if strings.EqualFold(targetArg, "all") {
-		err = runServerLifecycleAll(cmd, env)
-	} else {
-		target, parseErr := resolvePoolTarget(targetArg, env)
-		if parseErr != nil {
-			return "", withAdminUsage(parseErr, form)
-		}
-		err = runServerLifecycleOne(cmd, target, env)
-	}
-	if err != nil {
-		return "", withAdminUsage(err, form)
-	}
-	return "complete\n", nil
+func rpcDiscoverHandler(_ *Env, _ Actor, _ any) (any, error) {
+	return RPCDiscoverResult{Methods: discoverMethods}, nil
 }
 
-func execBackendListCommand(cmdArgs []string, env *Env) (string, error) {
-	form := "slist " + poolTargetForm
-	if err := requireAdminArgs(cmdArgs, 1, form); err != nil {
-		return "", err
+func buildDiscoverMethods() []RPCMethodInfo {
+	out := make([]RPCMethodInfo, 0, len(adminCommands))
+	for _, c := range adminCommands {
+		out = append(out, RPCMethodInfo{Name: c.Method, Description: c.Description})
 	}
-	if env.BackendSnapshots == nil || env.ServerSnapshots == nil {
-		return "", fmt.Errorf("server manager not available")
-	}
-
-	allPools := env.ServerSnapshots()
-	targetArg := strings.TrimSpace(cmdArgs[0])
-	target := 0
-	selectedPools := allPools
-	if !strings.EqualFold(targetArg, "all") {
-		parsed, err := resolvePoolTarget(targetArg, env)
-		if err != nil {
-			return "", withAdminUsage(err, form)
-		}
-		target = parsed
-		if target > 0 && target <= len(allPools) {
-			selectedPools = allPools[target-1 : target]
-		}
-	}
-
-	servers, err := env.BackendSnapshots(target)
-	if err != nil {
-		return "", withAdminUsage(err, form)
-	}
-	return formatNexusBackendList(allPools, selectedPools, servers), nil
-}
-
-// execNexusCommand dispatches a Nexus admin command and returns its reply.
-func execNexusCommand(args string, env *Env) (string, error) {
-	if env == nil {
-		return "", fmt.Errorf("server manager not available")
-	}
-
-	parts, splitErr := shlex.Split(strings.TrimSpace(args))
-	if splitErr != nil {
-		return "", adminHelpError(fmt.Sprintf("invalid Nexus command line: %v", splitErr))
-	}
-	if len(parts) == 0 {
-		return formatAdminCommandHelp(), nil
-	}
-	if strings.EqualFold(parts[0], "nexus") {
-		parts = parts[1:]
-	}
-	if len(parts) == 0 {
-		return formatAdminCommandHelp(), nil
-	}
-
-	cmd := strings.ToLower(parts[0])
-	cmdArgs := parts[1:]
-
-	switch cmd {
-	case "help":
-		if err := requireAdminArgs(cmdArgs, 0, "help"); err != nil {
-			return "", err
-		}
-		return formatAdminCommandHelp(), nil
-
-	case "tail":
-		if err := requireAdminArgs(cmdArgs, 0, "tail"); err != nil {
-			return "", err
-		}
-		return formatNexusTailReply(env.TailNexusLog(defaultServerTailLines)), nil
-
-	case "slist":
-		switch len(cmdArgs) {
-		case 0:
-			return formatNexusPoolList(env.ServerSnapshots()), nil
-		case 1:
-			return execBackendListCommand(cmdArgs, env)
-		default:
-			return "", adminUsage("slist [" + poolTargetForm + "]")
-		}
-
-	case "session":
-		return execSessionCommand(cmdArgs, env)
-
-	case "launch":
-		form := "launch <binary> [args...]"
-		if len(cmdArgs) < 1 {
-			return "", adminUsage(form)
-		}
-		binary := cmdArgs[0]
-		launchArgs := append([]string(nil), cmdArgs[1:]...)
-		if err := env.LaunchServer(binary, launchArgs); err != nil {
-			return "", withAdminUsage(err, form)
-		}
-		return "server launched\n", nil
-
-	case "remove":
-		form := "remove <idx|host>"
-		if err := requireAdminArgs(cmdArgs, 1, form); err != nil {
-			return "", err
-		}
-		target, err := resolvePoolTarget(cmdArgs[0], env)
-		if err != nil {
-			return "", withAdminUsage(err, form)
-		}
-		if err := env.RemoveServer(target); err != nil {
-			return "", withAdminUsage(err, form)
-		}
-		return "server removed\n", nil
-
-	case "start", "stop", "restart":
-		return execServerLifecycleCommand(cmd, cmdArgs, env)
-	}
-
-	return "", adminHelpError(fmt.Sprintf("unknown Nexus command %q", parts[0]))
+	return out
 }

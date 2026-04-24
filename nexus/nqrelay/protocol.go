@@ -2,7 +2,7 @@
 // dedicated game servers.
 //
 // Each connected WebSocket client gets one [Relay]. The relay binds a UDP
-// socket to a unique loopback virtual IP (allocated by [IPAllocator]) and
+// socket to a unique loopback NQIP (allocated by [NQIPAllocator]) and
 // forwards binary frames in both directions between the browser and the server.
 //
 // # Wire format
@@ -19,12 +19,11 @@
 // Control frames are handed to [FrameDispatch.HandleControlFrame] instead of
 // being forwarded over UDP. On connect, the relay sends an identity frame on
 // the control channel containing the magic "NQIP" followed by the 4-byte
-// virtual IPv4 address assigned to the client.
+// NQIPv4 address assigned to the client.
 //
 // # Usage
 //
-//	alloc := nqrelay.NewIPAllocator(net.ParseIP(nqrelay.DefaultNQServerIP))
-//	sessions := nqrelay.NewSessionRegistry()
+//	alloc := nqrelay.NewNQIPAllocator(net.ParseIP(nqrelay.DefaultNQServerIP))
 //
 //	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 //		ws, err := nqrelay.Upgrader.Upgrade(w, r, nil)
@@ -32,7 +31,7 @@
 //			return
 //		}
 //		relay, err := nqrelay.NewRelay(ws, sourceKey, sourceIP, userID, false,
-//			alloc, sessions, nqrelay.FrameDispatch{
+//			alloc, nqrelay.FrameDispatch{
 //				IsAllowedPort: func(port int) bool { return port == 26000 },
 //			}, nil, nil)
 //		if err != nil {

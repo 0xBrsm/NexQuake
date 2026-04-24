@@ -16,51 +16,51 @@ var (
 	errAlreadyStopped = errors.New("already stopped")
 )
 
-func (m *ServerManager) findPoolByIndexLocked(target int) (*serverPool, error) {
-	pools := make([]*serverPool, 0, len(m.poolsByID))
-	for _, pool := range m.poolsByID {
-		if pool == nil {
+func (m *ServerManager) findServerByIndexLocked(target int) (*server, error) {
+	servers := make([]*server, 0, len(m.serversByID))
+	for _, s := range m.serversByID {
+		if s == nil {
 			continue
 		}
-		pools = append(pools, pool)
+		servers = append(servers, s)
 	}
-	slices.SortFunc(pools, func(a, b *serverPool) int {
+	slices.SortFunc(servers, func(a, b *server) int {
 		return cmp.Compare(a.Line, b.Line)
 	})
 	index := target - 1
-	if index >= 0 && index < len(pools) {
-		return pools[index], nil
+	if index >= 0 && index < len(servers) {
+		return servers[index], nil
 	}
 
 	return nil, fmt.Errorf("unknown target %d", target)
 }
 
-func (m *ServerManager) nextPoolLineLocked() int {
+func (m *ServerManager) nextServerLineLocked() int {
 	maxLine := -1
-	for _, pool := range m.poolsByID {
-		if pool == nil {
+	for _, s := range m.serversByID {
+		if s == nil {
 			continue
 		}
-		if pool.Line > maxLine {
-			maxLine = pool.Line
+		if s.Line > maxLine {
+			maxLine = s.Line
 		}
 	}
 	return maxLine + 1
 }
 
-func (m *ServerManager) poolBackendsLocked(pool *serverPool) []*serverRecord {
-	if pool == nil {
+func (m *ServerManager) serverInstancesLocked(s *server) []*instance {
+	if s == nil {
 		return nil
 	}
-	out := make([]*serverRecord, 0, len(pool.BackendServerIDs))
-	for _, serverID := range pool.BackendServerIDs {
-		rec := m.serversByID[serverID]
+	out := make([]*instance, 0, len(s.InstanceIDs))
+	for _, serverID := range s.InstanceIDs {
+		rec := m.instancesByID[serverID]
 		if rec == nil {
 			continue
 		}
 		out = append(out, rec)
 	}
-	slices.SortFunc(out, func(a, b *serverRecord) int {
+	slices.SortFunc(out, func(a, b *instance) int {
 		aPort, bPort := recordListenPort(a), recordListenPort(b)
 		switch {
 		case aPort > 0 && bPort > 0:
@@ -77,7 +77,7 @@ func (m *ServerManager) poolBackendsLocked(pool *serverPool) []*serverRecord {
 	return out
 }
 
-// LaunchServer registers a new pool and starts a server with the given binary
+// LaunchServer registers a new s and starts a server with the given binary
 // and args. The runtime basedir must already be initialized (i.e. [ServerManager.StartAll]
 // must have run). Returns an error if the binary fails to start.
 func (m *ServerManager) LaunchServer(binary string, args []string) error {
@@ -99,7 +99,7 @@ func (m *ServerManager) LaunchServer(binary string, args []string) error {
 	startTag := time.Now().UTC().Format("20060102T150405Z")
 
 	m.mu.Lock()
-	line := m.nextPoolLineLocked()
+	line := m.nextServerLineLocked()
 	launch := serverLaunch{
 		Line:   line,
 		LogDir: fmt.Sprintf("%d-%s-%s", line, filepath.Base(binary), startTag),
@@ -108,14 +108,14 @@ func (m *ServerManager) LaunchServer(binary string, args []string) error {
 	}
 	m.mu.Unlock()
 
-	rec, err := m.registerPoolLaunch(launch)
+	rec, err := m.registerServerLaunch(launch)
 	if err != nil {
 		return err
 	}
 	return m.startRecord(rec)
 }
 
-// StartServer starts the server pool identified by 1-based pool index.
+// StartServer starts the server s identified by 1-based s index.
 // Returns [errAlreadyRunning] if the server is already up.
 func (m *ServerManager) StartServer(target int) error {
 	if target <= 0 {
@@ -123,25 +123,25 @@ func (m *ServerManager) StartServer(target int) error {
 	}
 
 	m.mu.RLock()
-	pool, err := m.findPoolByIndexLocked(target)
+	s, err := m.findServerByIndexLocked(target)
 	if err != nil {
 		m.mu.RUnlock()
 		return err
 	}
-	poolID := pool.PoolID
-	records := m.poolBackendsLocked(pool)
+	serverID := s.ServerID
+	records := m.serverInstancesLocked(s)
 	m.mu.RUnlock()
 
 	if len(records) == 0 {
 		m.mu.Lock()
-		pool = m.poolsByID[poolID]
-		if pool == nil {
+		s = m.serversByID[serverID]
+		if s == nil {
 			m.mu.Unlock()
 			return fmt.Errorf("unknown target %d", target)
 		}
-		rec := m.appendPoolBackendRecordLocked(pool, pool.TemplateLaunch, poolBackendLifecycleWarming)
+		rec := m.appendServerInstanceLocked(s, s.TemplateLaunch, instanceLifecycleWarming)
 		m.mu.Unlock()
-		records = []*serverRecord{rec}
+		records = []*instance{rec}
 	}
 
 	started := false
@@ -179,8 +179,8 @@ func (m *ServerManager) runServersAll(runOne func(target int) error, ignoreErr f
 	return errors.Join(errs...)
 }
 
-// StartServersAll calls [ServerManager.StartServer] on every registered pool,
-// ignoring pools that are already running.
+// StartServersAll calls [ServerManager.StartServer] on every registered s,
+// ignoring servers that are already running.
 func (m *ServerManager) StartServersAll() error {
 	return m.runServersAll(
 		m.StartServer,
@@ -188,8 +188,8 @@ func (m *ServerManager) StartServersAll() error {
 	)
 }
 
-// StopServer stops all backends in the pool identified by 1-based pool
-// index, removes their records, and returns [errAlreadyStopped] if no backend
+// StopServer stops all instances in the s identified by 1-based s
+// index, removes their records, and returns [errAlreadyStopped] if no instance
 // was running. killAfter is the grace period before SIGKILL.
 func (m *ServerManager) StopServer(ctx context.Context, target int, killAfter time.Duration) error {
 	if target <= 0 {
@@ -197,12 +197,12 @@ func (m *ServerManager) StopServer(ctx context.Context, target int, killAfter ti
 	}
 
 	m.mu.RLock()
-	pool, err := m.findPoolByIndexLocked(target)
+	s, err := m.findServerByIndexLocked(target)
 	if err != nil {
 		m.mu.RUnlock()
 		return err
 	}
-	records := m.poolBackendsLocked(pool)
+	records := m.serverInstancesLocked(s)
 	m.mu.RUnlock()
 
 	stopped := false
@@ -230,8 +230,8 @@ func (m *ServerManager) StopServer(ctx context.Context, target int, killAfter ti
 	return nil
 }
 
-// StopServersAll calls [ServerManager.StopServer] on every registered pool,
-// ignoring pools that are already stopped.
+// StopServersAll calls [ServerManager.StopServer] on every registered s,
+// ignoring servers that are already stopped.
 func (m *ServerManager) StopServersAll(ctx context.Context, killAfter time.Duration) error {
 	return m.runServersAll(
 		func(target int) error { return m.StopServer(ctx, target, killAfter) },
@@ -239,8 +239,8 @@ func (m *ServerManager) StopServersAll(ctx context.Context, killAfter time.Durat
 	)
 }
 
-// RestartServer stops then starts the pool identified by 1-based pool index.
-// A pool that is not running is started directly without treating the missing
+// RestartServer stops then starts the s identified by 1-based s index.
+// A s that is not running is started directly without treating the missing
 // stop as an error.
 func (m *ServerManager) RestartServer(ctx context.Context, target int, killAfter time.Duration) error {
 	if target <= 0 {
@@ -252,7 +252,7 @@ func (m *ServerManager) RestartServer(ctx context.Context, target int, killAfter
 	return m.StartServer(target)
 }
 
-// RestartServersAll calls [ServerManager.RestartServer] on every registered pool.
+// RestartServersAll calls [ServerManager.RestartServer] on every registered s.
 func (m *ServerManager) RestartServersAll(ctx context.Context, killAfter time.Duration) error {
 	return m.runServersAll(
 		func(target int) error { return m.RestartServer(ctx, target, killAfter) },
@@ -260,8 +260,8 @@ func (m *ServerManager) RestartServersAll(ctx context.Context, killAfter time.Du
 	)
 }
 
-// RemoveServer unregisters the pool identified by 1-based pool index and
-// deletes all its backend records. Returns an error if any backend process is
+// RemoveServer unregisters the s identified by 1-based s index and
+// deletes all its instance records. Returns an error if any instance process is
 // still alive; call [ServerManager.StopServer] first.
 func (m *ServerManager) RemoveServer(target int) error {
 	if target <= 0 {
@@ -271,14 +271,14 @@ func (m *ServerManager) RemoveServer(target int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	pool, err := m.findPoolByIndexLocked(target)
+	s, err := m.findServerByIndexLocked(target)
 	if err != nil {
 		return err
 	}
 
-	backendIDs := append([]int(nil), pool.BackendServerIDs...)
-	for _, serverID := range backendIDs {
-		rec := m.serversByID[serverID]
+	instanceIDs := append([]int(nil), s.InstanceIDs...)
+	for _, serverID := range instanceIDs {
+		rec := m.instancesByID[serverID]
 		if rec == nil {
 			continue
 		}
@@ -292,9 +292,9 @@ func (m *ServerManager) RemoveServer(target int) error {
 		m.removeServerRecordLocked(rec.id)
 	}
 
-	if pool.CandidatePort > 0 {
-		delete(m.poolByCandidatePort, pool.CandidatePort)
+	if s.CandidatePort > 0 {
+		delete(m.serverByCandidatePort, s.CandidatePort)
 	}
-	delete(m.poolsByID, pool.PoolID)
+	delete(m.serversByID, s.ServerID)
 	return nil
 }

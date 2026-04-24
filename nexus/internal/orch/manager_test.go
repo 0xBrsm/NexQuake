@@ -39,7 +39,7 @@ func TestParsePortConsoleLine(t *testing.T) {
 func TestUpdatePort_AssignsResolvedPortBucket(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 
-	rec := m.registerServerLaunch(serverLaunch{})
+	rec := m.registerBareInstance(serverLaunch{})
 
 	m.updatePort(rec, 26001)
 
@@ -49,10 +49,10 @@ func TestUpdatePort_AssignsResolvedPortBucket(t *testing.T) {
 	if rec.spec != nil {
 		t.Fatalf("expected unresolved spec until search path is also known")
 	}
-	if got := m.serversByID[rec.id]; got != rec {
+	if got := m.instancesByID[rec.id]; got != rec {
 		t.Fatalf("expected record stored by id %d", rec.id)
 	}
-	ids := m.serverIDsByPort[26001]
+	ids := m.instanceIDsByPort[26001]
 	if len(ids) != 1 || ids[0] != rec.id {
 		t.Fatalf("expected port index [id=%d], got %v", rec.id, ids)
 	}
@@ -61,7 +61,7 @@ func TestUpdatePort_AssignsResolvedPortBucket(t *testing.T) {
 func TestUpdateSearchPath_FinalizesSpecWhenPortKnown(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 
-	rec := &serverRecord{
+	rec := &instance{
 		Launch:            serverLaunch{Line: 3},
 		resolvedPortKnown: true,
 		resolvedPort:      26001,
@@ -87,7 +87,7 @@ func TestUpdateSearchPath_FinalizesSpecWhenPortKnown(t *testing.T) {
 func TestUpdateSearchPath_DedupesConsolePathEntries(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 
-	rec := &serverRecord{
+	rec := &instance{
 		Launch:            serverLaunch{Line: 7},
 		resolvedPortKnown: true,
 		resolvedPort:      26007,
@@ -107,7 +107,7 @@ func TestUpdateSearchPath_DedupesConsolePathEntries(t *testing.T) {
 func TestUpdateSearchPath_IgnoresPathFragmentsAndPakNames(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 
-	rec := &serverRecord{
+	rec := &instance{
 		Launch:            serverLaunch{Line: 8},
 		resolvedPortKnown: true,
 		resolvedPort:      26008,
@@ -147,24 +147,24 @@ func TestLaunchServer_RegistersNewEntry(t *testing.T) {
 func TestRemoveServer_RemovesStoppedRecordByIndex(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 
-	recA, err := m.registerPoolLaunch(serverLaunch{
+	recA, err := m.registerServerLaunch(serverLaunch{
 		Line:   0,
 		Binary: "nqserver",
 		Args:   []string{"-dedicated", "-port", "26001"},
 	})
 	if err != nil {
-		t.Fatalf("register pool A: %v", err)
+		t.Fatalf("register server A: %v", err)
 	}
 	m.updatePort(recA, 26001)
 	m.updateSearchPath(recA, []string{"id1"})
 
-	recB, err := m.registerPoolLaunch(serverLaunch{
+	recB, err := m.registerServerLaunch(serverLaunch{
 		Line:   1,
 		Binary: "nqserver",
 		Args:   []string{"-dedicated", "-port", "26002"},
 	})
 	if err != nil {
-		t.Fatalf("register pool B: %v", err)
+		t.Fatalf("register server B: %v", err)
 	}
 	m.updatePort(recB, 26002)
 	m.updateSearchPath(recB, []string{"ctf", "id1"})
@@ -173,16 +173,16 @@ func TestRemoveServer_RemovesStoppedRecordByIndex(t *testing.T) {
 		t.Fatalf("RemoveServer(index) error = %v", err)
 	}
 
-	if _, ok := m.serversByID[recA.id]; ok {
+	if _, ok := m.instancesByID[recA.id]; ok {
 		t.Fatalf("expected removed record id=%d to be deleted", recA.id)
 	}
-	if _, ok := m.serversByID[recB.id]; !ok {
+	if _, ok := m.instancesByID[recB.id]; !ok {
 		t.Fatalf("expected other record id=%d to remain", recB.id)
 	}
-	if _, ok := m.serverIDsByPort[26001]; ok {
-		t.Fatalf("expected removed port bucket 26001 to be deleted, got %v", m.serverIDsByPort[26001])
+	if _, ok := m.instanceIDsByPort[26001]; ok {
+		t.Fatalf("expected removed port bucket 26001 to be deleted, got %v", m.instanceIDsByPort[26001])
 	}
-	if ids := m.serverIDsByPort[26002]; len(ids) != 1 || ids[0] != recB.id {
+	if ids := m.instanceIDsByPort[26002]; len(ids) != 1 || ids[0] != recB.id {
 		t.Fatalf("expected remaining port bucket for id=%d, got %v", recB.id, ids)
 	}
 }
@@ -195,13 +195,13 @@ func TestRemoveServer_RunningServerMustBeStoppedFirst(t *testing.T) {
 		t.Fatalf("FindProcess(self): %v", err)
 	}
 
-	rec, err := m.registerPoolLaunch(serverLaunch{
+	rec, err := m.registerServerLaunch(serverLaunch{
 		Line:   0,
 		Binary: "nqserver",
 		Args:   []string{"-dedicated", "-port", "26000"},
 	})
 	if err != nil {
-		t.Fatalf("register pool: %v", err)
+		t.Fatalf("register server: %v", err)
 	}
 	rec.Running = &managedServer{Cmd: &exec.Cmd{Process: process}}
 
@@ -212,67 +212,67 @@ func TestRemoveServer_RunningServerMustBeStoppedFirst(t *testing.T) {
 	if err.Error() != "server is running; stop server first" {
 		t.Fatalf("expected running-server guard, got %q", err.Error())
 	}
-	if _, ok := m.serversByID[rec.id]; !ok {
+	if _, ok := m.instancesByID[rec.id]; !ok {
 		t.Fatalf("expected running server record to remain registered")
 	}
 }
 
-func TestRemoveServer_RemovesEveryBackendFromPool(t *testing.T) {
+func TestRemoveServer_RemovesEveryInstanceFromServer(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 
-	seed, err := m.registerPoolLaunch(serverLaunch{
+	seed, err := m.registerServerLaunch(serverLaunch{
 		Line:   0,
 		Binary: "nqserver",
 		Args:   []string{"-dedicated", "-port", "0"},
 	})
 	if err != nil {
-		t.Fatalf("register pool launch: %v", err)
+		t.Fatalf("register server launch: %v", err)
 	}
 
 	var (
-		replicaA *serverRecord
-		replicaB *serverRecord
-		poolID   int
-		poolLine int
+		replicaA *instance
+		replicaB *instance
+		serverID   int
+		serverLine int
 	)
 
 	m.mu.Lock()
-	pool := m.poolByServerID[seed.id]
-	if pool == nil {
+	s := m.serverByInstanceID[seed.id]
+	if s == nil {
 		m.mu.Unlock()
-		t.Fatalf("expected pool for seed server")
+		t.Fatalf("expected server for seed instance")
 	}
-	replicaA = m.appendPoolBackendRecordLocked(pool, pool.TemplateLaunch, poolBackendLifecycleWarming)
-	replicaB = m.appendPoolBackendRecordLocked(pool, pool.TemplateLaunch, poolBackendLifecycleWarming)
-	poolID = pool.PoolID
-	poolLine = pool.Line
+	replicaA = m.appendServerInstanceLocked(s, s.TemplateLaunch, instanceLifecycleWarming)
+	replicaB = m.appendServerInstanceLocked(s, s.TemplateLaunch, instanceLifecycleWarming)
+	serverID = s.ServerID
+	serverLine = s.Line
 	m.mu.Unlock()
 
-	// Dynamic pools have no stable listen port; remove by 1-based line index.
-	if err := m.RemoveServer(poolLine + 1); err != nil {
-		t.Fatalf("RemoveServer(pool line index) error = %v", err)
+	// Dynamic servers have no stable listen port; remove by 1-based line index.
+	if err := m.RemoveServer(serverLine + 1); err != nil {
+		t.Fatalf("RemoveServer(server line index) error = %v", err)
 	}
 
-	if _, ok := m.serversByID[seed.id]; ok {
+	if _, ok := m.instancesByID[seed.id]; ok {
 		t.Fatalf("expected seed record id=%d to be removed", seed.id)
 	}
-	if _, ok := m.serversByID[replicaA.id]; ok {
+	if _, ok := m.instancesByID[replicaA.id]; ok {
 		t.Fatalf("expected replica A record id=%d to be removed", replicaA.id)
 	}
-	if _, ok := m.serversByID[replicaB.id]; ok {
+	if _, ok := m.instancesByID[replicaB.id]; ok {
 		t.Fatalf("expected replica B record id=%d to be removed", replicaB.id)
 	}
-	if _, ok := m.poolsByID[poolID]; ok {
-		t.Fatalf("expected pool id=%d to be removed", poolID)
+	if _, ok := m.serversByID[serverID]; ok {
+		t.Fatalf("expected server id=%d to be removed", serverID)
 	}
-	if len(m.poolByServerID) != 0 {
-		t.Fatalf("expected no pool member mapping entries, got %d", len(m.poolByServerID))
+	if len(m.serverByInstanceID) != 0 {
+		t.Fatalf("expected no server member mapping entries, got %d", len(m.serverByInstanceID))
 	}
 }
 
 func TestServerConsoleLabel_UsesHostnameAndLine(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := &serverRecord{
+	rec := &instance{
 		id:       7,
 		Launch:   serverLaunch{Line: 3},
 		Hostname: "fragfest",
@@ -286,7 +286,7 @@ func TestServerConsoleLabel_UsesHostnameAndLine(t *testing.T) {
 
 func TestServerConsoleLabel_FallbacksWhenHostnameMissing(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := &serverRecord{
+	rec := &instance{
 		id:     5,
 		Launch: serverLaunch{Line: -1},
 	}
@@ -299,7 +299,7 @@ func TestServerConsoleLabel_FallbacksWhenHostnameMissing(t *testing.T) {
 
 func TestFormatServerConsoleRelayLine_PrefixesAndTrims(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := &serverRecord{
+	rec := &instance{
 		Launch:   serverLaunch{Line: 2},
 		Hostname: "quake-a",
 	}
@@ -319,7 +319,7 @@ func TestFormatServerConsoleRelayLine_PrefixesAndTrims(t *testing.T) {
 
 func TestFormatServerConsoleRelayLine_FiltersFindAndPackNoise(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := &serverRecord{
+	rec := &instance{
 		Launch:   serverLaunch{Line: 1},
 		Hostname: "quake-b",
 	}
@@ -345,7 +345,7 @@ func TestFormatServerConsoleRelayLine_FiltersFindAndPackNoise(t *testing.T) {
 
 func TestServerConsoleRelayEnabled_GatedUntilFirstServerInfo(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := m.registerServerLaunch(serverLaunch{Line: 2})
+	rec := m.registerBareInstance(serverLaunch{Line: 2})
 
 	console := newServerConsole(nil)
 	srv := &managedServer{Console: console}
@@ -375,7 +375,7 @@ func TestServerConsoleRelayEnabled_GatedUntilFirstServerInfo(t *testing.T) {
 
 func TestUpdateServerState_FirstServerInfoWritesOnlineEchoCommand(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := m.registerServerLaunch(serverLaunch{Line: 6})
+	rec := m.registerBareInstance(serverLaunch{Line: 6})
 
 	ptyRead, ptyWrite, err := os.Pipe()
 	if err != nil {
@@ -416,7 +416,7 @@ func TestBuildServerSnapshot_UsesServerInfoReadinessForState(t *testing.T) {
 		t.Fatalf("FindProcess(self): %v", err)
 	}
 
-	rec := &serverRecord{
+	rec := &instance{
 		Launch:             serverLaunch{Line: 0},
 		awaitingServerInfo: true,
 		Running: &managedServer{
@@ -438,7 +438,7 @@ func TestBuildServerSnapshot_UsesServerInfoReadinessForState(t *testing.T) {
 
 func TestMonitorServerStartupTimeout_MarksTimedOutWhenStillStarting(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := m.registerServerLaunch(serverLaunch{Line: 4})
+	rec := m.registerBareInstance(serverLaunch{Line: 4})
 	srv := &managedServer{}
 
 	m.mu.Lock()
@@ -458,7 +458,7 @@ func TestMonitorServerStartupTimeout_MarksTimedOutWhenStillStarting(t *testing.T
 
 func TestMonitorServerStartupTimeout_IgnoresAlreadyOnlineServer(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := m.registerServerLaunch(serverLaunch{Line: 5})
+	rec := m.registerBareInstance(serverLaunch{Line: 5})
 	srv := &managedServer{}
 
 	m.mu.Lock()

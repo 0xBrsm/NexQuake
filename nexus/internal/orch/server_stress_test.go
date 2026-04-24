@@ -13,49 +13,49 @@ import (
 	"time"
 )
 
-func TestPoolAutoscaleStressSimulatedClients(t *testing.T) {
-	if os.Getenv("NQNET_STRESS_POOL_AUTOSCALE") != "1" {
-		t.Skip("set NQNET_STRESS_POOL_AUTOSCALE=1 to run autoscale stress tiers")
+func TestServerAutoscaleStressSimulatedClients(t *testing.T) {
+	if os.Getenv("NQNET_STRESS_SERVER_AUTOSCALE") != "1" {
+		t.Skip("set NQNET_STRESS_SERVER_AUTOSCALE=1 to run autoscale stress tiers")
 	}
 
-	tiers, err := parsePoolStressTierList(os.Getenv("NQNET_STRESS_POOL_AUTOSCALE_TIERS"), []int{100, 1000, 10000})
+	tiers, err := parseServerStressTierList(os.Getenv("NQNET_STRESS_SERVER_AUTOSCALE_TIERS"), []int{100, 1000, 10000})
 	if err != nil {
-		t.Fatalf("parse NQNET_STRESS_POOL_AUTOSCALE_TIERS: %v", err)
+		t.Fatalf("parse NQNET_STRESS_SERVER_AUTOSCALE_TIERS: %v", err)
 	}
 	if len(tiers) == 0 {
-		t.Fatalf("NQNET_STRESS_POOL_AUTOSCALE_TIERS resolved to no tiers")
+		t.Fatalf("NQNET_STRESS_SERVER_AUTOSCALE_TIERS resolved to no tiers")
 	}
 
 	for _, clients := range tiers {
 		clients := clients
 		t.Run(fmt.Sprintf("%d_clients", clients), func(t *testing.T) {
-			runPoolAutoscaleStressTier(t, clients)
+			runServerAutoscaleStressTier(t, clients)
 		})
 	}
 }
 
-func runPoolAutoscaleStressTier(t *testing.T, clientCount int) {
+func runServerAutoscaleStressTier(t *testing.T, clientCount int) {
 	t.Helper()
 
-	const maxPlayersPerBackend = 16
-	neededHeadroom := expectedPoolHeadroom(clientCount)
-	expectedBackends := int(math.Ceil(float64(neededHeadroom) / float64(maxPlayersPerBackend)))
-	if expectedBackends < 1 {
-		expectedBackends = 1
+	const maxPlayersPerInstance = 16
+	neededHeadroom := expectedServerHeadroom(clientCount)
+	expectedInstances := int(math.Ceil(float64(neededHeadroom) / float64(maxPlayersPerInstance)))
+	if expectedInstances < 1 {
+		expectedInstances = 1
 	}
 
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	m.SetPoolMaxSize(expectedBackends + 4)
-	t.Cleanup(m.closePoolRegistry)
+	m.SetServerMaxInstances(expectedInstances + 4)
+	t.Cleanup(m.closeServerRegistry)
 
-	seed := newRunningPoolTestRecord(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 0, maxPlayersPerBackend)
-	if err := m.registerPoolSeed(seed); err != nil {
-		t.Fatalf("register pool seed: %v", err)
+	seed := newRunningInstanceForTest(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 0, maxPlayersPerInstance)
+	if err := m.registerServerSeed(seed); err != nil {
+		t.Fatalf("register server seed: %v", err)
 	}
 
-	poolID, proxyPort := poolIdentityForSeed(t, m, seed.id)
+	serverID, proxyPort := serverIdentityForSeed(t, m, seed.id)
 
-	joinMetrics := runConcurrentPoolJoinBurst(t, m, proxyPort, clientCount)
+	joinMetrics := runConcurrentJoinBurst(t, m, proxyPort, clientCount)
 	if joinMetrics.routeFailures != 0 {
 		t.Fatalf("route failures = %d, want 0", joinMetrics.routeFailures)
 	}
@@ -66,15 +66,15 @@ func runPoolAutoscaleStressTier(t *testing.T, clientCount int) {
 		t.Fatalf("recorded demand = %d, want %d", joinMetrics.recordedDemand, clientCount)
 	}
 
-	reconcileMetrics := drivePoolScaleUpToDemand(
+	reconcileMetrics := driveServerScaleUpToDemand(
 		t,
 		m,
-		poolID,
-		expectedBackends,
-		maxPlayersPerBackend,
+		serverID,
+		expectedInstances,
+		maxPlayersPerInstance,
 	)
-	if reconcileMetrics.finalBackends < expectedBackends {
-		t.Fatalf("final backends = %d, want at least %d", reconcileMetrics.finalBackends, expectedBackends)
+	if reconcileMetrics.finalInstances < expectedInstances {
+		t.Fatalf("final instances = %d, want at least %d", reconcileMetrics.finalInstances, expectedInstances)
 	}
 	if reconcileMetrics.finalFreeSlots < reconcileMetrics.neededHeadroom {
 		t.Fatalf(
@@ -85,15 +85,15 @@ func runPoolAutoscaleStressTier(t *testing.T, clientCount int) {
 	}
 
 	t.Logf(
-		"autoscale stress: clients=%d proxy=%d workers=%d join_burst=%s reconcile=%s demand=%d expected_backends=%d final_backends=%d launched=%d iterations=%d",
+		"autoscale stress: clients=%d proxy=%d workers=%d join_burst=%s reconcile=%s demand=%d expected_instances=%d final_instances=%d launched=%d iterations=%d",
 		clientCount,
 		proxyPort,
 		joinMetrics.workers,
 		joinMetrics.duration,
 		reconcileMetrics.duration,
 		joinMetrics.recordedDemand,
-		expectedBackends,
-		reconcileMetrics.finalBackends,
+		expectedInstances,
+		reconcileMetrics.finalInstances,
 		reconcileMetrics.launchedReplicas,
 		reconcileMetrics.reconcileIterations,
 	)
@@ -115,7 +115,7 @@ func runPoolAutoscaleStressTier(t *testing.T, clientCount int) {
 	)
 }
 
-type poolJoinBurstMetrics struct {
+type serverJoinBurstMetrics struct {
 	workers        int
 	duration       time.Duration
 	recordedDemand int
@@ -130,11 +130,11 @@ type poolJoinBurstMetrics struct {
 	latencyP99 time.Duration
 }
 
-func runConcurrentPoolJoinBurst(t *testing.T, m *ServerManager, proxyPort, clientCount int) poolJoinBurstMetrics {
+func runConcurrentJoinBurst(t *testing.T, m *ServerManager, proxyPort, clientCount int) serverJoinBurstMetrics {
 	t.Helper()
 
 	if clientCount <= 0 {
-		return poolJoinBurstMetrics{}
+		return serverJoinBurstMetrics{}
 	}
 
 	workers := min(clientCount, 1024)
@@ -193,14 +193,14 @@ func runConcurrentPoolJoinBurst(t *testing.T, m *ServerManager, proxyPort, clien
 
 	m.mu.RLock()
 	recordedDemand := 0
-	if pool := m.poolByCandidatePort[proxyPort]; pool != nil {
-		recordedDemand = len(pool.joinDemandAt)
+	if s := m.serverByCandidatePort[proxyPort]; s != nil {
+		recordedDemand = len(s.joinDemandAt)
 	}
 	m.mu.RUnlock()
 
 	latencyAvg, latencyMax, latencyP95, latencyP99 := summarizeNanosPercentiles(latencySamples)
 
-	return poolJoinBurstMetrics{
+	return serverJoinBurstMetrics{
 		workers:         workers,
 		duration:        time.Since(startedAt),
 		recordedDemand:  recordedDemand,
@@ -214,24 +214,24 @@ func runConcurrentPoolJoinBurst(t *testing.T, m *ServerManager, proxyPort, clien
 	}
 }
 
-type poolReconcileMetrics struct {
+type serverReconcileMetrics struct {
 	duration               time.Duration
 	launchedReplicas       int
 	reconcileIterations    int
-	finalBackends          int
+	finalInstances          int
 	neededHeadroom         int
 	finalFreeSlots         int
 	finalAggregateUsers    int
 	finalAggregateMaxUsers int
 }
 
-func drivePoolScaleUpToDemand(
+func driveServerScaleUpToDemand(
 	t *testing.T,
 	m *ServerManager,
-	poolID int,
-	expectedBackends int,
-	maxPlayersPerBackend int,
-) poolReconcileMetrics {
+	serverID int,
+	expectedInstances int,
+	maxPlayersPerInstance int,
+) serverReconcileMetrics {
 	t.Helper()
 
 	now := time.Now()
@@ -239,42 +239,42 @@ func drivePoolScaleUpToDemand(
 	launched := 0
 	iterations := 0
 	nextPort := 26001
-	maxIterations := max(64, expectedBackends*4)
+	maxIterations := max(64, expectedInstances*4)
 
 	for ; iterations < maxIterations; iterations++ {
-		var scaleUpPoolID int
+		var scaleUpServerID int
 		var freeSlots int
 		var neededHeadroom int
-		var runningBackends int
+		var runningInstances int
 		var maxSize int
 
 		m.mu.Lock()
-		pool := m.poolsByID[poolID]
-		if pool == nil {
+		s := m.serversByID[serverID]
+		if s == nil {
 			m.mu.Unlock()
-			t.Fatalf("pool %d missing", poolID)
+			t.Fatalf("server %d missing", serverID)
 		}
 
 		// Accelerate cooldown for simulation so we can validate many replicas
 		// without waiting wall-clock 30s per scale-up.
-		pool.LastScaleUpAt = now.Add(-scaleUpCooldown)
-		scaleUpPoolID, _ = m.decidePoolActionsLocked(pool, now)
-		neededHeadroom = poolNeededHeadroomLocked(pool, now)
-		freeSlots = int(pool.aggregateMaxUsers) - int(pool.aggregateUsers)
+		s.LastScaleUpAt = now.Add(-scaleUpCooldown)
+		scaleUpServerID, _ = m.decideServerActionsLocked(s, now)
+		neededHeadroom = serverNeededHeadroomLocked(s, now)
+		freeSlots = int(s.aggregateMaxUsers) - int(s.aggregateUsers)
 		if freeSlots < 0 {
 			freeSlots = 0
 		}
-		runningBackends = m.poolRunningCountLocked(pool)
-		maxSize = m.poolMaxSize
+		runningInstances = m.serverRunningCountLocked(s)
+		maxSize = m.serverMaxInstances
 		m.mu.Unlock()
 
-		if freeSlots >= neededHeadroom || runningBackends >= max(1, maxSize) || scaleUpPoolID < 0 {
+		if freeSlots >= neededHeadroom || runningInstances >= max(1, maxSize) || scaleUpServerID < 0 {
 			break
 		}
 
-		replica, err := m.registerPoolReplicaRecord(scaleUpPoolID)
+		replica, err := m.registerServerReplicaInstance(scaleUpServerID)
 		if err != nil {
-			t.Fatalf("registerPoolReplicaRecord(%d): %v", scaleUpPoolID, err)
+			t.Fatalf("registerServerReplicaInstance(%d): %v", scaleUpServerID, err)
 		}
 		if replica == nil {
 			break
@@ -283,13 +283,13 @@ func drivePoolScaleUpToDemand(
 		m.updatePort(replica, nextPort)
 		m.updateSearchPath(replica, []string{"id1"})
 		m.SetServerRunningForTest(replica, NewTestServer(nextPort))
-		m.SetServerInfoForTest(replica, "pool-1", "dm6", 0, byte(maxPlayersPerBackend))
+		m.SetServerInfoForTest(replica, "server-1", "dm6", 0, byte(maxPlayersPerInstance))
 		m.mu.Lock()
 		replica.LastSeen = now
-		if pool := m.poolByServerID[replica.id]; pool != nil {
-			pool.ScaleUpInFlight = false
-			pool.LastScaleUpAt = now
-			m.refreshPoolSnapshotLocked(pool)
+		if s := m.serverByInstanceID[replica.id]; s != nil {
+			s.ScaleUpInFlight = false
+			s.LastScaleUpAt = now
+			m.refreshServerSnapshotLocked(s)
 		}
 		m.mu.Unlock()
 		launched++
@@ -297,26 +297,26 @@ func drivePoolScaleUpToDemand(
 	}
 
 	m.mu.RLock()
-	pool := m.poolsByID[poolID]
-	if pool == nil {
+	s := m.serversByID[serverID]
+	if s == nil {
 		m.mu.RUnlock()
-		t.Fatalf("pool %d missing after reconcile", poolID)
+		t.Fatalf("server %d missing after reconcile", serverID)
 	}
-	finalFreeSlots := int(pool.aggregateMaxUsers) - int(pool.aggregateUsers)
+	finalFreeSlots := int(s.aggregateMaxUsers) - int(s.aggregateUsers)
 	if finalFreeSlots < 0 {
 		finalFreeSlots = 0
 	}
-	neededHeadroom := poolNeededHeadroomLocked(pool, now)
-	finalBackends := m.poolRunningCountLocked(pool)
-	finalUsers := int(pool.aggregateUsers)
-	finalMaxUsers := int(pool.aggregateMaxUsers)
+	neededHeadroom := serverNeededHeadroomLocked(s, now)
+	finalInstances := m.serverRunningCountLocked(s)
+	finalUsers := int(s.aggregateUsers)
+	finalMaxUsers := int(s.aggregateMaxUsers)
 	m.mu.RUnlock()
 
-	return poolReconcileMetrics{
+	return serverReconcileMetrics{
 		duration:               time.Since(startedAt),
 		launchedReplicas:       launched,
 		reconcileIterations:    iterations,
-		finalBackends:          finalBackends,
+		finalInstances:          finalInstances,
 		neededHeadroom:         neededHeadroom,
 		finalFreeSlots:         finalFreeSlots,
 		finalAggregateUsers:    finalUsers,
@@ -324,23 +324,23 @@ func drivePoolScaleUpToDemand(
 	}
 }
 
-func poolIdentityForSeed(t *testing.T, m *ServerManager, seedServerID int) (poolID int, proxyPort int) {
+func serverIdentityForSeed(t *testing.T, m *ServerManager, seedServerID int) (serverID int, proxyPort int) {
 	t.Helper()
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	pool := m.poolByServerID[seedServerID]
-	if pool == nil {
-		t.Fatalf("seed server %d has no pool", seedServerID)
+	s := m.serverByInstanceID[seedServerID]
+	if s == nil {
+		t.Fatalf("seed instance %d has no server", seedServerID)
 	}
-	if pool.CandidatePort < 1 || pool.CandidatePort > 65535 {
-		t.Fatalf("pool candidate port = %d, want valid port", pool.CandidatePort)
+	if s.CandidatePort < 1 || s.CandidatePort > 65535 {
+		t.Fatalf("server candidate port = %d, want valid port", s.CandidatePort)
 	}
-	return pool.PoolID, pool.CandidatePort
+	return s.ServerID, s.CandidatePort
 }
 
-func expectedPoolHeadroom(clientCount int) int {
+func expectedServerHeadroom(clientCount int) int {
 	if clientCount <= 0 {
 		return demandMinFreeSlots
 	}
@@ -349,7 +349,7 @@ func expectedPoolHeadroom(clientCount int) int {
 	return max(demandMinFreeSlots, dynamicHeadroom)
 }
 
-func parsePoolStressTierList(raw string, defaults []int) ([]int, error) {
+func parseServerStressTierList(raw string, defaults []int) ([]int, error) {
 	text := strings.TrimSpace(raw)
 	if text == "" {
 		out := make([]int, len(defaults))

@@ -8,9 +8,9 @@ import (
 )
 
 const (
-	defaultPoolSize  = 1
-	scaleUpCooldown  = 30 * time.Second
-	despawnZeroPolls = 6
+	defaultServerMaxInstances = 1
+	scaleUpCooldown           = 30 * time.Second
+	despawnZeroPolls          = 6
 
 	demandWindow       = 30 * time.Second
 	demandMinFreeSlots = 4
@@ -18,61 +18,61 @@ const (
 	demandSafetyFactor = 1.5
 )
 
-// poolBackendLifecycle is the autoscaling state of a single backend within a pool.
-type poolBackendLifecycle uint8
+// instanceLifecycle is the autoscaling state of a single instance within a server.
+type instanceLifecycle uint8
 
 const (
-	// poolBackendLifecycleWarming: backend is running but has not yet received a CCREP.
-	poolBackendLifecycleWarming poolBackendLifecycle = iota
-	// poolBackendLifecycleActive: backend accepts new player sessions.
-	poolBackendLifecycleActive
-	// poolBackendLifecycleDraining: backend is not accepting new sessions; waiting to become idle.
-	poolBackendLifecycleDraining
-	// poolBackendLifecycleTerminating: backend is scheduled for shutdown.
-	poolBackendLifecycleTerminating
+	// instanceLifecycleWarming: instance is running but has not yet received a CCREP.
+	instanceLifecycleWarming instanceLifecycle = iota
+	// instanceLifecycleActive: instance accepts new player sessions.
+	instanceLifecycleActive
+	// instanceLifecycleDraining: instance is not accepting new sessions; waiting to become idle.
+	instanceLifecycleDraining
+	// instanceLifecycleTerminating: instance is scheduled for shutdown.
+	instanceLifecycleTerminating
 )
 
-// poolBackendState tracks autoscaling state for a single backend within a pool.
-type poolBackendState struct {
-	// Lifecycle is the current autoscaling state of the backend.
-	Lifecycle poolBackendLifecycle
+// instanceState tracks autoscaling state for a single instance within a server.
+type instanceState struct {
+	// Lifecycle is the current autoscaling state of the instance.
+	Lifecycle instanceLifecycle
 	// ZeroPollStreak counts consecutive CCREP polls with zero players while draining.
 	ZeroPollStreak int
 }
 
-// serverPool groups one or more backend server processes behind a single
-// configured server line. Fixed-port pools have exactly one backend and a
-// stable candidate port; "-port 0" pools may have multiple dynamically spawned
+// server groups one or more instance server processes behind a single
+// configured server line. Fixed-port servers have exactly one instance and a
+// stable candidate port; "-port 0" servers may have multiple dynamically spawned
 // replicas.
-type serverPool struct {
-	// PoolID is the unique identifier assigned at registration.
-	PoolID int
-	// Line is the 0-based servers.ini line index; -1 for synthetic pools.
+type server struct {
+	// ServerID is the unique identifier assigned at registration.
+	ServerID int
+	// Line is the 0-based servers.ini line index; -1 for synthetic servers.
 	Line int
 	// TemplateLaunch is the launch spec used to spawn new replicas.
 	TemplateLaunch serverLaunch
-	// Autoscales reports whether the pool may spawn and despawn replicas.
+	// Autoscales reports whether the s may spawn and despawn replicas.
 	Autoscales bool
-	// BackendServerIDs lists the IDs of all backend records in this pool.
-	BackendServerIDs []int
+	// InstanceIDs lists the IDs of all instance records in this server.
+	InstanceIDs []int
 
-	// CandidatePort is the stable UDP port for fixed-port pools; 0 for autoscaling pools.
+	// CandidatePort is the stable UDP port for fixed-port servers; 0 for autoscaling servers.
 	CandidatePort int
 
-	// RoundRobinCursor advances each time a backend is selected for routing.
+	// RoundRobinCursor advances each time a instance is selected for routing.
 	RoundRobinCursor int
 	// LastScaleUpAt records when the most recent replica was launched.
 	LastScaleUpAt time.Time
 	// ScaleUpInFlight is true while a replica launch is in progress.
 	ScaleUpInFlight bool
 
-	// aggregateUsers is the total player count across all running backends.
+	// aggregateUsers is the total player count across all running instances.
 	aggregateUsers uint16
-	// aggregateMaxUsers is the total capacity across all running backends.
+	// aggregateMaxUsers is the total capacity across all running instances.
 	aggregateMaxUsers uint16
-	// joinableInstances is the number of running backends currently accepting joins.
+	// joinableInstances is the number of running instances currently accepting joins.
 	joinableInstances uint16
-	// aggregateInstances is the number of currently running backends.
+	// aggregateInstances is the number of currently running instances.
 	aggregateInstances uint16
 
 	// DisplayHostname, DisplayMap, DisplayGameDir are cached from the most
@@ -81,52 +81,52 @@ type serverPool struct {
 	DisplayMap      string
 	DisplayGameDir  string
 
-	backendState map[int]*poolBackendState
-	joinDemandAt []time.Time
+	instanceStates map[int]*instanceState
+	joinDemandAt   []time.Time
 }
 
-func (m *ServerManager) appendPoolBackendRecordLocked(pool *serverPool, launch serverLaunch, lifecycle poolBackendLifecycle) *serverRecord {
-	if pool == nil {
+func (m *ServerManager) appendServerInstanceLocked(s *server, launch serverLaunch, lifecycle instanceLifecycle) *instance {
+	if s == nil {
 		return nil
 	}
-	rec := &serverRecord{
-		id:     m.nextServerID,
+	rec := &instance{
+		id:     m.nextInstanceID,
 		Launch: cloneServerLaunch(launch),
 	}
-	m.nextServerID++
-	m.serversByID[rec.id] = rec
-	m.poolByServerID[rec.id] = pool
-	pool.BackendServerIDs = append(pool.BackendServerIDs, rec.id)
-	if pool.backendState == nil {
-		pool.backendState = make(map[int]*poolBackendState)
+	m.nextInstanceID++
+	m.instancesByID[rec.id] = rec
+	m.serverByInstanceID[rec.id] = s
+	s.InstanceIDs = append(s.InstanceIDs, rec.id)
+	if s.instanceStates == nil {
+		s.instanceStates = make(map[int]*instanceState)
 	}
-	pool.backendState[rec.id] = newPoolBackendState(lifecycle)
-	m.refreshPoolSnapshotLocked(pool)
+	s.instanceStates[rec.id] = newInstanceState(lifecycle)
+	m.refreshServerSnapshotLocked(s)
 	return rec
 }
 
-func newPoolBackendState(lifecycle poolBackendLifecycle) *poolBackendState {
-	return &poolBackendState{
+func newInstanceState(lifecycle instanceLifecycle) *instanceState {
+	return &instanceState{
 		Lifecycle: lifecycle,
 	}
 }
 
-func (m *ServerManager) ensurePoolBackendStateLocked(pool *serverPool, serverID int) *poolBackendState {
-	if pool == nil {
+func (m *ServerManager) ensureServerInstanceStateLocked(s *server, serverID int) *instanceState {
+	if s == nil {
 		return nil
 	}
-	if pool.backendState == nil {
-		pool.backendState = make(map[int]*poolBackendState)
+	if s.instanceStates == nil {
+		s.instanceStates = make(map[int]*instanceState)
 	}
-	state := pool.backendState[serverID]
+	state := s.instanceStates[serverID]
 	if state == nil {
-		state = newPoolBackendState(poolBackendLifecycleWarming)
-		pool.backendState[serverID] = state
+		state = newInstanceState(instanceLifecycleWarming)
+		s.instanceStates[serverID] = state
 	}
 	return state
 }
 
-func transitionPoolBackendLifecycle(state *poolBackendState, next poolBackendLifecycle) {
+func transitionInstanceLifecycle(state *instanceState, next instanceLifecycle) {
 	if state == nil {
 		return
 	}
@@ -136,56 +136,56 @@ func transitionPoolBackendLifecycle(state *poolBackendState, next poolBackendLif
 	state.Lifecycle = next
 }
 
-func backendAllowsPoolRouting(state *poolBackendState, allowDraining bool) bool {
+func instanceAllowsRouting(state *instanceState, allowDraining bool) bool {
 	if state == nil {
 		return false
 	}
-	if state.Lifecycle == poolBackendLifecycleActive {
+	if state.Lifecycle == instanceLifecycleActive {
 		return true
 	}
-	return allowDraining && state.Lifecycle == poolBackendLifecycleDraining
+	return allowDraining && state.Lifecycle == instanceLifecycleDraining
 }
 
-func applyPoolDisplayFromRecord(pool *serverPool, rec *serverRecord) {
-	if pool == nil || rec == nil {
+func applyServerDisplayFromInstance(s *server, rec *instance) {
+	if s == nil || rec == nil {
 		return
 	}
 	if hostname := strings.TrimSpace(rec.Hostname); hostname != "" {
-		pool.DisplayHostname = hostname
+		s.DisplayHostname = hostname
 	}
 	if mapName := strings.TrimSpace(rec.MapName); mapName != "" {
-		pool.DisplayMap = mapName
+		s.DisplayMap = mapName
 	}
 	if gameDir := recordGameDir(rec); gameDir != "" {
-		pool.DisplayGameDir = gameDir
+		s.DisplayGameDir = gameDir
 	}
 }
 
-func (m *ServerManager) setPoolBackendLifecycleLocked(pool *serverPool, serverID int, lifecycle poolBackendLifecycle, ensureState bool) {
-	if pool == nil {
+func (m *ServerManager) setServerInstanceLifecycleLocked(s *server, serverID int, lifecycle instanceLifecycle, ensureState bool) {
+	if s == nil {
 		return
 	}
-	state := pool.backendState[serverID]
+	state := s.instanceStates[serverID]
 	if state == nil && ensureState {
-		state = m.ensurePoolBackendStateLocked(pool, serverID)
+		state = m.ensureServerInstanceStateLocked(s, serverID)
 	}
 	if state != nil {
-		transitionPoolBackendLifecycle(state, lifecycle)
+		transitionInstanceLifecycle(state, lifecycle)
 		state.ZeroPollStreak = 0
 	}
-	m.refreshPoolSnapshotLocked(pool)
+	m.refreshServerSnapshotLocked(s)
 }
 
-func (m *ServerManager) resetPoolRegistryLocked() {
-	m.poolsByID = make(map[int]*serverPool)
-	m.poolByCandidatePort = make(map[int]*serverPool)
-	m.poolByServerID = make(map[int]*serverPool)
-	m.nextPoolID = 1
+func (m *ServerManager) resetServerRegistryLocked() {
+	m.serversByID = make(map[int]*server)
+	m.serverByCandidatePort = make(map[int]*server)
+	m.serverByInstanceID = make(map[int]*server)
+	m.nextServerID = 1
 }
 
-func (m *ServerManager) closePoolRegistry() {
+func (m *ServerManager) closeServerRegistry() {
 	m.mu.Lock()
-	m.resetPoolRegistryLocked()
+	m.resetServerRegistryLocked()
 	m.mu.Unlock()
 }
 
@@ -225,90 +225,90 @@ func forceLaunchPortZero(args []string) []string {
 	return append(out, "-port", "0")
 }
 
-func (m *ServerManager) registerPoolLaunch(launch serverLaunch) (*serverRecord, error) {
+func (m *ServerManager) registerServerLaunch(launch serverLaunch) (*instance, error) {
 	configuredPort, hasConfiguredPort := launchConfiguredPort(launch)
 	candidatePort := 0
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	autoscales := hasConfiguredPort && configuredPort == 0 && max(1, m.poolMaxSize) > 1
+	autoscales := hasConfiguredPort && configuredPort == 0 && max(1, m.serverMaxInstances) > 1
 	if !autoscales && hasConfiguredPort && configuredPort > 0 {
 		candidatePort = configuredPort
 	}
 
-	pool := &serverPool{
-		PoolID:         m.nextPoolID,
+	s := &server{
+		ServerID:       m.nextServerID,
 		Line:           launch.Line,
 		TemplateLaunch: cloneServerLaunch(launch),
 		Autoscales:     autoscales,
 		CandidatePort:  candidatePort,
-		backendState:   make(map[int]*poolBackendState),
+		instanceStates: make(map[int]*instanceState),
 	}
-	m.nextPoolID++
-	m.poolsByID[pool.PoolID] = pool
-	if pool.CandidatePort > 0 {
-		m.poolByCandidatePort[pool.CandidatePort] = pool
+	m.nextServerID++
+	m.serversByID[s.ServerID] = s
+	if s.CandidatePort > 0 {
+		m.serverByCandidatePort[s.CandidatePort] = s
 	}
 
-	rec := m.appendPoolBackendRecordLocked(pool, launch, poolBackendLifecycleWarming)
+	rec := m.appendServerInstanceLocked(s, launch, instanceLifecycleWarming)
 
-	if pool.Autoscales {
-		m.infof("Pool %d enabled for line %d (autoscaling)", pool.PoolID, pool.Line+1)
+	if s.Autoscales {
+		m.infof("Server %d enabled for line %d (autoscaling)", s.ServerID, s.Line+1)
 	}
 	return rec, nil
 }
 
-func (m *ServerManager) updatePoolCandidatePortLocked(pool *serverPool, port int) {
-	if pool == nil || pool.Autoscales || port < 1 || port > 65535 {
+func (m *ServerManager) updateServerCandidatePortLocked(s *server, port int) {
+	if s == nil || s.Autoscales || port < 1 || port > 65535 {
 		return
 	}
-	if pool.CandidatePort == port {
+	if s.CandidatePort == port {
 		return
 	}
-	if pool.CandidatePort > 0 {
-		delete(m.poolByCandidatePort, pool.CandidatePort)
+	if s.CandidatePort > 0 {
+		delete(m.serverByCandidatePort, s.CandidatePort)
 	}
-	pool.CandidatePort = port
-	m.poolByCandidatePort[port] = pool
+	s.CandidatePort = port
+	m.serverByCandidatePort[port] = s
 }
 
-func (m *ServerManager) updatePoolCandidatePortForRecordLocked(rec *serverRecord) {
+func (m *ServerManager) updateServerCandidatePortForInstanceLocked(rec *instance) {
 	if rec == nil {
 		return
 	}
-	pool := m.poolByServerID[rec.id]
-	if pool == nil {
+	s := m.serverByInstanceID[rec.id]
+	if s == nil {
 		return
 	}
-	m.updatePoolCandidatePortLocked(pool, recordListenPort(rec))
+	m.updateServerCandidatePortLocked(s, recordListenPort(rec))
 }
 
-func (m *ServerManager) resetPoolBackendState(serverID int) {
+func (m *ServerManager) resetServerInstanceState(serverID int) {
 	m.mu.Lock()
-	pool := m.poolByServerID[serverID]
-	if pool != nil {
-		m.setPoolBackendLifecycleLocked(pool, serverID, poolBackendLifecycleWarming, true)
+	s := m.serverByInstanceID[serverID]
+	if s != nil {
+		m.setServerInstanceLifecycleLocked(s, serverID, instanceLifecycleWarming, true)
 	}
 	m.mu.Unlock()
 }
 
-func (m *ServerManager) refreshPoolForServerLocked(serverID int) {
-	pool := m.poolByServerID[serverID]
-	if pool == nil {
+func (m *ServerManager) refreshServerForInstanceLocked(serverID int) {
+	s := m.serverByInstanceID[serverID]
+	if s == nil {
 		return
 	}
-	m.refreshPoolSnapshotLocked(pool)
+	m.refreshServerSnapshotLocked(s)
 }
 
-func (m *ServerManager) serverRecordRunningLocked(rec *serverRecord) bool {
+func (m *ServerManager) instanceRunningLocked(rec *instance) bool {
 	if rec == nil || rec.Running == nil || rec.Running.Cmd == nil || rec.Running.Cmd.Process == nil {
 		return false
 	}
 	return isProcessAlive(rec.Running.Cmd.Process)
 }
 
-func recordGameDir(rec *serverRecord) string {
+func recordGameDir(rec *instance) string {
 	if rec == nil {
 		return ""
 	}
@@ -330,8 +330,8 @@ func clampUint16(value int) uint16 {
 	return uint16(value)
 }
 
-func (m *ServerManager) refreshPoolSnapshotLocked(pool *serverPool) {
-	if pool == nil {
+func (m *ServerManager) refreshServerSnapshotLocked(s *server) {
+	if s == nil {
 		return
 	}
 
@@ -339,25 +339,25 @@ func (m *ServerManager) refreshPoolSnapshotLocked(pool *serverPool) {
 	maxUsers := 0
 	instances := 0
 
-	for _, serverID := range pool.BackendServerIDs {
-		rec := m.serversByID[serverID]
-		if !m.serverRecordRunningLocked(rec) {
+	for _, serverID := range s.InstanceIDs {
+		rec := m.instancesByID[serverID]
+		if !m.instanceRunningLocked(rec) {
 			continue
 		}
 		instances++
 		users += int(rec.Players)
 		maxUsers += int(rec.MaxPlayers)
-		applyPoolDisplayFromRecord(pool, rec)
+		applyServerDisplayFromInstance(s, rec)
 	}
 
-	pool.aggregateUsers = clampUint16(users)
-	pool.aggregateMaxUsers = clampUint16(maxUsers)
-	pool.joinableInstances = clampUint16(m.poolRoutableCandidateCountLocked(pool, false))
-	pool.aggregateInstances = clampUint16(instances)
+	s.aggregateUsers = clampUint16(users)
+	s.aggregateMaxUsers = clampUint16(maxUsers)
+	s.joinableInstances = clampUint16(m.serverRoutableCandidateCountLocked(s, false))
+	s.aggregateInstances = clampUint16(instances)
 }
 
 func (m *ServerManager) removeServerRecordLocked(serverID int) {
-	rec := m.serversByID[serverID]
+	rec := m.instancesByID[serverID]
 	if rec == nil {
 		return
 	}
@@ -366,11 +366,11 @@ func (m *ServerManager) removeServerRecordLocked(serverID int) {
 		m.removeServerIDFromPortLocked(rec.spec.ListenPort, rec.id)
 	}
 
-	if pool := m.poolByServerID[serverID]; pool != nil {
-		delete(m.poolByServerID, serverID)
-		delete(pool.backendState, serverID)
-		pool.BackendServerIDs = slices.DeleteFunc(pool.BackendServerIDs, func(id int) bool { return id == serverID })
-		m.refreshPoolSnapshotLocked(pool)
+	if s := m.serverByInstanceID[serverID]; s != nil {
+		delete(m.serverByInstanceID, serverID)
+		delete(s.instanceStates, serverID)
+		s.InstanceIDs = slices.DeleteFunc(s.InstanceIDs, func(id int) bool { return id == serverID })
+		m.refreshServerSnapshotLocked(s)
 	}
-	delete(m.serversByID, serverID)
+	delete(m.instancesByID, serverID)
 }

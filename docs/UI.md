@@ -120,7 +120,7 @@ Upload progress and status appear in the overlay footer:
 
 When connected to a server, a **join code** appears in the overlay footer. The code is the server's port number — the same value you would use with `connect <port>` at the console.
 
-Share the code with other players so they can join the same server without browsing the server list or being directed to a different server in the pool. The join code is hidden when not connected to a game server.
+Share the code with other players so they can join the same server without browsing the server list or being directed to a different instance. The join code is hidden when not connected to a game server.
 
 ## Persistence
 

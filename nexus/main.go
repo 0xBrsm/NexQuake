@@ -15,6 +15,7 @@ import (
 	"github.com/0xBrsm/NexQuake/nexus/internal/admin"
 	"github.com/0xBrsm/NexQuake/nexus/internal/assets"
 	"github.com/0xBrsm/NexQuake/nexus/internal/orch"
+	"github.com/0xBrsm/NexQuake/nexus/internal/session"
 	"github.com/0xBrsm/NexQuake/nexus/nqrelay"
 )
 
@@ -25,8 +26,9 @@ import (
 type nexusApp struct {
 	cfg        runtimeConfig
 	auth       *admin.Auth
-	ipAlloc    *nqrelay.IPAllocator
-	sessionReg *nqrelay.SessionRegistry
+	id         *admin.Identity
+	ipAlloc    *nqrelay.NQIPAllocator
+	sessionReg *session.Registry
 	serverMgr  *orch.ServerManager
 	adminEnv   *admin.Env
 	pakCache   *assets.PakIndexCache
@@ -57,8 +59,8 @@ func main() {
 
 	// Initialize networking layer.
 	nqServerIP := net.ParseIP(nqrelay.DefaultNQServerIP).To4()
-	ipAlloc := nqrelay.NewIPAllocator(nqServerIP)
-	sessionReg := nqrelay.NewSessionRegistry()
+	ipAlloc := nqrelay.NewNQIPAllocator(nqServerIP)
+	sessionReg := session.NewRegistry()
 
 	runCtx, runCancel := context.WithCancel(context.Background())
 	defer runCancel()
@@ -93,7 +95,7 @@ func main() {
 		errorf,
 		formatTimestampedLogText,
 	)
-	serverMgr.SetPoolMaxSize(cfg.poolSize)
+	serverMgr.SetServerMaxInstances(cfg.serverMaxInstances)
 	if err := serverMgr.StartAll(); err != nil {
 		fatalf("Failed to start servers: %v", err)
 	}
@@ -101,6 +103,7 @@ func main() {
 	app := &nexusApp{
 		cfg:        cfg,
 		auth:       auth,
+		id:         admin.NewIdentity(),
 		ipAlloc:    ipAlloc,
 		sessionReg: sessionReg,
 		serverMgr:  serverMgr,
@@ -158,12 +161,11 @@ type runtimeConfig struct {
 	binDir                 string
 	serverBinDir           string
 	clientDir              string
-	clientIPHeader         string // AUTH_CLIENT_IP_HEADER: header to read real client IP from
 	vfsPrefetchConcurrency int
 	clientAutoSMenu        bool
 	clientSendArgs         []string
 	clientURLArgs          bool
-	poolSize               int
+	serverMaxInstances     int
 }
 
 // loadRuntimeConfig reads all environment variables once and returns the
@@ -181,12 +183,11 @@ func loadRuntimeConfig() runtimeConfig {
 		binDir:                 binDir,
 		serverBinDir:           serverBinDir,
 		clientDir:              getEnv("CLIENT_DIR", "/app/bin/nqwasm"),
-		clientIPHeader:         strings.TrimSpace(os.Getenv("AUTH_CLIENT_IP_HEADER")),
 		vfsPrefetchConcurrency: getEnvIntMin("CL_CONCURRENCY", 16, 0),
 		clientAutoSMenu:        getEnvBool01("CL_SMENU", false),
 		clientSendArgs:         getEnvArgs("CL_ARGS", nil),
 		clientURLArgs:          getEnvBool01("CL_URL_ARGS", true),
-		poolSize:               getEnvIntMin("POOL_SIZE", 1, 1),
+		serverMaxInstances:     getEnvIntMin("SV_MAX_INSTANCES", 1, 1),
 	}
 }
 

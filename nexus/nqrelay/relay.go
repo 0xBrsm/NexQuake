@@ -38,7 +38,7 @@ type FrameDispatch struct {
 
 // Relay relays WebSocket frames to/from UDP servers for a single client.
 // Each Relay owns one WebSocket connection and one UDP socket bound to its
-// virtual IP. Three goroutines run concurrently: wsReadLoop, wsWriteLoop,
+// NQIP. Three goroutines run concurrently: wsReadLoop, wsWriteLoop,
 // and udpReadLoop; all are started by Run and exit when the relay closes.
 type Relay struct {
 	ws      *websocket.Conn
@@ -51,8 +51,7 @@ type Relay struct {
 	userID    string
 	isAdmin   atomic.Bool
 
-	alloc    *IPAllocator
-	sessions *SessionRegistry
+	alloc    *NQIPAllocator
 	dispatch FrameDispatch
 
 	warnf      logf
@@ -70,25 +69,24 @@ type Relay struct {
 // NewRelay creates a WebSocket↔UDP relay for a single client connection.
 //
 // sourceKey is the stable identity token for this client (e.g. a user ID or
-// auth token fingerprint). It determines the client's virtual IP: the same
+// auth token fingerprint). It determines the client's NQIP: the same
 // sourceKey always hashes to the same 127.x.x.x candidate, subject to
 // collision avoidance. sourceIP is a best-effort human-readable address for
 // logging. userID is an optional application-layer identifier stored on the
 // relay and surfaced in session snapshots.
 //
-// alloc and sessions must be non-nil and shared across all active relays.
+// alloc must be non-nil and shared across all active relays.
 // warnf and debugf may be nil (logging is silently suppressed).
 //
-// On success, the relay is tracked in sessions and owns the WebSocket
-// connection. Call [Relay.Run] to start the relay loops.
+// Registry/session tracking is the caller's responsibility: NewRelay neither
+// tracks nor untracks. Call [Relay.Run] to start the relay loops.
 func NewRelay(
 	ws *websocket.Conn,
 	sourceKey string,
 	sourceIP string,
 	userID string,
 	isAdmin bool,
-	alloc *IPAllocator,
-	sessions *SessionRegistry,
+	alloc *NQIPAllocator,
 	dispatch FrameDispatch,
 	warnf logf,
 	debugf logf,
@@ -124,7 +122,6 @@ func NewRelay(
 		sourceIP:   strings.TrimSpace(sourceIP),
 		userID:     strings.TrimSpace(userID),
 		alloc:      alloc,
-		sessions:   sessions,
 		dispatch:   dispatch,
 		warnf:      warnf,
 		debugf:     debugf,
@@ -133,19 +130,18 @@ func NewRelay(
 		cancel:     cancel,
 	}
 	relay.isAdmin.Store(isAdmin)
-	sessions.track(relay)
 	return relay, nil
 }
 
-// Close tears down the relay: invokes HandleClose, unregisters the session,
-// cancels the context, closes the UDP and WebSocket connections, and releases
-// the virtual IP. Safe to call more than once; all work happens at most once.
+// Close tears down the relay: invokes HandleClose, cancels the context,
+// closes the UDP and WebSocket connections, and releases the NQIP.
+// Safe to call more than once; all work happens at most once. Callers that
+// track the relay externally are responsible for dropping their reference.
 func (r *Relay) Close() {
 	r.closeOnce.Do(func() {
 		if r.dispatch.HandleClose != nil {
 			r.dispatch.HandleClose(r)
 		}
-		r.sessions.untrack(r)
 		r.cancel()
 		if r.udpConn != nil {
 			_ = r.udpConn.Close()
@@ -158,9 +154,9 @@ func (r *Relay) Close() {
 	})
 }
 
-// VirtualClientIP returns the relay's 127.x.x.x virtual IP as a dotted string.
+// ClientNQIP returns the relay's 127.x.x.x NQIP as a dotted string.
 // Returns an empty string after the relay has been closed.
-func (r *Relay) VirtualClientIP() string {
+func (r *Relay) ClientNQIP() string {
 	if r.clientIP[0] == 0 {
 		return ""
 	}
@@ -205,8 +201,8 @@ func (r *Relay) noteServerRoutePort(port int) {
 	r.routeMu.Unlock()
 }
 
-// activeServerPort returns the last-routed server port.
-func (r *Relay) activeServerPort() int {
+// ActiveServerPort returns the last-routed server port.
+func (r *Relay) ActiveServerPort() int {
 	r.routeMu.Lock()
 	defer r.routeMu.Unlock()
 	return r.lastServerPort

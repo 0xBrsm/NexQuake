@@ -21,7 +21,7 @@ typedef struct {
 	int  col_order[SLIST_NUM_COLS];
 	int  col_width[SLIST_NUM_COLS];
 	int  total_width;
-	qboolean show_pool;
+	qboolean show_instances;
 } slist_layout_t;
 
 // -----------------------------------------------------------------------
@@ -163,7 +163,7 @@ static const int slist_col_min[SLIST_NUM_COLS] = {
 // Prefer preserving columns by shrinking Server to this width before fallback.
 #define SLIST_SERVER_SOFT_MIN 15
 
-static int slist_users_width(qboolean show_pool)
+static int slist_users_width(qboolean show_instances)
 {
 	int i, w, max_w;
 	char users[32];
@@ -173,7 +173,7 @@ static int slist_users_width(qboolean show_pool)
 	{
 		if (!hostcache[i].maxusers)
 			continue;
-		if (show_pool && hostcache[i].instances > 0)
+		if (show_instances && hostcache[i].instances > 0)
 			w = sprintf(users, "%u/%u (%u)", hostcache[i].users,
 				hostcache[i].maxusers, hostcache[i].instances);
 		else
@@ -233,14 +233,14 @@ static void NET_SlistBuildLayout(int budget, slist_layout_t *layout)
 	for (i = 0; i < hostCacheCount; i++)
 		if (hostcache[i].instances > 0)
 		{
-			layout->show_pool = true;
+			layout->show_instances = true;
 			break;
 		}
-	users_w = slist_users_width(layout->show_pool);
+	users_w = slist_users_width(layout->show_instances);
 	layout->ncols = slist_cols_for_budget(budget, users_w);
-	if (layout->show_pool && !layout->ncols)
+	if (layout->show_instances && !layout->ncols)
 	{
-		layout->show_pool = false;
+		layout->show_instances = false;
 		users_w = slist_users_width(false);
 		layout->ncols = slist_cols_for_budget(budget, users_w);
 	}
@@ -372,7 +372,7 @@ static int NET_SlistFormatEntry(const slist_layout_t *layout, const hostcache_t 
 	// Pre-format Users string.
 	if (!host->maxusers)
 		Q_strcpy(users, "");
-	else if (layout->show_pool && host->instances > 0)
+	else if (layout->show_instances && host->instances > 0)
 	{
 		users_w = sprintf(users, "%u/%u", host->users, host->maxusers);
 		inst_w = sprintf(inst, "(%u)", host->instances);

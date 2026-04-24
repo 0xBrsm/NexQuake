@@ -116,8 +116,8 @@ func TestRelayHandleWSFrame_DropsDisallowedPort(t *testing.T) {
 	}
 
 	r.handleWSFrame(buildWSFrame(26000, []byte{1}))
-	if got := r.activeServerPort(); got != 0 {
-		t.Fatalf("activeServerPort = %d, want 0 after disallowed frame", got)
+	if got := r.ActiveServerPort(); got != 0 {
+		t.Fatalf("ActiveServerPort = %d, want 0 after disallowed frame", got)
 	}
 }
 

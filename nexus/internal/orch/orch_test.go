@@ -36,7 +36,7 @@ func (s *managedServer) PublishConsoleLineForTest(line string) {
 }
 
 // SetServerRunningForTest assigns the running process for a test record.
-func (m *ServerManager) SetServerRunningForTest(rec *serverRecord, srv *managedServer) {
+func (m *ServerManager) SetServerRunningForTest(rec *instance, srv *managedServer) {
 	if m == nil || rec == nil {
 		return
 	}
@@ -46,7 +46,7 @@ func (m *ServerManager) SetServerRunningForTest(rec *serverRecord, srv *managedS
 }
 
 // SetServerInfoForTest sets cached server-info fields on a test record.
-func (m *ServerManager) SetServerInfoForTest(rec *serverRecord, hostname, mapName string, players, maxPlayers byte) {
+func (m *ServerManager) SetServerInfoForTest(rec *instance, hostname, mapName string, players, maxPlayers byte) {
 	if m == nil || rec == nil {
 		return
 	}
@@ -58,20 +58,20 @@ func (m *ServerManager) SetServerInfoForTest(rec *serverRecord, hostname, mapNam
 	m.mu.Unlock()
 }
 
-func (m *ServerManager) registerServerLaunch(launch serverLaunch) *serverRecord {
+func (m *ServerManager) registerBareInstance(launch serverLaunch) *instance {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	rec := &serverRecord{
-		id:     m.nextServerID,
+	rec := &instance{
+		id:     m.nextInstanceID,
 		Launch: cloneServerLaunch(launch),
 	}
-	m.nextServerID++
-	m.serversByID[rec.id] = rec
+	m.nextInstanceID++
+	m.instancesByID[rec.id] = rec
 	return rec
 }
 
-func buildServerSnapshot(rec *serverRecord) ServerSnapshot {
+func buildServerSnapshot(rec *instance) ServerSnapshot {
 	if rec == nil {
 		return ServerSnapshot{State: "stopped"}
 	}
@@ -114,7 +114,7 @@ func buildServerSnapshot(rec *serverRecord) ServerSnapshot {
 	return snap
 }
 
-func (m *ServerManager) registerPoolSeed(rec *serverRecord) error {
+func (m *ServerManager) registerServerSeed(rec *instance) error {
 	if rec == nil {
 		return nil
 	}
@@ -126,7 +126,7 @@ func (m *ServerManager) registerPoolSeed(rec *serverRecord) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, exists := m.poolByServerID[rec.id]; exists {
+	if _, exists := m.serverByInstanceID[rec.id]; exists {
 		return nil
 	}
 
@@ -135,29 +135,29 @@ func (m *ServerManager) registerPoolSeed(rec *serverRecord) error {
 		candidatePort = 0
 	}
 	configuredPort, hasConfiguredPort := launchConfiguredPort(rec.Launch)
-	autoscales := hasConfiguredPort && configuredPort == 0 && max(1, m.poolMaxSize) > 1
+	autoscales := hasConfiguredPort && configuredPort == 0 && max(1, m.serverMaxInstances) > 1
 
-	pool := &serverPool{
-		PoolID:           m.nextPoolID,
+	s := &server{
+		ServerID:           m.nextServerID,
 		Line:             rec.Launch.Line,
 		TemplateLaunch:   cloneServerLaunch(rec.Launch),
 		Autoscales:       autoscales,
 		CandidatePort:    candidatePort,
-		BackendServerIDs: []int{rec.id},
-		backendState: map[int]*poolBackendState{
-			rec.id: newPoolBackendState(poolBackendLifecycleWarming),
+		InstanceIDs: []int{rec.id},
+		instanceStates: map[int]*instanceState{
+			rec.id: newInstanceState(instanceLifecycleWarming),
 		},
 	}
 	if !rec.LastSeen.IsZero() {
-		pool.backendState[rec.id].Lifecycle = poolBackendLifecycleActive
+		s.instanceStates[rec.id].Lifecycle = instanceLifecycleActive
 	}
-	m.nextPoolID++
-	m.poolsByID[pool.PoolID] = pool
-	if pool.CandidatePort > 0 {
-		m.poolByCandidatePort[pool.CandidatePort] = pool
+	m.nextServerID++
+	m.serversByID[s.ServerID] = s
+	if s.CandidatePort > 0 {
+		m.serverByCandidatePort[s.CandidatePort] = s
 	}
-	m.poolByServerID[rec.id] = pool
-	m.refreshPoolSnapshotLocked(pool)
+	m.serverByInstanceID[rec.id] = s
+	m.refreshServerSnapshotLocked(s)
 
 	return nil
 }

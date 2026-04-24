@@ -34,7 +34,7 @@ var unsupportedLaunchArgs = map[string]struct{}{
 
 const serverStartupCCREPTimeout = 10 * time.Second
 
-func resetRecordStartupState(rec *serverRecord) {
+func resetRecordStartupState(rec *instance) {
 	rec.relayConsoleReady = false
 	rec.awaitingServerInfo = false
 	rec.startupTimedOutOnce = false
@@ -69,14 +69,14 @@ func (m *ServerManager) StartAll() error {
 	m.stopOverlay = stopOverlay
 
 	m.mu.Lock()
-	m.serversByID = make(map[int]*serverRecord, len(launches))
-	m.serverIDsByPort = make(map[int][]int, len(launches))
-	m.nextServerID = 0
-	m.resetPoolRegistryLocked()
+	m.instancesByID = make(map[int]*instance, len(launches))
+	m.instanceIDsByPort = make(map[int][]int, len(launches))
+	m.nextInstanceID = 0
+	m.resetServerRegistryLocked()
 	m.mu.Unlock()
 
 	for _, launch := range launches {
-		rec, err := m.registerPoolLaunch(launch)
+		rec, err := m.registerServerLaunch(launch)
 		if err != nil {
 			_ = m.StopAll(context.Background(), 2*time.Second)
 			return err
@@ -90,7 +90,7 @@ func (m *ServerManager) StartAll() error {
 	return nil
 }
 
-func (m *ServerManager) startRecord(rec *serverRecord) error {
+func (m *ServerManager) startRecord(rec *instance) error {
 	if rec == nil {
 		return fmt.Errorf("server record not found")
 	}
@@ -156,7 +156,7 @@ func (m *ServerManager) startRecord(rec *serverRecord) error {
 	rec.MaxPlayers = 0
 	rec.LastSeen = time.Time{}
 	m.mu.Unlock()
-	m.resetPoolBackendState(rec.id)
+	m.resetServerInstanceState(rec.id)
 
 	go m.relayServerConsoleToNexus(rec, srv.Console)
 	go m.monitorServerStartupTimeout(rec, srv, serverStartupCCREPTimeout)
@@ -164,7 +164,7 @@ func (m *ServerManager) startRecord(rec *serverRecord) error {
 	return nil
 }
 
-func (m *ServerManager) monitorServerStartupTimeout(rec *serverRecord, srv *managedServer, timeout time.Duration) {
+func (m *ServerManager) monitorServerStartupTimeout(rec *instance, srv *managedServer, timeout time.Duration) {
 	if rec == nil || srv == nil || timeout <= 0 {
 		return
 	}
@@ -289,27 +289,35 @@ func (m *ServerManager) StopAll(ctx context.Context, killAfter time.Duration) er
 		m.runtimeBasedir = ""
 	}
 
-	m.closePoolRegistry()
+	m.closeServerRegistry()
 
 	return errors.Join(errs...)
 }
 
-func (m *ServerManager) stopServer(ctx context.Context, rec *serverRecord, s *managedServer, killAfter time.Duration, sendSignal bool) error {
+func (m *ServerManager) stopServer(ctx context.Context, rec *instance, s *managedServer, killAfter time.Duration, sendSignal bool) error {
 	if s == nil {
 		return nil
 	}
 	waitAfterSignal := killAfter
 
-	clearRunning := func(err error) error {
+	clearRunning := func(waitErr error) error {
 		m.mu.Lock()
 		if rec != nil && rec.Running == s {
 			rec.Running = nil
 			resetRecordStartupState(rec)
 			rec.lastError = ""
-			m.refreshPoolForServerLocked(rec.id)
+			m.refreshServerForInstanceLocked(rec.id)
 		}
 		m.mu.Unlock()
-		return err
+		// The caller asked for this process to stop; any exit — clean or
+		// signal-induced — is the success they wanted. cmd.Wait() returns
+		// *exec.ExitError with "signal: terminated"/"signal: killed" when the
+		// child dies from SIGTERM/SIGKILL we sent, which is expected here.
+		var exitErr *exec.ExitError
+		if errors.As(waitErr, &exitErr) {
+			return nil
+		}
+		return waitErr
 	}
 
 	if sendSignal && s.Cmd != nil && s.Cmd.Process != nil && isProcessAlive(s.Cmd.Process) {

@@ -8,11 +8,11 @@ import (
 
 // DefaultNQServerIP is the loopback address of the NQ dedicated server that
 // the relay forwards UDP traffic to. Override by passing a different IP to
-// [NewIPAllocator].
+// [NewNQIPAllocator].
 const DefaultNQServerIP = "127.0.0.1"
 
 // listenAddrForClient returns a UDP listen address bound to the client's
-// virtual IP (any port).
+// NQIP (any port).
 func listenAddrForClient(ip4 [4]byte) *net.UDPAddr {
 	return &net.UDPAddr{
 		IP:   net.IPv4(ip4[0], ip4[1], ip4[2], ip4[3]).To4(),

@@ -1,29 +1,21 @@
 package main
 
 import (
-	"strings"
-
 	"github.com/0xBrsm/NexQuake/nexus/internal/admin"
 	"github.com/0xBrsm/NexQuake/nexus/internal/orch"
+	"github.com/0xBrsm/NexQuake/nexus/internal/session"
 	"github.com/0xBrsm/NexQuake/nexus/nqrelay"
 )
 
-// buildFrameDispatch constructs the FrameDispatch for a relay session.
-// It routes slist requests to the server manager and all other port-0
-// frames to the admin subsystem.
-func (app *nexusApp) buildFrameDispatch(userIdentity string) nqrelay.FrameDispatch {
+// buildFrameDispatch wires the relay's port-0 control channel: slist
+// requests only. Other port-0 payloads are silently dropped; admin rcon
+// is served separately by POST /rcon.
+func (app *nexusApp) buildFrameDispatch(_ *session.Session) nqrelay.FrameDispatch {
 	return nqrelay.FrameDispatch{
-		HandleControlFrame: func(relay *nqrelay.Relay, payload []byte) []byte {
+		HandleControlFrame: func(_ *nqrelay.Relay, payload []byte) []byte {
 			if orch.IsSlistRequest(payload) {
 				return app.serverMgr.BuildSlistResponse()
 			}
-			admin.HandleAdminFrameWithIdentityAndPromotionHook(relay, payload, app.auth, app.adminEnv, userIdentity, func(r admin.Session) {
-				source := strings.TrimSpace(r.SourceIP())
-				if source == "" {
-					source = "unknown"
-				}
-				infof("Admin promoted: source=%s key=%s nqip=%s", source, r.SourceKey(), r.VirtualClientIP())
-			})
 			return nil
 		},
 		// IsAllowedPort left nil — contained environment, no port gating needed.
@@ -54,15 +46,14 @@ func convertServerSnapshots(snaps []orch.ServerSnapshot) []admin.ServerInfo {
 }
 
 // buildAdminEnv constructs the admin.Env, wiring server manager and session
-// registry capabilities via conversion closures that translate between
-// orch/nqrelay types and admin-local types.
-func buildAdminEnv(serverMgr *orch.ServerManager, sessionReg *nqrelay.SessionRegistry, ipAlloc *nqrelay.IPAllocator) *admin.Env {
+// registry capabilities without additional adapter types.
+func buildAdminEnv(serverMgr *orch.ServerManager, sessionReg *session.Registry, ipAlloc *nqrelay.NQIPAllocator) *admin.Env {
 	return &admin.Env{
 		ServerSnapshots: func() []admin.ServerInfo {
 			return convertServerSnapshots(serverMgr.Snapshots())
 		},
-		BackendSnapshots: func(target int) ([]admin.ServerInfo, error) {
-			snaps, err := serverMgr.BackendSnapshots(target)
+		InstanceSnapshots: func(target int) ([]admin.ServerInfo, error) {
+			snaps, err := serverMgr.InstanceSnapshots(target)
 			if err != nil {
 				return nil, err
 			}
@@ -76,36 +67,12 @@ func buildAdminEnv(serverMgr *orch.ServerManager, sessionReg *nqrelay.SessionReg
 		RestartServersAll:   serverMgr.RestartServersAll,
 		RemoveServer:        serverMgr.RemoveServer,
 		LaunchServer:        serverMgr.LaunchServer,
-		DispatchServerCmd:   serverMgr.DispatchServerCmd,
+		DispatchInstanceCmd:   serverMgr.DispatchInstanceCmd,
 		IsManagedListenPort: serverMgr.IsManagedListenPort,
 		TailNexusLog:        tailNexusLogLines,
 		Auditf:              auditf,
-		SessionSnapshots: func() []admin.SessionInfo {
-			snaps := sessionReg.SnapshotAll()
-			out := make([]admin.SessionInfo, len(snaps))
-			for i, s := range snaps {
-				out[i] = admin.SessionInfo{
-					VirtualIP:        s.VirtualIP,
-					SourceIP:         s.SourceIP,
-					UserID:           s.UserID,
-					IsAdmin:          s.IsAdmin,
-					ActiveServerPort: s.ActiveServerPort,
-				}
-			}
-			return out
-		},
-		SnapshotByVIP: func(vip string) ([]admin.Session, []admin.BanTarget) {
-			relays, targets := sessionReg.SnapshotByVirtualIP(vip)
-			sessions := make([]admin.Session, len(relays))
-			for i, r := range relays {
-				sessions[i] = r
-			}
-			banTargets := make([]admin.BanTarget, len(targets))
-			for i, t := range targets {
-				banTargets[i] = admin.BanTarget{Port: t.Port, VirtualIP: t.VirtualIP}
-			}
-			return sessions, banTargets
-		},
-		ReserveAndBlock: ipAlloc.ReserveAndBlock,
+		SessionSnapshots:    sessionReg.SnapshotAll,
+		SnapshotByNQIP:       sessionReg.SnapshotByNQIP,
+		ReserveAndBlock:     ipAlloc.ReserveAndBlock,
 	}
 }

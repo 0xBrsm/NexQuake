@@ -13,12 +13,12 @@
 //
 // # Key types
 //
-//	HashedAssetGateway  – start-manifest + hash-addressed asset serving
+//	HashedAssetServer  – start-manifest + hash-addressed asset serving
 //	PakIndexCache       – thread-safe cache of parsed .pak directory entries
 //
 // Typical usage in the nexus HTTP mux:
 //
-//	gw := assets.NewHashedAssetGateway(gameDir, cdDir, pakCache, concurrency, smenu, args, urlArgs)
+//	gw := assets.NewHashedAssetServer(gameDir, cdDir, pakCache, concurrency, smenu, args, urlArgs)
 //	gw.SetErrorf(errorf)
 //	mux.Handle("/start", http.HandlerFunc(gw.StartHandler()))
 //	mux.Handle("/nq/",   http.HandlerFunc(gw.AssetHandler()))

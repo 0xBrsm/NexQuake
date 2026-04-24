@@ -1,101 +1,29 @@
 package main
 
 import (
+	"encoding/json"
+	"io"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"strings"
 
+	"github.com/0xBrsm/NexQuake/nexus/internal/admin"
 	"github.com/0xBrsm/NexQuake/nexus/internal/assets"
 	"github.com/0xBrsm/NexQuake/nexus/nqrelay"
 )
 
-// parseClientIP extracts an IP address from a raw header value or remote addr
-// string, handling Forwarded/X-Forwarded-For formats and port stripping.
-func parseClientIP(raw string) (netip.Addr, bool) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return netip.Addr{}, false
-	}
-
-	if comma := strings.IndexByte(value, ','); comma >= 0 {
-		value = strings.TrimSpace(value[:comma])
-	}
-	if k, v, ok := strings.Cut(value, "="); ok && strings.EqualFold(strings.TrimSpace(k), "for") {
-		value = strings.TrimSpace(v)
-	}
-	value = strings.Trim(strings.TrimSpace(value), "\"")
-	if host, _, err := net.SplitHostPort(value); err == nil {
-		value = host
-	}
-	ip, err := netip.ParseAddr(strings.Trim(value, "[]"))
-	if err != nil {
-		return netip.Addr{}, false
-	}
-	return ip.Unmap(), true
-}
-
-// resolveClientSourceIP returns the external client IP for a request.
-// Preference order:
-//  1. headerName header (if non-empty and parseable)
-//  2. Remote address IP
-func resolveClientSourceIPWithHeader(r *http.Request, headerName string) string {
-	if r == nil {
-		return ""
-	}
-	if headerName != "" {
-		if ip, ok := parseClientIP(r.Header.Get(headerName)); ok {
-			return ip.String()
-		}
-	}
-	if ip, ok := parseClientIP(r.RemoteAddr); ok {
-		return ip.String()
-	}
-	return ""
-}
-
-// resolveClientSourceIP reads AUTH_CLIENT_IP_HEADER from the environment on
-// each call and delegates to resolveClientSourceIPWithHeader. Used by tests
-// that set the env var per-subtest; production code should prefer the
-// nexusApp methods that use the pre-loaded cfg.clientIPHeader.
-func resolveClientSourceIP(r *http.Request) string {
-	return resolveClientSourceIPWithHeader(r, strings.TrimSpace(os.Getenv("AUTH_CLIENT_IP_HEADER")))
-}
-
-// resolveClientSourceKey derives a stable identity key from an HTTP request
-// using AUTH_CLIENT_IP_HEADER read from the environment.
-// Production code should prefer the nexusApp method that uses cfg.clientIPHeader.
-func resolveClientSourceKey(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-	if sourceIP := resolveClientSourceIP(r); sourceIP != "" {
-		return "ip:" + sourceIP
-	}
-	return strings.TrimSpace(r.RemoteAddr)
-}
-
-// clientSourceIP returns the external client IP using the pre-loaded header name.
-func (app *nexusApp) clientSourceIP(r *http.Request) string {
-	return resolveClientSourceIPWithHeader(r, app.cfg.clientIPHeader)
-}
-
-// clientSourceKey derives a stable identity key using the pre-loaded header name.
-func (app *nexusApp) clientSourceKey(r *http.Request) string {
-	if sourceIP := app.clientSourceIP(r); sourceIP != "" {
-		return "ip:" + sourceIP
-	}
-	return strings.TrimSpace(r.RemoteAddr)
-}
+// rconMaxBody caps the size of a POST /rcon body. Admin JSON-RPC envelopes
+// are tiny — method string + a handful of params — so 8 KiB is generous.
+const rconMaxBody = 8 << 10
 
 // handleWebSocket upgrades the HTTP connection to WebSocket and starts a relay
 // session. Blocked clients are rejected before the upgrade. The relay runs to
 // completion (i.e. until the client disconnects) before the handler returns.
 func (app *nexusApp) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	isAdmin, userIdentity := app.auth.IdentifyRequest(r)
-	sourceIP := app.clientSourceIP(r)
-	sourceKey := app.clientSourceKey(r)
+	sourceIP := app.id.ClientSourceIP(r)
+	sourceKey := app.id.ClientSourceKey(r)
 	if app.ipAlloc.IsBlocked(sourceKey) {
 		warnf("Rejected blocked client source=%q remote=%s", sourceKey, r.RemoteAddr)
 		http.Error(w, "forbidden", http.StatusForbidden)
@@ -121,14 +49,19 @@ func (app *nexusApp) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		infof("Client connected: %s (%s)", displayAddr, userIdentity)
 	}
 
-	dispatch := app.buildFrameDispatch(userIdentity)
+	session := app.sessionReg.Create(sourceIP, userIdentity, isAdmin)
+	dispatch := app.buildFrameDispatch(session)
 
-	relay, err := nqrelay.NewRelay(conn, sourceKey, sourceIP, userIdentity, isAdmin, app.ipAlloc, app.sessionReg, dispatch, warnf, debugf)
+	relay, err := nqrelay.NewRelay(conn, sourceKey, sourceIP, userIdentity, isAdmin, app.ipAlloc, dispatch, warnf, debugf)
 	if err != nil {
+		app.sessionReg.Remove(session)
 		errorf("Failed to create relay: %v", err)
 		_ = conn.Close()
 		return
 	}
+
+	app.sessionReg.AttachChannel(session, relay)
+	defer app.sessionReg.Remove(session)
 
 	relay.Run()
 
@@ -139,16 +72,86 @@ func (app *nexusApp) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleRcon is the POST /rcon JSON-RPC handler. It reads the envelope,
+// authorizes the request via the Authorization header (Bearer for OIDC JWT,
+// Rcon for the shared-secret password), promotes matching WS sessions on
+// successful password auth (for session-list display + ban protection), and
+// dispatches to the admin command registry.
+func (app *nexusApp) handleRcon(w http.ResponseWriter, r *http.Request) {
+	sourceIP := app.id.ClientSourceIP(r)
+	sourceKey := app.id.ClientSourceKey(r)
+	if app.ipAlloc.IsBlocked(sourceKey) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, rconMaxBody))
+	if err != nil {
+		writeRPC(w, nil, admin.ErrCodeInvalidReq, "request body too large or unreadable")
+		return
+	}
+
+	actor, passwordMatched := app.auth.Authorize(r, sourceIP)
+	if passwordMatched {
+		// Label matching sessions for session-list display and ban protection.
+		// Does not grant privilege — every /rcon re-auths per-request.
+		for _, s := range app.sessionReg.LookupBySourceIP(sourceIP) {
+			if s.IsAdmin() {
+				continue
+			}
+			s.PromoteAdmin()
+			src := strings.TrimSpace(sourceIP)
+			if src == "" {
+				src = "unknown"
+			}
+			nqip := s.ClientNQIP()
+			if nqip == "" {
+				nqip = "none"
+			}
+			infof("Admin promoted: source=%s key=%s nqip=%s", src, s.SourceKey(), nqip)
+		}
+	}
+
+	req, errResp := admin.ParseRequest(body)
+	if errResp != nil {
+		writeResponse(w, errResp)
+		return
+	}
+
+	if !actor.IsAdmin {
+		writeRPC(w, req.ID, admin.ErrCodeUnauthorized, "unauthorized")
+		return
+	}
+
+	resp := admin.Dispatch(req, app.adminEnv, actor)
+	writeResponse(w, resp)
+}
+
+func writeRPC(w http.ResponseWriter, id json.RawMessage, code int, message string) {
+	writeResponse(w, &admin.Response{
+		Jsonrpc: "2.0",
+		Error:   &admin.RPCError{Code: code, Message: message},
+		ID:      id,
+	})
+}
+
+func writeResponse(w http.ResponseWriter, resp *admin.Response) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 // newMux builds the HTTP router for the nexus server.
 // Routes:
 //   - GET /health — liveness probe, returns version headers
 //   - GET /ws     — WebSocket upgrade; all game traffic flows here
-//   - /start      — client bootstrap page (game asset gateway)
+//   - POST /rcon  — admin JSON-RPC endpoint
+//   - /start      — client bootstrap page (asset server)
 //   - /nq/        — hashed game assets (pak files, etc.)
 //   - /           — WASM client static files
 func (app *nexusApp) newMux() *http.ServeMux {
 	mux := http.NewServeMux()
-	assetGateway := assets.NewHashedAssetGateway(
+	assetServer := assets.NewHashedAssetServer(
 		app.cfg.gameDir,
 		app.cfg.cdDir,
 		app.pakCache,
@@ -157,7 +160,7 @@ func (app *nexusApp) newMux() *http.ServeMux {
 		app.cfg.clientSendArgs,
 		app.cfg.clientURLArgs,
 	)
-	assetGateway.SetErrorf(errorf)
+	assetServer.SetErrorf(errorf)
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		v := currentVersionInfo()
@@ -168,9 +171,10 @@ func (app *nexusApp) newMux() *http.ServeMux {
 	})
 
 	mux.HandleFunc("GET /ws", app.handleWebSocket)
+	mux.HandleFunc("POST /rcon", app.handleRcon)
 
-	mux.Handle("/start", addIsolationHeaders(http.HandlerFunc(assetGateway.StartHandler())))
-	mux.Handle("/nq/", addIsolationHeaders(http.HandlerFunc(assetGateway.AssetHandler())))
+	mux.Handle("/start", addIsolationHeaders(http.HandlerFunc(assetServer.StartHandler())))
+	mux.Handle("/nq/", addIsolationHeaders(http.HandlerFunc(assetServer.AssetHandler())))
 
 	clientFS := http.FileServerFS(os.DirFS(app.cfg.clientDir))
 	mux.Handle("/", addIsolationHeaders(contentTypeOverride(cacheControlClient(clientFS))))

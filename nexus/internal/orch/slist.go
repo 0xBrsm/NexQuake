@@ -106,7 +106,7 @@ type serverListEntry struct {
 	GameDir    string // active game directory (truncated to hostcacheFieldMax)
 	Users      uint16 // current player count
 	MaxUsers   uint16 // server capacity
-	Instances  uint16 // backend instance count for autoscaled pools; 0 hides the pool suffix
+	Instances  uint16 // instance instance count for autoscaled servers; 0 hides the server suffix
 }
 
 func normalizeServerListEntry(e serverListEntry) serverListEntry {
@@ -178,52 +178,52 @@ func appendSlistCString(buf []byte, s string) []byte {
 	return append(buf, 0)
 }
 
-func serverListEntriesLocked(mgr *ServerManager, now time.Time, notePoolDemand bool) []serverListEntry {
+func serverListEntriesLocked(mgr *ServerManager, now time.Time, noteDemand bool) []serverListEntry {
 	ports := fillRunningPortsLocked(mgr, nil)
 	staleAfter := staleAfterForTargets(len(ports))
-	out := make([]serverListEntry, 0, len(ports)+len(mgr.poolsByID))
+	out := make([]serverListEntry, 0, len(ports)+len(mgr.serversByID))
 
-	pools := make([]*serverPool, 0, len(mgr.poolsByID))
-	for _, pool := range mgr.poolsByID {
-		if pool != nil {
-			pools = append(pools, pool)
+	servers := make([]*server, 0, len(mgr.serversByID))
+	for _, s := range mgr.serversByID {
+		if s != nil {
+			servers = append(servers, s)
 		}
 	}
-	sort.Slice(pools, func(i, j int) bool {
-		return pools[i].Line < pools[j].Line
+	sort.Slice(servers, func(i, j int) bool {
+		return servers[i].Line < servers[j].Line
 	})
-	for _, pool := range pools {
-		if pool.aggregateInstances == 0 {
+	for _, s := range servers {
+		if s.aggregateInstances == 0 {
 			continue
 		}
-		backendPort, ok := mgr.pickPoolBackendLocked(pool)
+		instancePort, ok := mgr.pickServerInstanceLocked(s)
 		if !ok {
 			continue
 		}
 		instances := uint16(0)
-		if pool.Autoscales {
-			if notePoolDemand {
-				notePoolDemandLocked(pool, now)
+		if s.Autoscales {
+			if noteDemand {
+				noteServerDemandLocked(s, now)
 			}
-			instances = pool.joinableInstances
+			instances = s.joinableInstances
 		}
 		out = append(out, normalizeServerListEntry(serverListEntry{
-			ListenPort: backendPort,
-			Hostname:   pool.DisplayHostname,
-			MapName:    pool.DisplayMap,
-			GameDir:    pool.DisplayGameDir,
-			Users:      pool.aggregateUsers,
-			MaxUsers:   pool.aggregateMaxUsers,
+			ListenPort: instancePort,
+			Hostname:   s.DisplayHostname,
+			MapName:    s.DisplayMap,
+			GameDir:    s.DisplayGameDir,
+			Users:      s.aggregateUsers,
+			MaxUsers:   s.aggregateMaxUsers,
 			Instances:  instances,
 		}))
 	}
 
 	for _, port := range ports {
-		ids := mgr.serverIDsByPort[port]
-		var rec *serverRecord
+		ids := mgr.instanceIDsByPort[port]
+		var rec *instance
 		for _, serverID := range ids {
-			r := mgr.serversByID[serverID]
-			if !mgr.serverRecordRunningLocked(r) || mgr.poolByServerID[r.id] != nil {
+			r := mgr.instancesByID[serverID]
+			if !mgr.instanceRunningLocked(r) || mgr.serverByInstanceID[r.id] != nil {
 				continue
 			}
 			rec = r
@@ -300,7 +300,7 @@ func serverSourcePortFromAddr(addr net.Addr) (int, bool) {
 
 const serverInfoPollStep = 500 * time.Millisecond
 
-// serverInfoPoller polls running backends via CCREQ_SERVER_INFO and forwards
+// serverInfoPoller polls running instances via CCREQ_SERVER_INFO and forwards
 // replies to the [ServerManager] to keep game-state metadata current.
 type serverInfoPoller struct {
 	mgr      *ServerManager
@@ -356,13 +356,13 @@ func (p *serverInfoPoller) Stop() {
 func fillRunningPortsLocked(mgr *ServerManager, dst []int) []int {
 	dst = dst[:0]
 
-	for port, ids := range mgr.serverIDsByPort {
+	for port, ids := range mgr.instanceIDsByPort {
 		if port < 1 || port > 65535 {
 			continue
 		}
 		for _, serverID := range ids {
-			rec := mgr.serversByID[serverID]
-			if !mgr.serverRecordRunningLocked(rec) {
+			rec := mgr.instancesByID[serverID]
+			if !mgr.instanceRunningLocked(rec) {
 				continue
 			}
 			dst = append(dst, port)
@@ -439,7 +439,7 @@ func (p *serverInfoPoller) pollLoop(ctx context.Context, conn *net.UDPConn) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			p.mgr.reconcileAllPools()
+			p.mgr.reconcileAllServers()
 			ports = fillRunningPorts(p.mgr, ports)
 			if len(ports) == 0 {
 				continue

@@ -2,16 +2,14 @@
  * cmd_rcon.c
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
- * This module is part of NexQuake and includes derivative work from
- * upstream websocket networking implementations by initialed85.
- * See ../ATTRIBUTIONS.md for upstream repositories, paths, and pinned commits.
+ * In-game rcon console command. Collects the user's arguments and the
+ * rcon_password cvar, hands them off to the JS-side JSON-RPC client
+ * (src/client/shell/55-rcon.js), and prints the formatted reply.
  */
 
 #include "quakedef.h"
 
-#include <stdlib.h>
-
-#include "net_ws_transport.h"
+#include <emscripten.h>
 
 static qboolean rcon_commands_registered = false;
 
@@ -19,120 +17,47 @@ static cvar_t rcon_password = {"rcon_password", ""};
 
 extern int NQWasm_GetConnectedServerListenPort(void);
 
+/*
+ * js_rcon_exec dispatches `args_line` as a JSON-RPC request against /rcon.
+ * password is used to build the Authorization: Rcon <password> header.
+ * connected_port seeds the fallback target for bare server-console commands
+ * (e.g. `rcon status` while connected). The formatted text reply is written
+ * into out_buf (NUL-terminated, truncated if larger than out_len).
+ */
+EM_ASYNC_JS(void, js_rcon_exec,
+	(const char *password, const char *args_line, int connected_port,
+	 char *out_buf, int out_len),
+{
+	var reply = await Module.nqRcon(
+		UTF8ToString(password),
+		UTF8ToString(args_line),
+		connected_port
+	);
+	stringToUTF8(String(reply || ""), out_buf, out_len);
+});
+
+#define RCON_REPLY_BUF 65536
+static char rcon_reply[RCON_REPLY_BUF];
+
 static void Rcon_f(void)
 {
-	char *target;
-	char targetbuf[32];
-	char *cmd;
-	char *pw;
-	int payload_len;
-	byte *payload;
-	int targetlen;
-	int cmdlen;
-	int pwlen;
-	int argc;
+	const char *password;
+	const char *args_line;
+	int connected_port;
 
-	argc = Cmd_Argc();
-	if (argc < 2)
+	if (Cmd_Argc() < 2)
 	{
-		Con_Printf("usage: rcon <cmd> | rcon nexus <cmd> | rcon <host|port|idx> <cmd>\n");
+		Con_Printf("usage: rcon <cmd>  (try: rcon help)\n");
 		return;
 	}
 
-	targetbuf[0] = 0;
-	cmd = Cmd_Args();
-	target = targetbuf;
-	if (argc > 2)
-	{
-		char *arg1 = Cmd_Argv(1);
-		int resolved = 0;
+	password = rcon_password.string ? rcon_password.string : "";
+	args_line = Cmd_Args();
+	connected_port = NQWasm_GetConnectedServerListenPort();
 
-		if (Q_strcasecmp(arg1, "nexus") == 0)
-		{
-			Q_strncpy(targetbuf, "0", sizeof(targetbuf) - 1);
-			targetbuf[sizeof(targetbuf) - 1] = 0;
-		}
-
-		// First, treat arg1 as an exact hostcache token and let Nexus resolve
-		// any duplicate visible hostname ambiguity.
-		if (!targetbuf[0])
-		{
-			resolved = NET_ResolveHostcacheName(arg1, targetbuf, sizeof(targetbuf), true);
-			if (resolved > 0)
-			{
-				Q_strncpy(targetbuf, hostcache[resolved - 1].name, sizeof(targetbuf) - 1);
-				targetbuf[sizeof(targetbuf) - 1] = 0;
-			}
-		}
-
-		// Otherwise, accept direct numeric port or pool-index targets.
-		if (!targetbuf[0] && arg1[0] >= '0' && arg1[0] <= '9')
-		{
-			char *end;
-			long port = strtol(arg1, &end, 10);
-			if (end != arg1 && *end == '\0' && port > 0)
-			{
-				Q_strncpy(targetbuf, arg1, sizeof(targetbuf) - 1);
-				targetbuf[sizeof(targetbuf) - 1] = 0;
-			}
-		}
-
-		if (targetbuf[0])
-		{
-			// Retokenize the args string so Cmd_Args() yields everything after the target.
-			Cmd_TokenizeString(cmd);
-			cmd = Cmd_Args();
-		}
-	}
-
-	if (!targetbuf[0] && cls.state == ca_connected && cls.netcon)
-	{
-		int listen_port = NQWasm_GetConnectedServerListenPort();
-		int ld = cls.netcon->landriver;
-		int i;
-
-		if (listen_port > 0 && listen_port <= 65535)
-		{
-			snprintf(targetbuf, sizeof(targetbuf), "%d", listen_port);
-		}
-
-		if (ld >= 0 && ld < net_numlandrivers && net_landrivers[ld].initialized)
-			for (i = 0; i < hostCacheCount; i++)
-				if (hostcache[i].ldriver == ld &&
-					net_landrivers[ld].AddrCompare(&cls.netcon->addr, &hostcache[i].addr) >= 0)
-				{
-					Q_strncpy(targetbuf, hostcache[i].cname, sizeof(targetbuf) - 1);
-					targetbuf[sizeof(targetbuf) - 1] = 0;
-					break;
-				}
-	}
-	if (!targetbuf[0] && (cls.state != ca_connected || !cls.netcon))
-	{
-		// When disconnected, default bare "rcon <cmd>" to Nexus control.
-		Q_strncpy(targetbuf, "0", sizeof(targetbuf) - 1);
-		targetbuf[sizeof(targetbuf) - 1] = 0;
-	}
-
-	cmdlen = Q_strlen(cmd);
-	pw = rcon_password.string;
-	pwlen = pw ? Q_strlen(pw) : 0;
-	targetlen = Q_strlen(target);
-
-	payload_len = pwlen + 1 + targetlen + 1 + cmdlen;
-	payload = (byte *)Z_Malloc(payload_len);
-	if (pwlen > 0)
-		Q_memcpy(payload, pw, pwlen);
-	payload[pwlen] = 0;
-	if (targetlen > 0)
-		Q_memcpy(payload + pwlen + 1, target, targetlen);
-	payload[pwlen + 1 + targetlen] = 0;
-	Q_memcpy(payload + pwlen + 1 + targetlen + 1, cmd, cmdlen);
-
-	// Port 0 is Nexus control traffic.
-	if (WebSocketTransport_SendFrame(0, payload, payload_len) < 0)
-		Con_Printf("rcon: send failed (%s)\n", WebSocketTransport_LastSendError());
-
-	Z_Free(payload);
+	rcon_reply[0] = 0;
+	js_rcon_exec(password, args_line, connected_port, rcon_reply, RCON_REPLY_BUF);
+	Con_Printf("%s", rcon_reply);
 }
 
 void Rcon_RegisterCommands(void)

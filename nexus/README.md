@@ -6,10 +6,11 @@ Go orchestration service that serves the WASM client, serves game data, tunnels 
 
 | Dir | Purpose |
 |-----|---------|
-| `nqrelay/` | **Networking relay.** Standalone WebSocket↔UDP relay with session lifecycle, deterministic virtual IP allocation, and control-frame callback hooks. No HTTP/auth/application imports. |
-| `internal/orch/` | **Orchestration.** Dedicated server launch/lifecycle, pool autoscaling/reconcile, server console capture, and `slist` polling/aggregation. No `nqrelay` or `admin` imports. |
-| `internal/admin/` | **Admin control plane.** Auth + admin command parsing/dispatch via callback-driven `Env`; no direct imports from `orch` or `nqrelay`. |
+| `nqrelay/` | **Networking relay.** Standalone WebSocket↔UDP relay with deterministic NQIP (`127.x.x.x`) allocation and control-frame callback hooks. No HTTP/auth/application imports. |
+| `internal/orch/` | **Orchestration.** Dedicated server launch/lifecycle, instance autoscaling/reconcile, server console capture, and `slist` polling/aggregation. No `nqrelay` or `admin` imports. |
+| `internal/admin/` | **Admin control plane.** HTTP `/rcon` JSON-RPC 2.0 dispatch + auth, via callback-driven `Env`; no direct imports from `orch` or `nqrelay`. |
 | `internal/assets/` | **Game data gateway.** Quickstart manifests, VFS manifest construction, PAK indexing/streaming, CD index, and hash-addressed asset serving (`/start`, `/nq/<hash>`). |
+| `internal/session/` | **Shared session model.** Cross-transport session registry, live channel attachment, session snapshots, and ban-target lookup by virtual IP. |
 | `quake106/` | **Shareware extractor.** Standalone Go package that extracts `pak0.pak` from the Quake 1.06 shareware archive with SHA256 verification. See [quake106/README.md](./quake106/README.md). |
 
 ## Dependency Boundaries
@@ -17,16 +18,18 @@ Go orchestration service that serves the WASM client, serves game data, tunnels 
 ```text
 nqrelay        (leaf: stdlib + gorilla/websocket)
 internal/orch  (leaf: stdlib + internal/assets)
+internal/session (leaf: stdlib)
 internal/admin (leaf: stdlib + github.com/google/shlex)
 
 package main   (sole integration point)
-  -> nqrelay + internal/orch + internal/admin + internal/assets
+  -> nqrelay + internal/orch + internal/admin + internal/assets + internal/session
 ```
 
 Rules:
 
 - `nqrelay`, `internal/orch`, and `internal/admin` do not import each other.
 - `nqrelay` has no imports from `internal/*` and no app policy logic.
+- `internal/session` is the shared session boundary for cross-transport state.
 - All cross-subsystem wiring is done in package `main` (`connect.go` and `control.go`).
 
 ## Entry Files
@@ -34,8 +37,8 @@ Rules:
 | File | Purpose |
 |------|---------|
 | `main.go` | Process lifecycle only: init, runtime wiring, HTTP server start, signal handling, graceful shutdown, and CLI subcommands (`--version`, `--healthcheck`). |
-| `connect.go` | HTTP mux and connection boundary: route registration, middleware wiring, WebSocket upgrade, source identity parsing, and pre-upgrade ban checks. |
-| `control.go` | Relay control wiring: builds `nqrelay.FrameDispatch`, routes control frames to `slist` or admin handlers, and composes `admin.Env` from orchestration/session dependencies. |
+| `connect.go` | HTTP mux and connection boundary: route registration (`/health`, `/ws`, `/rcon`, `/start`, `/nq/`, `/`), WebSocket upgrade, source identity parsing, `/rcon` JSON-RPC handler, and pre-upgrade ban checks. |
+| `control.go` | Relay control wiring: builds `nqrelay.FrameDispatch`, routes control frames to `slist`, and composes `admin.Env` from orchestration/session dependencies. |
 | `util.go` | Shared runtime utilities: leveled logging (stderr + file + ring buffer), version/build metadata, env helpers, and HTTP response helpers. |
 
 ## nqrelay/
@@ -45,38 +48,44 @@ WebSocket↔UDP relay. See [nqrelay/README.md](./nqrelay/README.md) for vendorin
 | File | Purpose |
 |------|---------|
 | `relay.go` | Manages WebSocket↔UDP relaying for individual client connections. |
-| `sessions.go` | Tracks active relays by virtual IP and generates session snapshots. |
 | `protocol.go` | Defines binary frame format and builds/parses WebSocket tunnel frames. |
 | `ws.go` | Implements WebSocket read/write loops with keepalive pings. |
 | `udp.go` | Handles UDP socket operations and datagram forwarding to/from game servers. |
-| `vip.go` | Allocates unique 127.x.x.x virtual IPs and blocks banned sources. |
+| `nqip.go` | Allocates unique `127.x.x.x` NQIPs and blocks banned sources. |
 
 ## internal/orch/
 
-Manages dedicated server processes and scaled backend pools. Parses `.bat`-style `servers.ini`, starts processes under PTY for console capture, polls server info for `slist`, and runs pool reconcile/autoscale policy.
+Manages dedicated server processes and their scaled instances. Parses `.bat`-style `servers.ini`, starts processes under PTY for console capture, polls server info for `slist`, and runs server/instance reconcile and autoscale policy.
 
 | File | Purpose |
 |------|---------|
 | `launcher.go` | `servers.ini` parser (with `@macro` + `%arg` expansion), launch plan builder, and process start/stop wiring under PTY. |
 | `manager.go` | `ServerManager` construction, shared logging hooks, and operator console relay formatting. |
-| `registry.go` | Pool/server registry model, backend lifecycle state (`warming/active/draining/terminating`), and aggregate pool snapshot refresh. |
-| `state.go` | In-memory server state updates (resolved port/search-path + observed server-info), startup-online transitions, and per-update pool reconcile trigger. |
-| `pool.go` | Pool backend selection (least-loaded, round-robin tie-break), slist-poll demand accounting, headroom calculation, autoscale scale-up/drain/despawn decisions, and reconcile loops (event-driven + heartbeat). |
-| `ops.go` | High-level server operations (start/stop/restart/remove/launch by port or index). Resolves targets and coordinates pool/member transitions. |
+| `registry.go` | Server/instance registry model, instance lifecycle state (`warming/active/draining/terminating`), and aggregate server snapshot refresh. |
+| `state.go` | In-memory instance state updates (resolved port/search-path + observed server-info), startup-online transitions, and per-update reconcile trigger. |
+| `server.go` | Server-level instance selection (least-loaded, round-robin tie-break), slist-poll demand accounting, headroom calculation, autoscale scale-up/drain/despawn decisions, and reconcile loops (event-driven + heartbeat). |
+| `ops.go` | High-level lifecycle operations (start/stop/restart/remove/launch by 1-based server index). Resolves targets and coordinates instance transitions. |
 | `console.go` | PTY-based server console I/O. Captures output lines, detects listen port from console, supports filtered reads for rcon command capture. |
-| `rcon.go` | Server command execution: writes a command to the PTY, captures output with idle/max timeouts, formats the reply. |
-| `slist.go` | Server-info poller. Sends `CCREQ_SERVER_INFO` in round-robin, updates cache for WebSocket `slist`, and drives periodic all-pool reconcile heartbeat. |
+| `rcon.go` | Instance command dispatch (`DispatchInstanceCmd`): writes a command to the PTY of the instance at a given listen port, captures output with idle/max timeouts, formats the reply. |
+| `slist.go` | Server-info poller. Sends `CCREQ_SERVER_INFO` in round-robin, updates cache for WebSocket `slist`, and drives periodic reconcile heartbeat. |
 
 ## internal/admin/
 
-Authenticates admin sessions and handles rcon commands dispatched from the WebSocket control channel. Package dependencies are injected via `Env` callbacks so admin code remains isolated from orchestration and relay internals.
+Authenticates admin requests and handles JSON-RPC 2.0 commands received on `POST /rcon`. Package dependencies are injected via `Env` callbacks so admin code remains isolated from orchestration and relay internals.
 
 | File | Purpose |
 |------|---------|
-| `auth.go` | OIDC JWT verification (`AUTH_ISSUER`, `AUTH_AUDIENCE`, `AUTH_JWT_HEADER`) plus optional matcher allowlist (`AUTH_ADMIN_ID`) and `AUTH_RCON_PASSWORD` support. |
-| `rcon.go` | Admin frame parser/dispatcher for Nexus-level and server-level command execution. |
-| `cmds.go` | Nexus-level command handlers (`help`, `tail`, `slist`, `start`, `stop`, `restart`, `remove`, `launch`). |
-| `sessions.go` | Session-focused commands and helpers (`session list`, `session info`, `session ban`, status slot/address matching for targeted kick). |
+| `auth.go` | OIDC JWT verification (`AUTH_ISSUER`, `AUTH_AUDIENCE`, `AUTH_JWT_HEADER`) plus optional matcher allowlist (`AUTH_ADMIN_ID`) and `AUTH_RCON_PASSWORD` (via `Authorization: Rcon <password>`). |
+| `id.go` | Client source IP / identity-key resolution (`AUTH_CLIENT_IP_HEADER`) for proxied deployments. |
+| `rpc.go` | JSON-RPC 2.0 machinery: `Request`/`Response` envelopes, `ParseRequest`, `Dispatch`, `MethodError`, and per-RPC audit logging. |
+| `cmds.go` | Command registry and handlers: `rcon.help`, `rpc.discover`, `logs.tail`, `server.list`, `server.instances`, `server.start`, `server.stop`, `server.restart`, `server.remove`, `server.launch`, `server.instance.command`. |
+| `sessions.go` | Session commands and helpers (`session.list`, `session.info`, `session.ban`, status slot/address matching for targeted kick). |
+
+## internal/session/
+
+| File | Purpose |
+|------|---------|
+| `session.go` | Shared session registry, live channel attachment, snapshots, virtual-IP indexing, and ban-target derivation. |
 
 ## internal/assets/
 

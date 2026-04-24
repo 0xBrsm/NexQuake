@@ -1,16 +1,16 @@
 // Package orch manages the lifecycle of dedicated Quake server processes.
 //
-// The central type is [ServerManager], which owns a set of server pools.
-// Each pool tracks one or more backend processes launched from the same
-// servers.ini entry.  Pools whose launch line specifies "-port 0" autoscale:
-// the manager spawns additional backend replicas when join demand outpaces
+// The central type is [ServerManager], which owns a set of servers.
+// Each server tracks one or more instance processes launched from the same
+// servers.ini entry.  Servers whose launch line specifies "-port 0" autoscale:
+// the manager spawns additional instance replicas when join demand outpaces
 // available capacity, and despawns idle ones when headroom is sufficient.
 //
 // Typical usage:
 //
 //	mgr := orch.NewServerManager(gameDir, logsDir, infof, consoleInfof,
 //	    debugf, warnf, errorf, formatLogLine)
-//	mgr.SetPoolMaxSize(cfg.poolSize)
+//	mgr.SetServerMaxInstances(cfg.serverMaxInstances)
 //	if err := mgr.StartAll(); err != nil { ... }
 //
 //	stopPoller := mgr.StartInfoPoller(ctx, serverIP)
@@ -39,24 +39,24 @@ type ServerManager struct {
 	consoleInfof  func(string, ...any)
 	formatLogLine func(string, time.Time) string
 
-	mu              sync.RWMutex
-	serversByID     map[int]*serverRecord
-	serverIDsByPort map[int][]int
+	mu                sync.RWMutex
+	instancesByID     map[int]*instance
+	instanceIDsByPort map[int][]int
 
-	poolsByID           map[int]*serverPool
-	poolByCandidatePort map[int]*serverPool
-	poolByServerID      map[int]*serverPool
-	nextPoolID          int
-	poolMaxSize         int
-	nextServerID        int
-	runtimeBasedir      string
+	serversByID           map[int]*server
+	serverByCandidatePort map[int]*server
+	serverByInstanceID    map[int]*server
+	nextServerID          int
+	serverMaxInstances    int
+	nextInstanceID        int
+	runtimeBasedir        string
 	// stopOverlay halts the assets overlay watcher started alongside
 	// runtimeBasedir; must be invoked before RemoveAll(runtimeBasedir)
 	// so in-flight fsnotify events don't race the teardown.
 	stopOverlay func()
 }
 
-func (m *ServerManager) serverConsoleLabel(rec *serverRecord) string {
+func (m *ServerManager) serverConsoleLabel(rec *instance) string {
 	if rec == nil {
 		return "server"
 	}
@@ -65,16 +65,16 @@ func (m *ServerManager) serverConsoleLabel(rec *serverRecord) string {
 	return m.serverConsoleLabelLocked(rec)
 }
 
-func (m *ServerManager) serverConsoleLabelLocked(rec *serverRecord) string {
+func (m *ServerManager) serverConsoleLabelLocked(rec *instance) string {
 	if rec == nil {
 		return "server"
 	}
 
-	pool := m.poolByServerID[rec.id]
+	s := m.serverByInstanceID[rec.id]
 
 	hostname := "server"
-	if pool != nil {
-		if name := strings.TrimSpace(pool.DisplayHostname); name != "" {
+	if s != nil {
+		if name := strings.TrimSpace(s.DisplayHostname); name != "" {
 			hostname = name
 		}
 	}
@@ -83,11 +83,11 @@ func (m *ServerManager) serverConsoleLabelLocked(rec *serverRecord) string {
 	}
 
 	port := recordListenPort(rec)
-	if pool != nil && pool.Line >= 0 {
+	if s != nil && s.Line >= 0 {
 		if port > 0 {
-			return fmt.Sprintf("%d-%s-%d", pool.Line+1, hostname, port)
+			return fmt.Sprintf("%d-%s-%d", s.Line+1, hostname, port)
 		}
-		return fmt.Sprintf("%d-%s", pool.Line+1, hostname)
+		return fmt.Sprintf("%d-%s", s.Line+1, hostname)
 	}
 	if port > 0 {
 		return fmt.Sprintf("%s-%d", hostname, port)
@@ -105,7 +105,7 @@ func formatLaunchLabel(launch serverLaunch) string {
 	return "replica"
 }
 
-func (m *ServerManager) serverConsoleRelayEnabled(rec *serverRecord, console *serverConsole) bool {
+func (m *ServerManager) serverConsoleRelayEnabled(rec *instance, console *serverConsole) bool {
 	if rec == nil || console == nil {
 		return false
 	}
@@ -139,7 +139,7 @@ func shouldRelayServerConsoleLine(line string) bool {
 	return true
 }
 
-func (m *ServerManager) formatServerConsoleRelayLine(rec *serverRecord, line string) (string, bool) {
+func (m *ServerManager) formatServerConsoleRelayLine(rec *instance, line string) (string, bool) {
 	msg := strings.TrimRight(line, "\r\n")
 	if !shouldRelayServerConsoleLine(msg) {
 		return "", false
@@ -147,7 +147,7 @@ func (m *ServerManager) formatServerConsoleRelayLine(rec *serverRecord, line str
 	return fmt.Sprintf("[%s] %s", m.serverConsoleLabel(rec), msg), true
 }
 
-func (m *ServerManager) relayServerConsoleToNexus(rec *serverRecord, console *serverConsole) {
+func (m *ServerManager) relayServerConsoleToNexus(rec *instance, console *serverConsole) {
 	if console == nil {
 		return
 	}
@@ -209,20 +209,20 @@ func NewServerManager(
 		formatLogLine = identityLogLine
 	}
 	return &ServerManager{
-		gameDir:             gameDir,
-		logsDir:             logsDir,
-		infof:               infof,
-		debugf:              debugf,
-		warnf:               warnf,
-		errorf:              errorf,
-		consoleInfof:        consoleInfof,
-		formatLogLine:       formatLogLine,
-		serversByID:         make(map[int]*serverRecord),
-		serverIDsByPort:     make(map[int][]int),
-		poolsByID:           make(map[int]*serverPool),
-		poolByCandidatePort: make(map[int]*serverPool),
-		poolByServerID:      make(map[int]*serverPool),
-		nextPoolID:          1,
-		poolMaxSize:         defaultPoolSize,
+		gameDir:               gameDir,
+		logsDir:               logsDir,
+		infof:                 infof,
+		debugf:                debugf,
+		warnf:                 warnf,
+		errorf:                errorf,
+		consoleInfof:          consoleInfof,
+		formatLogLine:         formatLogLine,
+		instancesByID:         make(map[int]*instance),
+		instanceIDsByPort:     make(map[int][]int),
+		serversByID:           make(map[int]*server),
+		serverByCandidatePort: make(map[int]*server),
+		serverByInstanceID:    make(map[int]*server),
+		nextServerID:          1,
+		serverMaxInstances:    defaultServerMaxInstances,
 	}
 }

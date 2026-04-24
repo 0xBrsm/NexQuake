@@ -23,7 +23,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-func TestSessionRegistryStressSimultaneousClients(t *testing.T) {
+func TestRelayStressSimultaneousClients(t *testing.T) {
 	tiers := []struct {
 		name    string
 		clients int
@@ -36,10 +36,9 @@ func TestSessionRegistryStressSimultaneousClients(t *testing.T) {
 	for _, tier := range tiers {
 		tier := tier
 		t.Run(tier.name, func(t *testing.T) {
-			alloc := NewIPAllocator(net.ParseIP(DefaultNQServerIP).To4())
-			sessions := NewSessionRegistry()
+			alloc := NewNQIPAllocator(net.ParseIP(DefaultNQServerIP).To4())
 
-			relays, err := spawnStressRelays(tier.clients, alloc, sessions)
+			relays, err := spawnStressRelays(tier.clients, alloc)
 			if err != nil {
 				t.Fatalf("spawnStressRelays(%d): %v", tier.clients, err)
 			}
@@ -47,40 +46,30 @@ func TestSessionRegistryStressSimultaneousClients(t *testing.T) {
 				closeRelaysConcurrently(relays)
 			})
 
-			snapshots := sessions.SnapshotAll()
-			if got := len(snapshots); got != tier.clients {
-				t.Fatalf("SnapshotAll() count = %d, want %d", got, tier.clients)
+			if got := len(relays); got != tier.clients {
+				t.Fatalf("relay count = %d, want %d", got, tier.clients)
 			}
 
 			seenVirtualIPs := make(map[string]struct{}, tier.clients)
-			for _, snapshot := range snapshots {
-				if snapshot.VirtualIP == "" {
-					t.Fatalf("snapshot has empty virtual IP")
+			for _, r := range relays {
+				vip := r.ClientNQIP()
+				if vip == "" {
+					t.Fatalf("relay has empty virtual IP")
 				}
-				if _, dup := seenVirtualIPs[snapshot.VirtualIP]; dup {
-					t.Fatalf("duplicate virtual IP: %s", snapshot.VirtualIP)
+				if _, dup := seenVirtualIPs[vip]; dup {
+					t.Fatalf("duplicate virtual IP: %s", vip)
 				}
-				seenVirtualIPs[snapshot.VirtualIP] = struct{}{}
-				if snapshot.ActiveServerPort < 26000 || snapshot.ActiveServerPort > 26007 {
-					t.Fatalf("snapshot active server port = %d, want range [26000,26007]", snapshot.ActiveServerPort)
+				seenVirtualIPs[vip] = struct{}{}
+				if port := r.ActiveServerPort(); port < 26000 || port > 26007 {
+					t.Fatalf("active server port = %d, want range [26000,26007]", port)
 				}
-			}
-
-			sample := snapshots[len(snapshots)/2]
-			relaysByVIP, targets := sessions.SnapshotByVirtualIP(sample.VirtualIP)
-			if got := len(relaysByVIP); got != 1 {
-				t.Fatalf("SnapshotByVirtualIP(%q) relays = %d, want 1", sample.VirtualIP, got)
-			}
-			if got := len(targets); got != 1 {
-				t.Fatalf("SnapshotByVirtualIP(%q) targets = %d, want 1", sample.VirtualIP, got)
-			}
-			if targets[0].Port < 26000 || targets[0].Port > 26007 {
-				t.Fatalf("target port = %d, want range [26000,26007]", targets[0].Port)
 			}
 
 			closeRelaysConcurrently(relays)
-			if got := len(sessions.SnapshotAll()); got != 0 {
-				t.Fatalf("SnapshotAll() after Close = %d, want 0", got)
+			for _, r := range relays {
+				if ip := r.ClientIP(); ip[0] != 0 {
+					t.Fatalf("relay still holds virtual IP %v after Close", ip)
+				}
 			}
 		})
 	}
@@ -115,7 +104,7 @@ type udpProbeClientMetrics struct {
 	latencyNanos []int64
 }
 
-func spawnStressRelays(clientCount int, alloc *IPAllocator, sessions *SessionRegistry) ([]*Relay, error) {
+func spawnStressRelays(clientCount int, alloc *NQIPAllocator) ([]*Relay, error) {
 	relays := make([]*Relay, clientCount)
 	if clientCount == 0 {
 		return relays, nil
@@ -150,14 +139,12 @@ func spawnStressRelays(clientCount int, alloc *IPAllocator, sessions *SessionReg
 					sourceKey: sourceKey,
 					sourceIP:  sourceIP,
 					alloc:     alloc,
-					sessions:  sessions,
 					warnf:     noopLogf,
 					debugf:    noopLogf,
 					ctx:       ctx,
 					cancel:    cancel,
 				}
 				relay.noteServerRoutePort(26000 + (idx % 8))
-				sessions.track(relay)
 				relays[idx] = relay
 			}
 		}()
@@ -304,8 +291,7 @@ func runFullStackStressTier(t *testing.T, clientCount int) {
 		t.Fatalf("parse server ip: %q", DefaultNQServerIP)
 	}
 
-	alloc := NewIPAllocator(serverIP)
-	sessions := NewSessionRegistry()
+	alloc := NewNQIPAllocator(serverIP)
 
 	echoConn, err := net.ListenUDP("udp4", ServerUDPAddr(serverIP, 0))
 	if err != nil {
@@ -362,7 +348,7 @@ func runFullStackStressTier(t *testing.T, clientCount int) {
 		sourceKey := "stress-fullstack:" + clientID
 		sourceIP := fmt.Sprintf("198.51.100.%d", 1+(len(clientID)%250))
 
-		relay, err := NewRelay(conn, sourceKey, sourceIP, "", false, alloc, sessions, FrameDispatch{}, noopLogf, noopLogf)
+		relay, err := NewRelay(conn, sourceKey, sourceIP, "", false, alloc, FrameDispatch{}, noopLogf, noopLogf)
 		if err != nil {
 			serverErrMu.Lock()
 			serverErrs = append(serverErrs, fmt.Errorf("new relay: %w", err))
@@ -563,10 +549,10 @@ func runFullStackStressTier(t *testing.T, clientCount int) {
 		}
 	}
 
-	if got := len(sessions.SnapshotAll()); got != clientCount {
+	if got := int(currentSessions.Load()); got != clientCount {
 		close(runTraffic)
 		wg.Wait()
-		t.Fatalf("session snapshot at barrier = %d, want %d", got, clientCount)
+		t.Fatalf("active relay count at barrier = %d, want %d", got, clientCount)
 	}
 	// One in-band snapshot verification under full load is enough here.
 	for {
@@ -594,7 +580,7 @@ func runFullStackStressTier(t *testing.T, clientCount int) {
 		t.Fatalf("full-stack server errors: %v", serverErrs[0])
 	}
 
-	waitForSessionsToDrain(t, sessions, 10*time.Second)
+	waitForRelaysToDrain(t, &currentSessions, 10*time.Second)
 	connectAvg, connectMax, missingConnectLatencies := summarizeLatencyNanos(connectLatencyNanos)
 	if missingConnectLatencies > 0 {
 		t.Fatalf("missing connect latency samples: %d", missingConnectLatencies)
@@ -870,15 +856,15 @@ func estimateProbeSamplesPerClient(duration time.Duration, interval time.Duratio
 	return samples
 }
 
-func waitForSessionsToDrain(t *testing.T, sessions *SessionRegistry, timeout time.Duration) {
+func waitForRelaysToDrain(t *testing.T, active *atomic.Int64, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for {
-		if len(sessions.SnapshotAll()) == 0 {
+		if active.Load() == 0 {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("sessions did not drain within %s; remaining=%d", timeout, len(sessions.SnapshotAll()))
+			t.Fatalf("relays did not drain within %s; remaining=%d", timeout, active.Load())
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

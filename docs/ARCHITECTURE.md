@@ -155,45 +155,45 @@ Because Nexus never parses the datagram payload, it has no knowledge of whether 
 
 ### Multi-Server Routing
 
-Server selection is port-based. `connect <port>` connects directly to that backend. For scaled pools (`-port 0` lines) there is no proxy port — load balancing happens at slist time.
+Server selection is port-based. `connect <port>` connects directly to that instance. For autoscaled servers (`-port 0` lines) there is no proxy port — load balancing happens at slist time.
 
-When a client sends a `CCREQ_SERVER_INFO` browse request, `snapshotForSlist()` calls `pickPoolBackendLocked()` for each pool. This selects the least-loaded routable backend (fill ratio `players/maxplayers`, round-robin tie-break) and puts that backend's actual listen port in the slist entry. The aggregate users/maxusers/instances reflect the whole pool, but the port the client receives is a real backend port it connects to directly.
+When a client sends a `CCREQ_SERVER_INFO` browse request, `snapshotForSlist()` calls `pickServerInstanceLocked()` for each server. This selects the least-loaded routable instance (fill ratio `players/maxplayers`, round-robin tie-break) and puts that instance's actual listen port in the slist entry. The aggregate users/maxusers/instances reflect the whole server, but the port the client receives is a real instance port it connects to directly.
 
-Backend selection order:
+Instance selection order:
 
-1. Prefer `active` backends with free slots.
-2. If all `active` backends are full, include full ones rather than failing.
-3. If no `active` backend exists, fall back to `draining` backends — free slots first, then full.
-4. If no routable backend exists, the pool is omitted from the slist response.
+1. Prefer `active` instances with free slots.
+2. If all `active` instances are full, include full ones rather than failing.
+3. If no `active` instance exists, fall back to `draining` instances — free slots first, then full.
+4. If no routable instance exists, the server is omitted from the slist response.
 
-Each slist poll may return a different backend port for the same pool as load shifts. There is no session affinity; the slist is the load balancer.
+Each slist poll may return a different instance port for the same server as load shifts. There is no session affinity; the slist is the load balancer.
 
 ### Scaling Lifecycle and Autoscaling
 
-Each `-port 0` startup line becomes a managed backend pool with lifecycle states:
+Each `-port 0` startup line becomes a managed server with lifecycle states per instance:
 
 - `warming`: process started but not yet seen in `CCREP_SERVER_INFO`.
-- `active`: routable; eligible for slist backend selection.
+- `active`: routable; eligible for slist instance selection.
 - `draining`: still routable as fallback, but no longer preferred for new joins.
 - `terminating`: selected for despawn; removed once stop completes.
 
-Pool reconcile runs in two loops:
+Server reconcile runs in two loops:
 
-- Event-driven: every server-info update for a scaled backend triggers pool reconcile.
-- Heartbeat: every server-info poll tick (`500ms`) reconciles all backend pools, so autoscaling still progresses even when no new server-info packets arrive.
+- Event-driven: every server-info update for a scaled instance triggers reconcile.
+- Heartbeat: every server-info poll tick (`500ms`) reconciles all servers, so autoscaling still progresses even when no new server-info packets arrive.
 
 Scale-up and scale-down policy:
 
-- Headroom target is `max(4, ceil(joinRPS * 12s * 1.5))`, where `joinRPS` is the rate of slist poll hits on that pool over a `30s` sliding window.
-- Scale-up happens when current free slots fall below target headroom, no scale-up is already in flight, cooldown (`30s`) has elapsed, and running backends are below `POOL_SIZE`.
-- Idle backends only move to `draining` when at least two active routable backends remain and enough headroom would still exist after draining.
-- While scale-up is in flight, additional active backends are not moved to `draining`.
-- Draining backends with zero players for 6 reconcile polls are despawned.
-- A hard safety guard prevents despawning the last running backend in a pool.
+- Headroom target is `max(4, ceil(joinRPS * 12s * 1.5))`, where `joinRPS` is the rate of slist poll hits on that server over a `30s` sliding window.
+- Scale-up happens when current free slots fall below target headroom, no scale-up is already in flight, cooldown (`30s`) has elapsed, and running instances are below `SV_MAX_INSTANCES`.
+- Idle instances only move to `draining` when at least two active routable instances remain and enough headroom would still exist after draining.
+- While scale-up is in flight, additional active instances are not moved to `draining`.
+- Draining instances with zero players for 6 reconcile polls are despawned.
+- A hard safety guard prevents despawning the last running instance of a server.
 
 Control/broadcast traffic uses `udp_port = 0`. For `slist`, Nexus detects `CCREQ_SERVER_INFO` and replies with aggregated `CCREP_SERVER_INFO` data built from its polled cache:
 
-- one row per scaled pool (a load-balanced backend port, aggregate users/maxusers, instance count),
+- one row per autoscaled server (a load-balanced instance port, aggregate users/maxusers, instance count),
 - plus non-scaled servers as direct entries.
 
 This replaces NetQuake's UDP broadcast, which never worked well and doesn't work across loopback addresses on Linux anyway.
@@ -202,7 +202,7 @@ This replaces NetQuake's UDP broadcast, which never worked well and doesn't work
 
 Standard NetQuake server browsing (`slist`) sends a UDP broadcast `CCREQ_SERVER_INFO` and waits for individual server replies. NexQuake runs on loopback, where broadcast never reaches game servers, so Nexus intercepts the request and replies with a single aggregated `CCREP_SERVER_INFO` packet containing the full server list.
 
-`net_slist.c` parses this batch response: a count byte followed by per-server fields (port, name, map, gamedir, users, maxusers, backend instance count). An instance count of `0` means "display as a normal non-pooled row"; positive values mean an autoscaled pool row and are shown in the users column. Parsed entries are written directly into `hostcache[]` and the `slist_agg_done` flag short-circuits the normal poll loop so the client does not wait for individual server replies that will never come. A dynamic column layout adapts the console output width to the terminal, adding a gamedir column so players can see which mod each server runs.
+`net_slist.c` parses this batch response: a count byte followed by per-server fields (port, name, map, gamedir, users, maxusers, instance count). An instance count of `0` means "display as a normal single-instance row"; positive values mean an autoscaled server row and are shown in the users column. Parsed entries are written directly into `hostcache[]` and the `slist_agg_done` flag short-circuits the normal poll loop so the client does not wait for individual server replies that will never come. A dynamic column layout adapts the console output width to the terminal, adding a gamedir column so players can see which mod each server runs.
 
 ## Port-Only Relay Addressing
 
