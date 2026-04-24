@@ -12,7 +12,7 @@ A concise directory of all documentation located within the `src/` tree.
 | [etc/README.md](../etc/README.md) | **Quickstart Catalog.** How `game.json` and `QUICKSTART` drive automatic game-data installs. |
 | [ENVIRONMENT.md](ENVIRONMENT.md) | **Environment Reference.** Complete list of environment variables for Nexus and networking. |
 | [SETUP.md](SETUP.md) | **Data and Servers.** Managing game data, mods, and the `servers.ini` launch plan. |
-| [ADMIN.md](ADMIN.md) | **Admin Commands.** Reference for managing the server via console commands. |
+| [ADMIN.md](ADMIN.md) | **Admin Commands and API.** In-game `rcon` reference plus the JSON-RPC HTTP API for external tools. |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | **Architecture.** Technical deep dive into system design, protocols, and implementation details. |
 
 ## Player

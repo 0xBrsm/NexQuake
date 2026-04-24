@@ -4,6 +4,19 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.9.0
+
+### Added
+- `POST /rcon` JSON-RPC 2.0 endpoint for admin control. External tools can list servers/sessions, run lifecycle operations (`server.start/stop/restart/remove/launch`), forward commands to a specific instance (`server.instance.command`), ban sessions (`session.ban`), and discover available methods via `rpc.discover`. All admin commands share the same registry as the in-game `rcon` surface. See [ADMIN.md](docs/ADMIN.md) for the full reference.
+- `Authorization: Rcon <password>` scheme for admin credentials (RFC 7235). OIDC JWT continues to use the header configured by `AUTH_JWT_HEADER` (default `Authorization`).
+- `rcon.help` and `rpc.discover` as first-class admin commands.
+
+### Changed
+- Admin commands moved into a flat namespace: `server.list`, `server.instances`, `server.start`, `server.stop`, `server.restart`, `server.remove`, `server.launch`, `server.instance.command`, `session.list`, `session.info`, `session.ban`, `logs.tail`.
+- Per-instance dispatch accepts port only. `rcon <host> <cmd>` (slist-hostname) and `rcon <idx> <cmd>` (pool slot index) are no longer recognized — use `rcon <port> <cmd...>` with the listen port shown in `rcon nexus server list`. The fan-out-to-all-backends behavior those forms provided is gone with the server/instance rework.
+- Terminology: Pool → Server, Backend → Instance, VIP → NQIP across log output, command help, and RPC field names.
+- Env var `POOL_SIZE` renamed to `SV_MAX_INSTANCES`. Operators with `POOL_SIZE=N` in their environment must update.
+
 ## 1.8.5
 
 ### Added

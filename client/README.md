@@ -45,7 +45,7 @@ The client patches and overlays are a mix of required and additive features. The
 
 ### 4. RCON
 
-**Quality-of-life addition.** Stock WinQuake has a hidden `cmd` admin feature, but this only forwards commands to the currently connected server. NexQuake adds a browser-safe `rcon` command over Nexus control channel so operators can target any server by hostcache name/port or Nexus itself for system-wide actions. See [Admin Guide](../docs/ADMIN.md) for details.
+**Quality-of-life addition.** Stock WinQuake has a hidden `cmd` admin feature, but this only forwards commands to the currently connected server. NexQuake adds a browser-safe `rcon` command that targets a specific instance by listen port, the connected server when already connected, or Nexus itself for system-wide actions. In-game `rcon` posts JSON-RPC envelopes to Nexus at `/rcon`; external tools can hit the same endpoint directly. See [Admin Guide](../docs/ADMIN.md) for in-game forms and the full HTTP API reference.
 
 | File | Purpose |
 |------|---------|

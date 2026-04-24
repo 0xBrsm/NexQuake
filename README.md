@@ -67,7 +67,7 @@ Players use the standard Quake multiplayer connection experience; use the Multip
 - **[UI Guide](docs/UI.md)**: Using the in-browser settings panel for files, cfg editing, and CD controls.
 - **[Setup Guide](docs/SETUP.md)**: Managing game data, mods, and servers.
 - **[Environment](docs/ENVIRONMENT.md)**: Environment variables and networking setup.
-- **[Admin Guide](docs/ADMIN.md)**: Server administration reference.
+- **[Admin Guide](docs/ADMIN.md)**: In-game `rcon` commands and the JSON-RPC HTTP API for external tools.
 - **[Architecture](docs/ARCHITECTURE.md)**: Technical deep dive into system design.
 - **[Bug Fixes](bugfix/README.md)**: Security and stability patches for the upstream WinQuake source.
 
