@@ -22,14 +22,13 @@ The client patches and overlays are a mix of required and additive features. The
 
 ### 2. NexQuake Networking
 
-**Required.** Browsers cannot open UDP sockets. This feature replaces Quake's UDP networking with a tunneled web transport (WebSocket or WebTransport), routing all traffic through the Nexus relay. Players connect by port number (e.g. `connect 26000`); the relay maps ports to game servers. All overlay files, no patches to upstream.
+**Required.** Browsers cannot open UDP sockets. This feature replaces Quake's UDP networking with a tunneled web transport (WebSocket today; the substrate is pluggable so additional transports such as WebTransport can be added without reworking the channel layer), routing all traffic through the Nexus relay. Players connect by port number (e.g. `connect 26000`); the relay maps ports to game servers. All overlay files, no patches to upstream.
 
 | File | Purpose |
 |------|---------|
-| `net_wasm.c/h` | Browser landriver shell. Implements Quake's `net_landriver` interface, owns socket lifecycle, and dispatches over WS/WT substrates. |
+| `net_wasm.c/h` | Browser landriver shell. Implements Quake's `net_landriver` interface, owns socket lifecycle, and dispatches over a pluggable substrate (WebSocket today). |
 | `net_nqchan.c/h` | NexQuake channel/protocol adapter: port-header framing, CTL/DATA demux, ring buffers, virtual 127.x.y.z addressing, and route/server-id tracking. |
-| `net_ws.c/h` | WebSocket substrate. Owns the Emscripten WebSocket lifecycle; pushes received bytes into `WASM_OnPacket`. |
-| `net_wt.c/h` | WebTransport substrate. Owns the browser WebTransport session; pushes received datagrams into `WASM_OnPacket`. |
+| `net_ws.c` | WebSocket substrate. Owns the Emscripten WebSocket lifecycle; pushes received bytes into `WASM_OnPacket`. |
 | `net_bsd.c` | Driver table registering only the NexQuake landriver. |
 
 ### 3. Game Directory Switching

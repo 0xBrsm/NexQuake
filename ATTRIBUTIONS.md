@@ -53,14 +53,6 @@ The following projects provided inspiration and reference during NexQuake's deve
 
 - **Gregory Maynard-Hoare** ([GMH-Code/Quake-WASM](https://github.com/GMH-Code/Quake-WASM)). Original WASM/SDL port of Quake. NexQuake's platform layer was rewritten from scratch using direct Emscripten APIs (no SDL), but the GMH port demonstrated the viability of Quake-in-a-browser and influenced downstream forks that NexQuake's WebSocket networking derives from.
 
-## File-Level Guidance
-
-- `client/net_ws_transport.c`: derivative websocket transport (Emscripten websocket lifecycle + frame queues).
-- `client/net_ws_vnet.c`: derivative net driver + virtual LAN address veneer for NexQuake.
-- `client/cmd_rcon.c`: NexQuake-focused auth/token command layer; still part of the derivative websocket module lineage.
-- `client/net_ws_transport.h`: public transport interface.
-- `client/net_ws_vnet.h`: public net driver interface.
-
 ## License
 
 NexQuake code remains distributed under `GPL-2.0-or-later`, consistent with upstream Quake GPL lineage.

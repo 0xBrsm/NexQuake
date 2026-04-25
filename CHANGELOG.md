@@ -4,6 +4,14 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.9.1
+
+### Changed
+- Browser client networking is now a pluggable transport shell (`net_wasm.c`, `net_nqchan.c`, `net_ws.c`); the WebSocket transport is unchanged but additional transports can be added without reworking the channel layer. WASM→JS bridge symbols are unified under the `NQWasm_` prefix.
+- Nexus relay extracted into the transport-agnostic `trunk` package (renamed from `nqrelay`) with an exported `Transport` interface and a single `NewConn` constructor. Public RPC and HTTP surfaces are unchanged.
+- Internal cleanup: dead code removed (`deadcode`/`staticcheck` clean for `src/nexus`); `internal/session` folded into `internal/admin` now that the cross-package coupling that forced the split is gone.
+- Docs: `client/README.md`, `nexus/README.md`, and `ATTRIBUTIONS.md` updated to match the new file/symbol layout.
+
 ## 1.9.0
 
 ### Added

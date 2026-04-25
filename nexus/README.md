@@ -46,7 +46,7 @@ Per-client browser↔UDP tunnel. See [trunk/README.md](./trunk/README.md) for ve
 |------|---------|
 | `relay.go` | Manages one `Conn` per client: tunnel read/write loops, UDP socket ownership, lifecycle, and control-frame dispatch. |
 | `protocol.go` | Defines the 2-byte-port + payload binary frame format and builds/parses identity frames. |
-| `options.go` | Functional options (`WithDispatch`, `WithLogger`, `WithIdentityMagic`) consumed by `NewConn`. |
+| `options.go` | Functional options (`WithDispatch`, `WithLogger`) consumed by `NewConn`. |
 | `ws.go` | WebSocket `Transport` adapter and `Upgrader`; the only file importing `gorilla/websocket`. |
 | `udp.go` | UDP socket I/O: reads datagrams from the backend, writes outbound frames to it. |
 | `vip.go` | Allocates unique `127.x.x.x` VirtualIPs and blocks banned sources. |
