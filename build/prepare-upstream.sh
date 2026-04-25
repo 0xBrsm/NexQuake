@@ -205,7 +205,7 @@ if [[ "${kind}" == "client" ]]; then
     "shell-touch.css"
   )
 
-  cp "${ROOT}/client/net_bsd.c" "${ROOT}/client/net_ws_transport.c" "${ROOT}/client/net_ws_vnet.c" "${ROOT}/client/net_slist.c" "${ROOT}/client/cmd_rcon.c" "${ROOT}/client/net_ws_transport.h" "${ROOT}/client/net_ws_vnet.h" "${OUT_DIR}/"
+  cp "${ROOT}/client/net_bsd.c" "${ROOT}/client/net_ws.c" "${ROOT}/client/net_wasm.c" "${ROOT}/client/net_nqchan.c" "${ROOT}/client/net_slist.c" "${ROOT}/client/cmd_rcon.c" "${ROOT}/client/net_wasm.h" "${ROOT}/client/net_nqchan.h" "${OUT_DIR}/"
   cp "${ROOT}/client/sys_wasm.c" "${ROOT}/client/vid_wasm.c" "${ROOT}/client/in_wasm.c" "${ROOT}/client/snd_wasm.c" "${ROOT}/client/cd_wasm.c" "${OUT_DIR}/"
   cp "${ROOT}/client/com_gameswitch.c" "${ROOT}/client/com_gameswitch.h" "${ROOT}/client/cl_prefetch.c" "${ROOT}/client/cl_prefetch.h" "${OUT_DIR}/"
   cp "${ROOT}/client/Makefile.emscripten" "${client_shell_src_dir}/"{shell.html,favicon.svg,manifest.webmanifest,pwa-icon.svg} "${OUT_DIR}/"

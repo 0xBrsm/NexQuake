@@ -1,9 +1,6 @@
 package assets
 
 import (
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -41,7 +38,7 @@ func TestBuildVFSManifest_LayersAndPakExplode(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	manifest, err := buildVFSManifest(gameDir, mod, NewPakIndexCache())
+	manifest, err := buildVFSManifestWithWarnings(gameDir, mod, NewPakIndexCache(), nil)
 	if err != nil {
 		t.Fatalf("buildVFSManifest: %v", err)
 	}
@@ -85,7 +82,7 @@ func TestBuildVFSManifest_LooseBeatsPakWithinLayer(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	manifest, err := buildVFSManifest(gameDir, mod, NewPakIndexCache())
+	manifest, err := buildVFSManifestWithWarnings(gameDir, mod, NewPakIndexCache(), nil)
 	if err != nil {
 		t.Fatalf("buildVFSManifest: %v", err)
 	}
@@ -123,7 +120,7 @@ func TestBuildVFSManifest_PakOrderWithinLayer(t *testing.T) {
 		"docs/readme.txt": []byte("from pak1"),
 	})
 
-	manifest, err := buildVFSManifest(gameDir, mod, NewPakIndexCache())
+	manifest, err := buildVFSManifestWithWarnings(gameDir, mod, NewPakIndexCache(), nil)
 	if err != nil {
 		t.Fatalf("buildVFSManifest: %v", err)
 	}
@@ -168,7 +165,7 @@ func TestBuildVFSManifest_IgnoresCorruptPak(t *testing.T) {
 		t.Fatalf("write loose file: %v", err)
 	}
 
-	manifest, err := buildVFSManifest(gameDir, mod, NewPakIndexCache())
+	manifest, err := buildVFSManifestWithWarnings(gameDir, mod, NewPakIndexCache(), nil)
 	if err != nil {
 		t.Fatalf("buildVFSManifest: %v", err)
 	}
@@ -182,83 +179,6 @@ func TestBuildVFSManifest_IgnoresCorruptPak(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected loose file to remain available, got manifest=%+v", manifest)
-	}
-}
-
-func TestNewGameManifestBundleHandler_ReturnsDirectModManifests(t *testing.T) {
-	gameDir := t.TempDir()
-
-	if err := os.MkdirAll(filepath.Join(gameDir, "id1", "common"), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(gameDir, "ctf", "common"), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(gameDir, "cfgmod"), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(gameDir, "id1", "common", "base.txt"), []byte("id1"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(gameDir, "ctf", "common", "ctf.txt"), []byte("ctf"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-
-	handler := newGameManifestBundleHandler(gameDir, NewPakIndexCache(), 7)
-
-	req := httptest.NewRequest(http.MethodGet, "/game-manifest", nil)
-	rec := httptest.NewRecorder()
-	handler(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
-	}
-	if got := rec.Header().Get(headerVFSPrefetchConcurrency); got != "7" {
-		t.Fatalf("prefetch header=%q want %q", got, "7")
-	}
-
-	var bundle vfsManifestBundle
-	if err := json.Unmarshal(rec.Body.Bytes(), &bundle); err != nil {
-		t.Fatalf("decode bundle: %v", err)
-	}
-
-	hasPath := func(entries []vfsManifestEntry, want string) bool {
-		for _, entry := range entries {
-			if entry.Path == want {
-				return true
-			}
-		}
-		return false
-	}
-
-	if !hasPath(bundle.Mods["id1"], "base.txt") {
-		t.Fatalf("id1 manifest missing base.txt: %+v", bundle.Mods["id1"])
-	}
-	if !hasPath(bundle.Mods["ctf"], "ctf.txt") {
-		t.Fatalf("ctf manifest missing ctf.txt: %+v", bundle.Mods["ctf"])
-	}
-	if hasPath(bundle.Mods["ctf"], "base.txt") {
-		t.Fatalf("ctf manifest unexpectedly duplicated id1 file: %+v", bundle.Mods["ctf"])
-	}
-	cfgEntries, ok := bundle.Mods["cfgmod"]
-	if !ok {
-		t.Fatalf("cfgmod missing from manifest bundle: %+v", bundle.Mods)
-	}
-	if len(cfgEntries) != 0 {
-		t.Fatalf("cfgmod expected empty manifest, got %+v", cfgEntries)
-	}
-}
-
-func TestNewGameManifestBundleHandler_NoModsReturnsNotFound(t *testing.T) {
-	gameDir := t.TempDir()
-	handler := newGameManifestBundleHandler(gameDir, NewPakIndexCache(), 4)
-	req := httptest.NewRequest(http.MethodGet, "/game-manifest", nil)
-	rec := httptest.NewRecorder()
-
-	handler(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
 	}
 }
 

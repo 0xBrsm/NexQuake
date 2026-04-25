@@ -1,4 +1,4 @@
-package nqrelay
+package trunk
 
 import (
 	"bytes"
@@ -36,7 +36,7 @@ func TestRelayStressSimultaneousClients(t *testing.T) {
 	for _, tier := range tiers {
 		tier := tier
 		t.Run(tier.name, func(t *testing.T) {
-			alloc := NewNQIPAllocator(net.ParseIP(DefaultNQServerIP).To4())
+			alloc := NewVirtualIPAllocator(net.ParseIP(DefaultServerIP).To4())
 
 			relays, err := spawnStressRelays(tier.clients, alloc)
 			if err != nil {
@@ -52,7 +52,7 @@ func TestRelayStressSimultaneousClients(t *testing.T) {
 
 			seenVirtualIPs := make(map[string]struct{}, tier.clients)
 			for _, r := range relays {
-				vip := r.ClientNQIP()
+				vip := r.VirtualIP()
 				if vip == "" {
 					t.Fatalf("relay has empty virtual IP")
 				}
@@ -67,7 +67,7 @@ func TestRelayStressSimultaneousClients(t *testing.T) {
 
 			closeRelaysConcurrently(relays)
 			for _, r := range relays {
-				if ip := r.ClientIP(); ip[0] != 0 {
+				if ip := r.VirtualIPBytes(); ip[0] != 0 {
 					t.Fatalf("relay still holds virtual IP %v after Close", ip)
 				}
 			}
@@ -104,8 +104,8 @@ type udpProbeClientMetrics struct {
 	latencyNanos []int64
 }
 
-func spawnStressRelays(clientCount int, alloc *NQIPAllocator) ([]*Relay, error) {
-	relays := make([]*Relay, clientCount)
+func spawnStressRelays(clientCount int, alloc *VirtualIPAllocator) ([]*Conn, error) {
+	relays := make([]*Conn, clientCount)
 	if clientCount == 0 {
 		return relays, nil
 	}
@@ -124,7 +124,6 @@ func spawnStressRelays(clientCount int, alloc *NQIPAllocator) ([]*Relay, error) 
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
-				sourceIP := fmt.Sprintf("198.51.100.%d", 1+(idx%250))
 				sourceKey := fmt.Sprintf("stress-client:%d", idx)
 
 				clientIP, err := alloc.alloc(sourceKey)
@@ -134,10 +133,9 @@ func spawnStressRelays(clientCount int, alloc *NQIPAllocator) ([]*Relay, error) 
 				}
 
 				ctx, cancel := context.WithCancel(context.Background())
-				relay := &Relay{
+				relay := &Conn{
 					clientIP:  clientIP,
 					sourceKey: sourceKey,
-					sourceIP:  sourceIP,
 					alloc:     alloc,
 					warnf:     noopLogf,
 					debugf:    noopLogf,
@@ -167,12 +165,12 @@ func spawnStressRelays(clientCount int, alloc *NQIPAllocator) ([]*Relay, error) 
 	return relays, nil
 }
 
-func closeRelaysConcurrently(relays []*Relay) {
+func closeRelaysConcurrently(relays []*Conn) {
 	if len(relays) == 0 {
 		return
 	}
 
-	jobs := make(chan *Relay, len(relays))
+	jobs := make(chan *Conn, len(relays))
 	workers := len(relays)
 	if workers > 256 {
 		workers = 256
@@ -232,7 +230,7 @@ func runFullStackStressTier(t *testing.T, clientCount int) {
 		// Rough estimate:
 		// - one client WS fd
 		// - one server-side accepted WS fd
-		// - one Relay UDP fd
+		// - one Conn UDP fd
 		// Plus overhead room for Go runtime/http listener and test process itself.
 		const safetyOverhead = 1024
 		required := uint64(clientCount*3 + safetyOverhead)
@@ -286,14 +284,14 @@ func runFullStackStressTier(t *testing.T, clientCount int) {
 		t.Fatalf("parse NQNET_STRESS_FULLSTACK_UDP_TIMEOUT: %v", err)
 	}
 
-	serverIP := net.ParseIP(DefaultNQServerIP).To4()
+	serverIP := net.ParseIP(DefaultServerIP).To4()
 	if serverIP == nil {
-		t.Fatalf("parse server ip: %q", DefaultNQServerIP)
+		t.Fatalf("parse server ip: %q", DefaultServerIP)
 	}
 
-	alloc := NewNQIPAllocator(serverIP)
+	alloc := NewVirtualIPAllocator(serverIP)
 
-	echoConn, err := net.ListenUDP("udp4", ServerUDPAddr(serverIP, 0))
+	echoConn, err := net.ListenUDP("udp4", serverUDPAddr(serverIP, 0))
 	if err != nil {
 		t.Fatalf("listen udp echo: %v", err)
 	}
@@ -346,9 +344,8 @@ func runFullStackStressTier(t *testing.T, clientCount int) {
 			clientID = strings.TrimSpace(r.RemoteAddr)
 		}
 		sourceKey := "stress-fullstack:" + clientID
-		sourceIP := fmt.Sprintf("198.51.100.%d", 1+(len(clientID)%250))
 
-		relay, err := NewRelay(conn, sourceKey, sourceIP, "", false, alloc, FrameDispatch{}, noopLogf, noopLogf)
+		relay, err := NewConn(WebSocket(conn), alloc, sourceKey)
 		if err != nil {
 			serverErrMu.Lock()
 			serverErrs = append(serverErrs, fmt.Errorf("new relay: %w", err))
@@ -668,14 +665,14 @@ func expectWSIdentityFrame(conn *websocket.Conn, idx int) error {
 		return fmt.Errorf("identity message type[%d] = %d, want binary", idx, messageType)
 	}
 
-	minLen := 2 + len(wsClientIdentityMagic) + 4
+	minLen := 2 + len(defaultIdentityMagic) + 4
 	if len(frame) < minLen {
 		return fmt.Errorf("identity frame too short[%d]: %d < %d", idx, len(frame), minLen)
 	}
 	if frame[0] != 0 || frame[1] != 0 {
 		return fmt.Errorf("identity frame port[%d] = [%d %d], want [0 0]", idx, frame[0], frame[1])
 	}
-	if !bytes.Equal(frame[2:2+len(wsClientIdentityMagic)], []byte(wsClientIdentityMagic)) {
+	if !bytes.Equal(frame[2:2+len(defaultIdentityMagic)], []byte(defaultIdentityMagic)) {
 		return fmt.Errorf("identity frame magic mismatch[%d]", idx)
 	}
 	return nil
@@ -721,7 +718,7 @@ func probeUDPEchoRoundTrip(
 ) (latency time.Duration, timedOut bool, err error) {
 	started := time.Now()
 	payload := []byte(fmt.Sprintf("ping-%d-%d", idx, probeSeq))
-	if err := conn.WriteMessage(websocket.BinaryMessage, buildWSFrame(echoPort, payload)); err != nil {
+	if err := conn.WriteMessage(websocket.BinaryMessage, buildFrame(echoPort, payload)); err != nil {
 		return 0, false, fmt.Errorf("write payload[%d] probe %d: %w", idx, probeSeq, err)
 	}
 

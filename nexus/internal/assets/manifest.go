@@ -82,7 +82,7 @@ type HashedAssetServer struct {
 	smenuOnFirstLoad    bool
 	sendArgs            []string
 	urlArgs             bool
-	manifestTTL          time.Duration
+	manifestTTL         time.Duration
 	errorf              func(string, ...any)
 
 	mu           sync.RWMutex
@@ -113,7 +113,7 @@ func NewHashedAssetServer(gameDir, cdDir string, pakCache *PakIndexCache, prefet
 		smenuOnFirstLoad:    smenuOnFirstLoad,
 		sendArgs:            append([]string(nil), sendArgs...),
 		urlArgs:             urlArgs,
-		manifestTTL:          defaultManifestTTL,
+		manifestTTL:         defaultManifestTTL,
 		errorf:              func(string, ...any) {},
 		manifests:           make(map[string]*issuedManifest),
 		assetsByHash:        make(map[string]hashedAsset),

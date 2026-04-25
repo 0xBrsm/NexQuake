@@ -17,7 +17,7 @@ func newRunningInstanceForTest(t *testing.T, m *ServerManager, line, port int, a
 		Args:   append([]string(nil), args...),
 	})
 	m.updatePort(rec, port)
-	m.updateSearchPath(rec, []string{"id1"})
+	m.updateSearchPathNormalized(rec, normalizeSearchPath([]string{"id1"}))
 	m.SetServerRunningForTest(rec, NewTestServer(port))
 	m.SetServerInfoForTest(rec, "server-"+strconv.Itoa(line), "dm6", players, maxPlayers)
 	m.mu.Lock()
@@ -392,7 +392,7 @@ func TestSnapshotForSlist_ServerSizeOnePortZeroLaunchUsesObservedInstance(t *tes
 	}
 
 	m.updatePort(rec, 26000)
-	m.updateSearchPath(rec, []string{"ffa", "id1"})
+	m.updateSearchPathNormalized(rec, normalizeSearchPath([]string{"ffa", "id1"}))
 	m.SetServerRunningForTest(rec, NewTestServer(26000))
 	m.SetServerInfoForTest(rec, "ffa", "start", 3, 16)
 	m.mu.Lock()
@@ -436,7 +436,7 @@ func TestSnapshotForSlist_StaticPortHidesInstances(t *testing.T) {
 		t.Fatalf("register fixed-port launch: %v", err)
 	}
 	m.updatePort(rec, 26000)
-	m.updateSearchPath(rec, []string{"id1"})
+	m.updateSearchPathNormalized(rec, normalizeSearchPath([]string{"id1"}))
 	m.SetServerRunningForTest(rec, NewTestServer(26000))
 	m.SetServerInfoForTest(rec, "fixed", "dm6", 3, 16)
 	m.mu.Lock()
@@ -516,8 +516,6 @@ func TestResolveRCONTargetPort_DirectInstancePort(t *testing.T) {
 
 }
 
-
-
 func TestInstanceSnapshots_AllIncludesServerLinePerInstance(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
 	m.SetServerMaxInstances(10)
@@ -544,9 +542,6 @@ func TestInstanceSnapshots_AllIncludesServerLinePerInstance(t *testing.T) {
 		t.Fatalf("second instance snapshot = %+v, want line 0 port 26001", snaps[1])
 	}
 }
-
-
-
 
 func setServerDemandEventsForTest(t *testing.T, m *ServerManager, seedServerID int, count int, now time.Time) {
 	t.Helper()

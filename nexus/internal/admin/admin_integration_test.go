@@ -6,24 +6,22 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/0xBrsm/NexQuake/nexus/internal/session"
 )
 
 type mockChannel struct {
 	sourceIP  string
 	sourceKey string
-	nqip       string
+	nqip      string
 	clientIP  [4]byte
+	port      int
 	closed    bool
-	replies   strings.Builder
 }
 
 func newMockChannel(isAdmin bool) *mockChannel {
 	m := &mockChannel{
 		sourceIP:  "198.51.100.10",
 		sourceKey: "ip:198.51.100.10",
-		nqip:       "127.100.10.1",
+		nqip:      "127.100.10.1",
 		clientIP:  [4]byte{127, 100, 10, 1},
 	}
 	if isAdmin {
@@ -35,15 +33,14 @@ func newMockChannel(isAdmin bool) *mockChannel {
 	return m
 }
 
-func (m *mockChannel) SendAdminReply(msg string) { m.replies.WriteString(msg) }
-func (m *mockChannel) ClientNQIP() string   { return m.nqip }
-func (m *mockChannel) ClientIP() [4]byte         { return m.clientIP }
-func (m *mockChannel) SourceKey() string         { return m.sourceKey }
-func (m *mockChannel) ActiveServerPort() int     { return 0 }
-func (m *mockChannel) Close()                    { m.closed = true }
+func (m *mockChannel) VirtualIP() string       { return m.nqip }
+func (m *mockChannel) VirtualIPBytes() [4]byte { return m.clientIP }
+func (m *mockChannel) SourceKey() string       { return m.sourceKey }
+func (m *mockChannel) ActiveServerPort() int   { return m.port }
+func (m *mockChannel) Close()                  { m.closed = true }
 
-func newMockSession(isAdmin bool) (*session.Session, *mockChannel) {
-	reg := session.NewRegistry()
+func newMockSession(isAdmin bool) (*Session, *mockChannel) {
+	reg := NewSessionRegistry()
 	ch := newMockChannel(isAdmin)
 	s := reg.Create(ch.sourceIP, "", isAdmin)
 	reg.AttachChannel(s, ch)
@@ -52,22 +49,22 @@ func newMockSession(isAdmin bool) (*session.Session, *mockChannel) {
 
 func integrationEnv() *Env {
 	return &Env{
-		ServerSnapshots:   func() []ServerInfo { return nil },
-		InstanceSnapshots:  func(int) ([]ServerInfo, error) { return nil, nil },
-		StartServer:       func(int) error { return nil },
-		StartServersAll:   func() error { return nil },
-		StopServer:        func(context.Context, int, time.Duration) error { return nil },
-		StopServersAll:    func(context.Context, time.Duration) error { return nil },
-		RestartServer:     func(context.Context, int, time.Duration) error { return nil },
-		RestartServersAll: func(context.Context, time.Duration) error { return nil },
-		RemoveServer:      func(int) error { return nil },
-		LaunchServer:      func(string, []string) error { return nil },
+		ServerSnapshots:     func() []ServerInfo { return nil },
+		InstanceSnapshots:   func(int) ([]ServerInfo, error) { return nil, nil },
+		StartServer:         func(int) error { return nil },
+		StartServersAll:     func() error { return nil },
+		StopServer:          func(context.Context, int, time.Duration) error { return nil },
+		StopServersAll:      func(context.Context, time.Duration) error { return nil },
+		RestartServer:       func(context.Context, int, time.Duration) error { return nil },
+		RestartServersAll:   func(context.Context, time.Duration) error { return nil },
+		RemoveServer:        func(int) error { return nil },
+		LaunchServer:        func(string, []string) error { return nil },
 		DispatchInstanceCmd: func(int, string, string) (string, error) { return "", nil },
-		TailNexusLog:      func(int) []string { return nil },
-		Auditf:            func(string, ...any) {},
-		SessionSnapshots:  func() []session.Snapshot { return nil },
-		SnapshotByNQIP:     func(string) ([]*session.Session, []session.BanTarget) { return nil, nil },
-		ReserveAndBlock:   func([4]byte, string) {},
+		TailNexusLog:        func(int) []string { return nil },
+		Auditf:              func(string, ...any) {},
+		SessionSnapshots:    func() []Snapshot { return nil },
+		SnapshotByVirtualIP: func(string) ([]*Session, []BanTarget) { return nil, nil },
+		ReserveAndBlock:     func([4]byte, string) {},
 	}
 }
 
@@ -171,10 +168,10 @@ func TestIntegration_ServerCommand(t *testing.T) {
 
 func TestIntegration_SessionList(t *testing.T) {
 	env := integrationEnv()
-	env.SessionSnapshots = func() []session.Snapshot {
-		return []session.Snapshot{
-			{NQIP: "127.100.10.1", SourceIP: "198.51.100.10", IsAdmin: false, ActiveServerPort: 26000},
-			{NQIP: "127.100.10.2", SourceIP: "198.51.100.11", IsAdmin: true},
+	env.SessionSnapshots = func() []Snapshot {
+		return []Snapshot{
+			{VirtualIP: "127.100.10.1", SourceIP: "198.51.100.10", IsAdmin: false, ActiveServerPort: 26000},
+			{VirtualIP: "127.100.10.2", SourceIP: "198.51.100.11", IsAdmin: true},
 		}
 	}
 	env.ServerSnapshots = func() []ServerInfo {
@@ -189,8 +186,8 @@ func TestIntegration_SessionList(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("expected 2 sessions, got %d", len(got))
 	}
-	// First (by NQIP sort) should be 127.100.10.1 attached to fragfest
-	if got[0].NQIP != "127.100.10.1" || got[0].ActiveServerHost != "fragfest" {
+	// First (by VirtualIP sort) should be 127.100.10.1 attached to fragfest
+	if got[0].VirtualIP != "127.100.10.1" || got[0].ActiveServerHost != "fragfest" {
 		t.Fatalf("got first entry %+v", got[0])
 	}
 }
@@ -200,9 +197,9 @@ func TestIntegration_SessionBanClosesAndReserves(t *testing.T) {
 	nqip := clientMock.nqip
 
 	env := integrationEnv()
-	env.SnapshotByNQIP = func(lookup string) ([]*session.Session, []session.BanTarget) {
+	env.SnapshotByVirtualIP = func(lookup string) ([]*Session, []BanTarget) {
 		if lookup == nqip {
-			return []*session.Session{clientSession}, nil
+			return []*Session{clientSession}, nil
 		}
 		return nil, nil
 	}
@@ -214,7 +211,7 @@ func TestIntegration_SessionBanClosesAndReserves(t *testing.T) {
 		t.Fatalf("unexpected error: %+v", resp.Error)
 	}
 	result := resp.Result.(SessionBanResult)
-	if result.NQIP != nqip || result.Disconnected != 1 {
+	if result.VirtualIP != nqip || result.Disconnected != 1 {
 		t.Fatalf("got %+v", result)
 	}
 	if !clientMock.closed {
@@ -230,9 +227,9 @@ func TestIntegration_SessionBanAdminRejected(t *testing.T) {
 	nqip := adminMock.nqip
 
 	env := integrationEnv()
-	env.SnapshotByNQIP = func(lookup string) ([]*session.Session, []session.BanTarget) {
+	env.SnapshotByVirtualIP = func(lookup string) ([]*Session, []BanTarget) {
 		if lookup == nqip {
-			return []*session.Session{adminSession}, nil
+			return []*Session{adminSession}, nil
 		}
 		return nil, nil
 	}

@@ -2,10 +2,8 @@ package assets
 
 import (
 	"cmp"
-	"encoding/json"
 	"errors"
 	"io/fs"
-	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,29 +13,6 @@ import (
 type cdManifestEntry struct {
 	Path string `json:"path"`
 	URL  string `json:"url"`
-}
-
-// NewCDManifestHandler returns an HTTP handler that serves a CD track manifest.
-func NewCDManifestHandler(cdDir string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-
-		manifest, err := buildCDManifest(cdDir)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if len(manifest) == 0 {
-			http.NotFound(w, r)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(manifest)
-	}
 }
 
 func buildCDManifest(cdDir string) ([]cdManifestEntry, error) {

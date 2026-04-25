@@ -6,30 +6,27 @@ Go orchestration service that serves the WASM client, serves game data, tunnels 
 
 | Dir | Purpose |
 |-----|---------|
-| `nqrelay/` | **Networking relay.** Standalone WebSocket↔UDP relay with deterministic NQIP (`127.x.x.x`) allocation and control-frame callback hooks. No HTTP/auth/application imports. |
-| `internal/orch/` | **Orchestration.** Dedicated server launch/lifecycle, instance autoscaling/reconcile, server console capture, and `slist` polling/aggregation. No `nqrelay` or `admin` imports. |
-| `internal/admin/` | **Admin control plane.** HTTP `/rcon` JSON-RPC 2.0 dispatch + auth, via callback-driven `Env`; no direct imports from `orch` or `nqrelay`. |
+| `trunk/` | **Networking relay.** Standalone WebSocket↔UDP relay with deterministic VirtualIP (`127.x.x.x`) allocation and control-frame callback hooks. No HTTP/auth/application imports. |
+| `internal/orch/` | **Orchestration.** Dedicated server launch/lifecycle, instance autoscaling/reconcile, server console capture, and `slist` polling/aggregation. No `trunk` or `admin` imports. |
+| `internal/admin/` | **Admin control plane.** HTTP `/rcon` JSON-RPC 2.0 dispatch + auth, plus the cross-transport session registry (attached-channel snapshots, virtual-IP ban lookups); callback-driven `Env` keeps `orch` and `trunk` out of direct imports. |
 | `internal/assets/` | **Game data gateway.** Quickstart manifests, VFS manifest construction, PAK indexing/streaming, CD index, and hash-addressed asset serving (`/start`, `/nq/<hash>`). |
-| `internal/session/` | **Shared session model.** Cross-transport session registry, live channel attachment, session snapshots, and ban-target lookup by virtual IP. |
 | `quake106/` | **Shareware extractor.** Standalone Go package that extracts `pak0.pak` from the Quake 1.06 shareware archive with SHA256 verification. See [quake106/README.md](./quake106/README.md). |
 
 ## Dependency Boundaries
 
 ```text
-nqrelay        (leaf: stdlib + gorilla/websocket)
+trunk          (leaf: stdlib + gorilla/websocket)
 internal/orch  (leaf: stdlib + internal/assets)
-internal/session (leaf: stdlib)
 internal/admin (leaf: stdlib + github.com/google/shlex)
 
 package main   (sole integration point)
-  -> nqrelay + internal/orch + internal/admin + internal/assets + internal/session
+  -> trunk + internal/orch + internal/admin + internal/assets
 ```
 
 Rules:
 
-- `nqrelay`, `internal/orch`, and `internal/admin` do not import each other.
-- `nqrelay` has no imports from `internal/*` and no app policy logic.
-- `internal/session` is the shared session boundary for cross-transport state.
+- `trunk`, `internal/orch`, and `internal/admin` do not import each other.
+- `trunk` has no imports from `internal/*` and no app policy logic.
 - All cross-subsystem wiring is done in package `main` (`connect.go` and `control.go`).
 
 ## Entry Files
@@ -38,20 +35,21 @@ Rules:
 |------|---------|
 | `main.go` | Process lifecycle only: init, runtime wiring, HTTP server start, signal handling, graceful shutdown, and CLI subcommands (`--version`, `--healthcheck`). |
 | `connect.go` | HTTP mux and connection boundary: route registration (`/health`, `/ws`, `/rcon`, `/start`, `/nq/`, `/`), WebSocket upgrade, source identity parsing, `/rcon` JSON-RPC handler, and pre-upgrade ban checks. |
-| `control.go` | Relay control wiring: builds `nqrelay.FrameDispatch`, routes control frames to `slist`, and composes `admin.Env` from orchestration/session dependencies. |
+| `control.go` | Conn control wiring: builds `trunk.FrameDispatch`, routes control frames to `slist`, and composes `admin.Env` from orchestration/session dependencies. |
 | `util.go` | Shared runtime utilities: leveled logging (stderr + file + ring buffer), version/build metadata, env helpers, and HTTP response helpers. |
 
-## nqrelay/
+## trunk/
 
-WebSocket↔UDP relay. See [nqrelay/README.md](./nqrelay/README.md) for vendoring notes and the public API.
+Per-client browser↔UDP tunnel. See [trunk/README.md](./trunk/README.md) for vendoring notes and the public API.
 
 | File | Purpose |
 |------|---------|
-| `relay.go` | Manages WebSocket↔UDP relaying for individual client connections. |
-| `protocol.go` | Defines binary frame format and builds/parses WebSocket tunnel frames. |
-| `ws.go` | Implements WebSocket read/write loops with keepalive pings. |
-| `udp.go` | Handles UDP socket operations and datagram forwarding to/from game servers. |
-| `nqip.go` | Allocates unique `127.x.x.x` NQIPs and blocks banned sources. |
+| `relay.go` | Manages one `Conn` per client: tunnel read/write loops, UDP socket ownership, lifecycle, and control-frame dispatch. |
+| `protocol.go` | Defines the 2-byte-port + payload binary frame format and builds/parses identity frames. |
+| `options.go` | Functional options (`WithDispatch`, `WithLogger`, `WithIdentityMagic`) consumed by `NewConn`. |
+| `ws.go` | WebSocket `Transport` adapter and `Upgrader`; the only file importing `gorilla/websocket`. |
+| `udp.go` | UDP socket I/O: reads datagrams from the backend, writes outbound frames to it. |
+| `vip.go` | Allocates unique `127.x.x.x` VirtualIPs and blocks banned sources. |
 
 ## internal/orch/
 
@@ -80,12 +78,7 @@ Authenticates admin requests and handles JSON-RPC 2.0 commands received on `POST
 | `rpc.go` | JSON-RPC 2.0 machinery: `Request`/`Response` envelopes, `ParseRequest`, `Dispatch`, `MethodError`, and per-RPC audit logging. |
 | `cmds.go` | Command registry and handlers: `rcon.help`, `rpc.discover`, `logs.tail`, `server.list`, `server.instances`, `server.start`, `server.stop`, `server.restart`, `server.remove`, `server.launch`, `server.instance.command`. |
 | `sessions.go` | Session commands and helpers (`session.list`, `session.info`, `session.ban`, status slot/address matching for targeted kick). |
-
-## internal/session/
-
-| File | Purpose |
-|------|---------|
-| `session.go` | Shared session registry, live channel attachment, snapshots, virtual-IP indexing, and ban-target derivation. |
+| `session.go` | Cross-transport session registry: `SessionRegistry` + `Session`, source-IP and VirtualIP indexes, live `Channel` attachment, snapshots, and ban-target derivation. |
 
 ## internal/assets/
 

@@ -20,15 +20,17 @@ The client patches and overlays are a mix of required and additive features. The
 | `patches/net_main.c.patch` | `void*` poll signatures and `emscripten_sleep` yields in blocking loops. |
 | `patches/net_dgrm.c.patch` | `void*` poll signatures and `emscripten_sleep` yields during connect. |
 
-### 2. WebSocket Networking
+### 2. NexQuake Networking
 
-**Required.** Browsers cannot open UDP sockets. This feature replaces Quake's UDP networking with WebSocket transport, routing all traffic through Nexus relay. Players connect by port number (e.g. `connect 26000`); the relay maps ports to game servers. All overlay files, no patches to upstream.
+**Required.** Browsers cannot open UDP sockets. This feature replaces Quake's UDP networking with a tunneled web transport (WebSocket or WebTransport), routing all traffic through the Nexus relay. Players connect by port number (e.g. `connect 26000`); the relay maps ports to game servers. All overlay files, no patches to upstream.
 
 | File | Purpose |
 |------|---------|
-| `net_ws_transport.c/h` | WebSocket lifecycle, callbacks, frame queues, 2-byte port-header framing. |
-| `net_ws_vnet.c/h` | Virtual LAN driver implementing Quake's `net_landriver` interface. Synthesizes virtual `qsockaddr` structures for Quake's address APIs. |
-| `net_bsd.c` | Driver table registering only the WebSocket landriver. |
+| `net_wasm.c/h` | Browser landriver shell. Implements Quake's `net_landriver` interface, owns socket lifecycle, and dispatches over WS/WT substrates. |
+| `net_nqchan.c/h` | NexQuake channel/protocol adapter: port-header framing, CTL/DATA demux, ring buffers, virtual 127.x.y.z addressing, and route/server-id tracking. |
+| `net_ws.c/h` | WebSocket substrate. Owns the Emscripten WebSocket lifecycle; pushes received bytes into `WASM_OnPacket`. |
+| `net_wt.c/h` | WebTransport substrate. Owns the browser WebTransport session; pushes received datagrams into `WASM_OnPacket`. |
+| `net_bsd.c` | Driver table registering only the NexQuake landriver. |
 
 ### 3. Game Directory Switching
 

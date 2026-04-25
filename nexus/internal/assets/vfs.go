@@ -26,10 +26,8 @@ package assets
 
 import (
 	"cmp"
-	"encoding/json"
 	"fmt"
 	"io/fs"
-	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -47,54 +45,10 @@ type vfsManifestEntry struct {
 	Size int64  `json:"size,omitempty"`
 }
 
-type vfsManifestBundle struct {
-	Mods map[string][]vfsManifestEntry `json:"mods"`
-}
-
-// headerVFSPrefetchConcurrency is the HTTP header name for VFS prefetch concurrency.
-const headerVFSPrefetchConcurrency = "X-NQ-VFS-Prefetch-Concurrency"
-
-// newGameManifestBundleHandler returns all mod manifests in one response.
-func newGameManifestBundleHandler(gameDir string, pakCache *PakIndexCache, prefetchConcurrency int) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-
-		mods, err := ListMods(gameDir)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if len(mods) == 0 {
-			http.NotFound(w, r)
-			return
-		}
-
-		bundle := vfsManifestBundle{
-			Mods: make(map[string][]vfsManifestEntry, len(mods)),
-		}
-		for _, mod := range mods {
-			manifest, manifestErr := buildVFSManifest(gameDir, mod, pakCache)
-			if manifestErr != nil {
-				http.Error(w, manifestErr.Error(), http.StatusInternalServerError)
-				return
-			}
-			bundle.Mods[mod] = manifest
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set(headerVFSPrefetchConcurrency, strconv.Itoa(prefetchConcurrency))
-		_ = json.NewEncoder(w).Encode(bundle)
-	}
-}
-
-// buildVFSManifest produces a sorted manifest of all files available for one mod.
-func buildVFSManifest(gameDir, mod string, pakCache *PakIndexCache) ([]vfsManifestEntry, error) {
-	return buildVFSManifestWithWarnings(gameDir, mod, pakCache, nil)
-}
-
+// buildVFSManifestWithWarnings produces a sorted manifest of all files
+// available for one mod. warnf may be nil; it is used by upper layers (e.g.
+// the manifest gateway) to log non-fatal scan issues without spamming logs
+// when the same scan is run from a hot path.
 func buildVFSManifestWithWarnings(gameDir, mod string, pakCache *PakIndexCache, warnf func(string, ...any)) ([]vfsManifestEntry, error) {
 	layers := []string{"common", "client"}
 
@@ -371,4 +325,3 @@ func dirIsEmpty(modDir string) bool {
 	}
 	return len(ents) == 0
 }
-

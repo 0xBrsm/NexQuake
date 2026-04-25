@@ -1,6 +1,7 @@
-package nqrelay
+package trunk
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"hash/fnv"
@@ -10,13 +11,13 @@ import (
 	"sync"
 )
 
-const maxNQIPProbeAttempts = 4096
+const maxVirtualIPProbeAttempts = 4096
 
-// NQIPAllocator deterministically maps client source keys to unique 127.x.x.x
-// NQIP addresses. The mapping is stable for a given sourceKey within a process
+// VirtualIPAllocator deterministically maps client source keys to unique 127.x.x.x
+// VirtualIP addresses. The mapping is stable for a given sourceKey within a process
 // lifetime: the same key always hashes to the same candidate, with linear
 // probing on collision. Safe for concurrent use.
-type NQIPAllocator struct {
+type VirtualIPAllocator struct {
 	serverIP net.IP
 
 	mu            sync.RWMutex
@@ -25,11 +26,11 @@ type NQIPAllocator struct {
 	blockedSource map[string]struct{}
 }
 
-// NewNQIPAllocator creates an allocator. serverIP must be a 127.x.x.x address
-// (typically net.ParseIP(DefaultNQServerIP)); that address is excluded from
+// NewVirtualIPAllocator creates an allocator. serverIP must be a 127.x.x.x address
+// (typically net.ParseIP(DefaultServerIP)); that address is excluded from
 // the allocation pool to avoid the relay colliding with the game server itself.
-func NewNQIPAllocator(serverIP net.IP) *NQIPAllocator {
-	return &NQIPAllocator{
+func NewVirtualIPAllocator(serverIP net.IP) *VirtualIPAllocator {
+	return &VirtualIPAllocator{
 		serverIP:      serverIP.To4(),
 		used:          make(map[uint32]struct{}),
 		reserved:      make(map[uint32]struct{}),
@@ -37,8 +38,8 @@ func NewNQIPAllocator(serverIP net.IP) *NQIPAllocator {
 	}
 }
 
-// alloc allocates a unique NQIP for the given source key.
-func (a *NQIPAllocator) alloc(sourceKey string) ([4]byte, error) {
+// alloc allocates a unique VirtualIP for the given source key.
+func (a *VirtualIPAllocator) alloc(sourceKey string) ([4]byte, error) {
 	sourceKey = normalizeSourceKey(sourceKey)
 	if sourceKey == "" {
 		sourceKey = "unknown"
@@ -51,16 +52,12 @@ func (a *NQIPAllocator) alloc(sourceKey string) ([4]byte, error) {
 		return [4]byte{}, fmt.Errorf("failed to allocate relay source ip for %q", sourceKey)
 	}
 
-	for probe := 0; probe < maxNQIPProbeAttempts; probe++ {
+	for probe := 0; probe < maxVirtualIPProbeAttempts; probe++ {
 		seed := "NQ:client-ip:v1|" + sourceKey + "|" + strconv.Itoa(probe)
 		sum := fnv64aSum(seed)
 
 		candidate := [4]byte{127, byte(sum >> 56), byte(sum >> 48), byte(sum >> 40)}
-		if len(a.serverIP) == net.IPv4len &&
-			candidate[0] == a.serverIP[0] &&
-			candidate[1] == a.serverIP[1] &&
-			candidate[2] == a.serverIP[2] &&
-			candidate[3] == a.serverIP[3] {
+		if bytes.Equal(a.serverIP, candidate[:]) {
 			continue
 		}
 
@@ -85,8 +82,8 @@ func fnv64aSum(text string) uint64 {
 	return h.Sum64()
 }
 
-// release returns an NQIP to the pool.
-func (a *NQIPAllocator) release(ip4 [4]byte) {
+// release returns an VirtualIP to the pool.
+func (a *VirtualIPAllocator) release(ip4 [4]byte) {
 	if ip4[0] != 127 {
 		return
 	}
@@ -100,9 +97,9 @@ func (a *NQIPAllocator) release(ip4 [4]byte) {
 
 // ReserveAndBlock permanently reserves ip4 so it is never re-allocated, and
 // blocks sourceKey from receiving any future allocation. Intended for banning:
-// call after closing a relay to ensure the banned NQIP is not recycled and
-// the banned key cannot reconnect with a different NQIP.
-func (a *NQIPAllocator) ReserveAndBlock(ip4 [4]byte, sourceKey string) {
+// call after closing a relay to ensure the banned VirtualIP is not recycled and
+// the banned key cannot reconnect with a different VirtualIP.
+func (a *VirtualIPAllocator) ReserveAndBlock(ip4 [4]byte, sourceKey string) {
 	if ip4[0] != 127 {
 		return
 	}
@@ -119,9 +116,9 @@ func (a *NQIPAllocator) ReserveAndBlock(ip4 [4]byte, sourceKey string) {
 }
 
 // IsBlocked reports whether sourceKey has been permanently blocked via
-// [NQIPAllocator.ReserveAndBlock]. Callers can use this to reject reconnects
+// [VirtualIPAllocator.ReserveAndBlock]. Callers can use this to reject reconnects
 // before attempting to construct a new relay.
-func (a *NQIPAllocator) IsBlocked(sourceKey string) bool {
+func (a *VirtualIPAllocator) IsBlocked(sourceKey string) bool {
 	sourceKey = normalizeSourceKey(sourceKey)
 	if sourceKey == "" {
 		return false

@@ -292,11 +292,8 @@ func (m *ServerManager) updatePort(rec *instance, port int) {
 	})
 }
 
-// updateSearchPath updates the resolved search path for a server record.
-func (m *ServerManager) updateSearchPath(rec *instance, searchPath []string) {
-	m.updateSearchPathNormalized(rec, normalizeSearchPath(searchPath))
-}
-
+// updateSearchPathNormalized updates the resolved search path for an instance
+// record. searchPath must already be normalized — see [normalizeSearchPath].
 func (m *ServerManager) updateSearchPathNormalized(rec *instance, searchPath []string) {
 	m.updateServerState(serverStateUpdate{
 		rec:                rec,

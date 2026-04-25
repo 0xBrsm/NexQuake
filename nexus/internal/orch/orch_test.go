@@ -138,12 +138,12 @@ func (m *ServerManager) registerServerSeed(rec *instance) error {
 	autoscales := hasConfiguredPort && configuredPort == 0 && max(1, m.serverMaxInstances) > 1
 
 	s := &server{
-		ServerID:           m.nextServerID,
-		Line:             rec.Launch.Line,
-		TemplateLaunch:   cloneServerLaunch(rec.Launch),
-		Autoscales:       autoscales,
-		CandidatePort:    candidatePort,
-		InstanceIDs: []int{rec.id},
+		ServerID:       m.nextServerID,
+		Line:           rec.Launch.Line,
+		TemplateLaunch: cloneServerLaunch(rec.Launch),
+		Autoscales:     autoscales,
+		CandidatePort:  candidatePort,
+		InstanceIDs:    []int{rec.id},
 		instanceStates: map[int]*instanceState{
 			rec.id: newInstanceState(instanceLifecycleWarming),
 		},

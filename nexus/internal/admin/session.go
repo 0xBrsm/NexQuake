@@ -1,4 +1,4 @@
-package session
+package admin
 
 import (
 	"encoding/binary"
@@ -12,11 +12,10 @@ import (
 // future WebTransport streams, or other session-bearing transports can satisfy
 // this interface without the registry depending on a concrete transport type.
 type Channel interface {
-	ClientNQIP() string
-	ClientIP() [4]byte
+	VirtualIP() string
+	VirtualIPBytes() [4]byte
 	SourceKey() string
 	ActiveServerPort() int
-	SendAdminReply(string)
 	Close()
 }
 
@@ -25,9 +24,9 @@ type Channel interface {
 // Session over its lifetime while the Session itself persists.
 //
 // Sessions are identified internally by their *Session handle and externally
-// by (source IP) or (NQIP) for registry lookups. There is no opaque
+// by (source IP) or (VirtualIP) for registry lookups. There is no opaque
 // session token sent to the client — cross-channel correlation is done via
-// the real source IP (see [Registry.LookupBySourceIP]).
+// the real source IP (see [SessionRegistry.LookupBySourceIP]).
 type Session struct {
 	mu       sync.RWMutex
 	sourceIP string
@@ -74,18 +73,18 @@ func (s *Session) Channel() Channel {
 	return s.channel
 }
 
-// ClientNQIP returns the NQ NQIP of the attached channel, or "".
-func (s *Session) ClientNQIP() string {
+// VirtualIP returns the NQ VirtualIP of the attached channel, or "".
+func (s *Session) VirtualIP() string {
 	if ch := s.Channel(); ch != nil {
-		return ch.ClientNQIP()
+		return ch.VirtualIP()
 	}
 	return ""
 }
 
-// ClientIP returns the raw 4-byte NQIP of the attached channel.
-func (s *Session) ClientIP() [4]byte {
+// VirtualIPBytes returns the raw 4-byte VirtualIP of the attached channel.
+func (s *Session) VirtualIPBytes() [4]byte {
 	if ch := s.Channel(); ch != nil {
-		return ch.ClientIP()
+		return ch.VirtualIPBytes()
 	}
 	return [4]byte{}
 }
@@ -107,14 +106,6 @@ func (s *Session) ActiveServerPort() int {
 	return 0
 }
 
-// SendAdminReply delivers text to the attached channel's admin path. No-op
-// when no channel is attached.
-func (s *Session) SendAdminReply(msg string) {
-	if ch := s.Channel(); ch != nil {
-		ch.SendAdminReply(msg)
-	}
-}
-
 // Close terminates the attached channel, if any. Does not remove the session
 // from the registry.
 func (s *Session) Close() {
@@ -125,41 +116,41 @@ func (s *Session) Close() {
 
 // Snapshot is a point-in-time view of a session, safe to display to admins.
 type Snapshot struct {
-	NQIP        string
+	VirtualIP        string
 	SourceIP         string
 	UserID           string
 	IsAdmin          bool
 	ActiveServerPort int
 }
 
-// BanTarget pairs a NQIP with the server port the client was last routed
+// BanTarget pairs a VirtualIP with the server port the client was last routed
 // to — the tuple a game-server ban command needs.
 type BanTarget struct {
 	Port      int
-	NQIP string
+	VirtualIP string
 }
 
-// Registry tracks active Sessions. Indexed by source IP (for cross-channel
+// SessionRegistry tracks active Sessions. Indexed by source IP (for cross-channel
 // correlation, e.g. matching an HTTP /rcon request to the WS session it came
-// from) and by NQIP (for ban-by-NQIP resolution). Safe for concurrent use.
-type Registry struct {
+// from) and by VirtualIP (for ban-by-VirtualIP resolution). Safe for concurrent use.
+type SessionRegistry struct {
 	mu         sync.RWMutex
 	all        map[*Session]struct{}
 	bySourceIP map[string]map[*Session]struct{}
-	byNQIPKey   map[uint32]map[*Session]struct{}
+	byNQIPKey  map[uint32]map[*Session]struct{}
 }
 
-func NewRegistry() *Registry {
-	return &Registry{
+func NewSessionRegistry() *SessionRegistry {
+	return &SessionRegistry{
 		all:        make(map[*Session]struct{}),
 		bySourceIP: make(map[string]map[*Session]struct{}),
-		byNQIPKey:   make(map[uint32]map[*Session]struct{}),
+		byNQIPKey:  make(map[uint32]map[*Session]struct{}),
 	}
 }
 
 // Create mints a new Session and registers it. Indexed by source IP immediately
-// when non-empty; NQIP indexing happens on [Registry.AttachChannel].
-func (r *Registry) Create(sourceIP, identity string, isAdmin bool) *Session {
+// when non-empty; VirtualIP indexing happens on [SessionRegistry.AttachChannel].
+func (r *SessionRegistry) Create(sourceIP, identity string, isAdmin bool) *Session {
 	s := &Session{
 		sourceIP: sourceIP,
 		identity: identity,
@@ -175,7 +166,7 @@ func (r *Registry) Create(sourceIP, identity string, isAdmin bool) *Session {
 }
 
 // Remove deletes the Session, clearing all indexes. Safe to call more than once.
-func (r *Registry) Remove(s *Session) {
+func (r *SessionRegistry) Remove(s *Session) {
 	if s == nil {
 		return
 	}
@@ -195,7 +186,7 @@ func (r *Registry) Remove(s *Session) {
 // matching an HTTP request back to the WS session(s) it originated from.
 // Multiple sessions may share a source IP (e.g., users behind a common NAT
 // or multiple tabs from the same browser).
-func (r *Registry) LookupBySourceIP(sourceIP string) []*Session {
+func (r *SessionRegistry) LookupBySourceIP(sourceIP string) []*Session {
 	sourceIP = strings.TrimSpace(sourceIP)
 	if sourceIP == "" {
 		return nil
@@ -214,8 +205,8 @@ func (r *Registry) LookupBySourceIP(sourceIP string) []*Session {
 }
 
 // AttachChannel binds a transport channel to the session and indexes it by the
-// channel's NQIP so ban-by-NQIP can find it.
-func (r *Registry) AttachChannel(s *Session, ch Channel) {
+// channel's VirtualIP so ban-by-VirtualIP can find it.
+func (r *SessionRegistry) AttachChannel(s *Session, ch Channel) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -237,20 +228,9 @@ func (r *Registry) AttachChannel(s *Session, ch Channel) {
 	set[s] = struct{}{}
 }
 
-// DetachChannel drops the channel attachment and removes the NQIP index entry.
-func (r *Registry) DetachChannel(s *Session) {
-	r.mu.Lock()
-	r.removeFromNQIPLocked(s)
-	r.mu.Unlock()
-
-	s.mu.Lock()
-	s.channel = nil
-	s.mu.Unlock()
-}
-
 // SnapshotAll returns a point-in-time view of every tracked session. Returns
 // nil when no sessions are tracked.
-func (r *Registry) SnapshotAll() []Snapshot {
+func (r *SessionRegistry) SnapshotAll() []Snapshot {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if len(r.all) == 0 {
@@ -263,10 +243,10 @@ func (r *Registry) SnapshotAll() []Snapshot {
 	return out
 }
 
-// SnapshotByNQIP returns all sessions attached to the given NQIP together
+// SnapshotByVirtualIP returns all sessions attached to the given VirtualIP together
 // with the deduplicated, sorted set of ban targets derived from their active
-// server ports. Returns (nil, nil) for an unknown or invalid NQIP.
-func (r *Registry) SnapshotByNQIP(nqip string) (sessions []*Session, targets []BanTarget) {
+// server ports. Returns (nil, nil) for an unknown or invalid VirtualIP.
+func (r *SessionRegistry) SnapshotByVirtualIP(nqip string) (sessions []*Session, targets []BanTarget) {
 	nqipKey, ok := parseNQIPKey(nqip)
 	if !ok {
 		return nil, nil
@@ -286,13 +266,13 @@ func (r *Registry) SnapshotByNQIP(nqip string) (sessions []*Session, targets []B
 		sessions = append(sessions, s)
 		port := s.ActiveServerPort()
 		if isValidServerPort(port) {
-			targets = append(targets, BanTarget{Port: port, NQIP: nqip})
+			targets = append(targets, BanTarget{Port: port, VirtualIP: nqip})
 		}
 	}
 	return sessions, sortedUniqueTargets(targets)
 }
 
-func (r *Registry) addToSourceIPLocked(sourceIP string, s *Session) {
+func (r *SessionRegistry) addToSourceIPLocked(sourceIP string, s *Session) {
 	set := r.bySourceIP[sourceIP]
 	if set == nil {
 		set = make(map[*Session]struct{})
@@ -301,7 +281,7 @@ func (r *Registry) addToSourceIPLocked(sourceIP string, s *Session) {
 	set[s] = struct{}{}
 }
 
-func (r *Registry) removeFromSourceIPLocked(sourceIP string, s *Session) {
+func (r *SessionRegistry) removeFromSourceIPLocked(sourceIP string, s *Session) {
 	set := r.bySourceIP[sourceIP]
 	if set == nil {
 		return
@@ -312,7 +292,7 @@ func (r *Registry) removeFromSourceIPLocked(sourceIP string, s *Session) {
 	}
 }
 
-func (r *Registry) removeFromNQIPLocked(s *Session) {
+func (r *SessionRegistry) removeFromNQIPLocked(s *Session) {
 	nqipKey, ok := nqipKeyFromChannel(s.Channel())
 	if !ok {
 		return
@@ -336,7 +316,7 @@ func snapshotOf(s *Session) Snapshot {
 		IsAdmin:  s.isAdmin,
 	}
 	if s.channel != nil {
-		snap.NQIP = s.channel.ClientNQIP()
+		snap.VirtualIP = s.channel.VirtualIP()
 		snap.ActiveServerPort = s.channel.ActiveServerPort()
 	}
 	return snap
@@ -346,7 +326,7 @@ func nqipKeyFromChannel(ch Channel) (uint32, bool) {
 	if ch == nil {
 		return 0, false
 	}
-	ip4 := ch.ClientIP()
+	ip4 := ch.VirtualIPBytes()
 	if ip4[0] == 0 {
 		return 0, false
 	}
@@ -400,7 +380,7 @@ func sortedUniqueTargets(in []BanTarget) []BanTarget {
 		if out[i].Port != out[j].Port {
 			return out[i].Port < out[j].Port
 		}
-		return out[i].NQIP < out[j].NQIP
+		return out[i].VirtualIP < out[j].VirtualIP
 	})
 	return out
 }

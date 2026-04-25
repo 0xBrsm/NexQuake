@@ -3,9 +3,6 @@ package assets
 import (
 	"bytes"
 	"encoding/binary"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -80,40 +77,5 @@ func TestReadPakContents(t *testing.T) {
 	}
 	if e, ok := byName["progs.dat"]; !ok || e.size != 4 {
 		t.Fatalf("missing progs.dat or wrong size: %+v", e)
-	}
-}
-
-func TestPakExtractHandler_ServesEntry(t *testing.T) {
-	gameDir := t.TempDir()
-	mod := "id1"
-	layer := "common"
-	commonDir := filepath.Join(gameDir, mod, layer)
-	if err := os.MkdirAll(commonDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
-	pakPath := filepath.Join(commonDir, "pak0.pak")
-	want := []byte("hello from pak")
-	writeTestPak(t, pakPath, map[string][]byte{
-		"docs/readme.txt": want,
-	})
-
-	h := newPakExtractHandler(gameDir, NewPakIndexCache())
-
-	req := httptest.NewRequest(http.MethodGet, "/pak-extract/id1/common/pak0.pak/docs/readme.txt", nil)
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-
-	res := rr.Result()
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d", res.StatusCode)
-	}
-	got, err := io.ReadAll(res.Body)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
-	}
-	if string(got) != string(want) {
-		t.Fatalf("body mismatch: got=%q want=%q", string(got), string(want))
 	}
 }

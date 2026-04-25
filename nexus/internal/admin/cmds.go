@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/0xBrsm/NexQuake/nexus/internal/session"
 )
 
 // ServerInfo is a point-in-time view of a managed server for RPC responses.
@@ -44,9 +42,9 @@ type Env struct {
 	TailNexusLog        func(n int) []string
 	Auditf              func(format string, args ...any)
 
-	SessionSnapshots func() []session.Snapshot
-	SnapshotByNQIP   func(nqip string) ([]*session.Session, []session.BanTarget)
-	ReserveAndBlock  func(ip [4]byte, sourceKey string)
+	SessionSnapshots    func() []Snapshot
+	SnapshotByVirtualIP func(nqip string) ([]*Session, []BanTarget)
+	ReserveAndBlock     func(ip [4]byte, sourceKey string)
 }
 
 const defaultServerTailLines = 10

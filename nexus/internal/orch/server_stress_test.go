@@ -218,7 +218,7 @@ type serverReconcileMetrics struct {
 	duration               time.Duration
 	launchedReplicas       int
 	reconcileIterations    int
-	finalInstances          int
+	finalInstances         int
 	neededHeadroom         int
 	finalFreeSlots         int
 	finalAggregateUsers    int
@@ -281,7 +281,7 @@ func driveServerScaleUpToDemand(
 		}
 
 		m.updatePort(replica, nextPort)
-		m.updateSearchPath(replica, []string{"id1"})
+		m.updateSearchPathNormalized(replica, normalizeSearchPath([]string{"id1"}))
 		m.SetServerRunningForTest(replica, NewTestServer(nextPort))
 		m.SetServerInfoForTest(replica, "server-1", "dm6", 0, byte(maxPlayersPerInstance))
 		m.mu.Lock()
@@ -316,7 +316,7 @@ func driveServerScaleUpToDemand(
 		duration:               time.Since(startedAt),
 		launchedReplicas:       launched,
 		reconcileIterations:    iterations,
-		finalInstances:          finalInstances,
+		finalInstances:         finalInstances,
 		neededHeadroom:         neededHeadroom,
 		finalFreeSlots:         finalFreeSlots,
 		finalAggregateUsers:    finalUsers,

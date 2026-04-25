@@ -47,8 +47,9 @@ net_loop.c \
 net_main.c \
 net_slist.c \
 net_vcr.c \
-net_ws_transport.c \
-net_ws_vnet.c \
+net_ws.c \
+net_wasm.c \
+net_nqchan.c \
 cmd_rcon.c \
 com_gameswitch.c \
 cl_prefetch.c \

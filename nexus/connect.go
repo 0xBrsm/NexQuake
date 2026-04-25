@@ -10,7 +10,7 @@ import (
 
 	"github.com/0xBrsm/NexQuake/nexus/internal/admin"
 	"github.com/0xBrsm/NexQuake/nexus/internal/assets"
-	"github.com/0xBrsm/NexQuake/nexus/nqrelay"
+	"github.com/0xBrsm/NexQuake/nexus/trunk"
 )
 
 // rconMaxBody caps the size of a POST /rcon body. Admin JSON-RPC envelopes
@@ -30,7 +30,7 @@ func (app *nexusApp) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := nqrelay.Upgrader.Upgrade(w, r, nil)
+	conn, err := trunk.Upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		warnf("WebSocket upgrade failed: %v", err)
 		return
@@ -44,31 +44,34 @@ func (app *nexusApp) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if isAdmin {
-		infof("Admin connected: %s (%s)", displayAddr, userIdentity)
+		infof("Admin connected (ws): %s (%s)", displayAddr, userIdentity)
 	} else {
-		infof("Client connected: %s (%s)", displayAddr, userIdentity)
+		infof("Client connected (ws): %s (%s)", displayAddr, userIdentity)
 	}
 
 	session := app.sessionReg.Create(sourceIP, userIdentity, isAdmin)
-	dispatch := app.buildFrameDispatch(session)
+	dispatch := app.buildFrameDispatch()
 
-	relay, err := nqrelay.NewRelay(conn, sourceKey, sourceIP, userIdentity, isAdmin, app.ipAlloc, dispatch, warnf, debugf)
+	tc, err := trunk.NewConn(trunk.WebSocket(conn), app.ipAlloc, sourceKey,
+		trunk.WithDispatch(dispatch),
+		trunk.WithLogger(warnf, debugf),
+	)
 	if err != nil {
 		app.sessionReg.Remove(session)
-		errorf("Failed to create relay: %v", err)
+		errorf("Failed to create trunk conn: %v", err)
 		_ = conn.Close()
 		return
 	}
 
-	app.sessionReg.AttachChannel(session, relay)
+	app.sessionReg.AttachChannel(session, tc)
 	defer app.sessionReg.Remove(session)
 
-	relay.Run()
+	tc.Run()
 
 	if isAdmin {
-		infof("Admin disconnected: %s", displayAddr)
+		infof("Admin disconnected (ws): %s", displayAddr)
 	} else {
-		infof("Client disconnected: %s", displayAddr)
+		infof("Client disconnected (ws): %s", displayAddr)
 	}
 }
 
@@ -104,7 +107,7 @@ func (app *nexusApp) handleRcon(w http.ResponseWriter, r *http.Request) {
 			if src == "" {
 				src = "unknown"
 			}
-			nqip := s.ClientNQIP()
+			nqip := s.VirtualIP()
 			if nqip == "" {
 				nqip = "none"
 			}
@@ -144,7 +147,7 @@ func writeResponse(w http.ResponseWriter, resp *admin.Response) {
 // newMux builds the HTTP router for the nexus server.
 // Routes:
 //   - GET /health — liveness probe, returns version headers
-//   - GET /ws     — WebSocket upgrade; all game traffic flows here
+//   - GET /ws     — WebSocket upgrade; game traffic flows here
 //   - POST /rcon  — admin JSON-RPC endpoint
 //   - /start      — client bootstrap page (asset server)
 //   - /nq/        — hashed game assets (pak files, etc.)

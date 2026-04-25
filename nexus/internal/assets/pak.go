@@ -5,11 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
-	"path"
-	"path/filepath"
-	"strings"
 	"sync"
 )
 
@@ -155,77 +151,4 @@ func (c *PakIndexCache) get(pakPath string) (*pakIndex, error) {
 	c.byPath[pakPath] = idx
 	c.mu.Unlock()
 	return idx, nil
-}
-
-// newPakExtractHandler returns an HTTP handler that extracts single files
-// from pak archives on demand.
-func newPakExtractHandler(gameDir string, pakCache *PakIndexCache) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-
-		rest := strings.TrimPrefix(r.URL.Path, "/pak-extract/")
-		rest = strings.Trim(rest, "/")
-		parts := strings.Split(rest, "/")
-		if len(parts) < 4 {
-			http.NotFound(w, r)
-			return
-		}
-
-		mod := parts[0]
-		layer := parts[1]
-		pakName := parts[2]
-		internal := strings.Join(parts[3:], "/")
-
-		if mod == "" || strings.Contains(mod, "..") || strings.ContainsAny(mod, `/\`) {
-			http.Error(w, "invalid mod", http.StatusBadRequest)
-			return
-		}
-		if layer != "common" && layer != "client" {
-			http.Error(w, "invalid layer", http.StatusBadRequest)
-			return
-		}
-		if pakName == "" || strings.Contains(pakName, "..") || strings.ContainsAny(pakName, `/\`) {
-			http.Error(w, "invalid pak", http.StatusBadRequest)
-			return
-		}
-
-		key := normalizeVFSKey(internal)
-		if key == "" {
-			http.Error(w, "invalid file", http.StatusBadRequest)
-			return
-		}
-
-		pakPath := filepath.Join(gameDir, mod, layer, pakName)
-		idx, err := pakCache.get(pakPath)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-
-		entry, ok := idx.entries[key]
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-
-		f, err := os.Open(pakPath)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		defer f.Close()
-
-		st, err := f.Stat()
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/octet-stream")
-		section := io.NewSectionReader(f, entry.offset, entry.size)
-		http.ServeContent(w, r, path.Base(entry.name), st.ModTime(), section)
-	}
 }

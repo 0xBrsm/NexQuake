@@ -61,32 +61,32 @@ net_driver_t net_drivers[MAX_NET_DRIVERS] =
 
 int net_numdrivers = 2;
 
-#include "net_ws_vnet.h"
+#include "net_nqchan.h"
 
 net_landriver_t	net_landrivers[MAX_NET_DRIVERS] =
 {
 	{
-	"WebSocket",
+	"NQ",
 	false,
 	0,
-	WebSocket_Init,
-	WebSocket_Shutdown,
-	WebSocket_Listen,
-	WebSocket_OpenSocket,
-	WebSocket_CloseSocket,
-	WebSocket_Connect,
-	WebSocket_CheckNewConnections,
-	WebSocket_Read,
-	WebSocket_Write,
-	WebSocket_Broadcast,
-	WebSocket_AddrToString,
-	WebSocket_StringToAddr,
-	WebSocket_GetSocketAddr,
-	WebSocket_GetNameFromAddr,
-	WebSocket_GetAddrFromName,
-	WebSocket_AddrCompare,
-	WebSocket_GetSocketPort,
-	WebSocket_SetSocketPort
+	NQChan_Init,
+	NQChan_Shutdown,
+	NQChan_Listen,
+	NQChan_OpenSocket,
+	NQChan_CloseSocket,
+	NQChan_Connect,
+	NQChan_CheckNewConnections,
+	NQChan_Read,
+	NQChan_Write,
+	NQChan_Broadcast,
+	NQChan_AddrToString,
+	NQChan_StringToAddr,
+	NQChan_GetSocketAddr,
+	NQChan_GetNameFromAddr,
+	NQChan_GetAddrFromName,
+	NQChan_AddrCompare,
+	NQChan_GetSocketPort,
+	NQChan_SetSocketPort
 	}
 };
 

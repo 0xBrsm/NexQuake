@@ -3,16 +3,15 @@ package main
 import (
 	"github.com/0xBrsm/NexQuake/nexus/internal/admin"
 	"github.com/0xBrsm/NexQuake/nexus/internal/orch"
-	"github.com/0xBrsm/NexQuake/nexus/internal/session"
-	"github.com/0xBrsm/NexQuake/nexus/nqrelay"
+	"github.com/0xBrsm/NexQuake/nexus/trunk"
 )
 
 // buildFrameDispatch wires the relay's port-0 control channel: slist
 // requests only. Other port-0 payloads are silently dropped; admin rcon
 // is served separately by POST /rcon.
-func (app *nexusApp) buildFrameDispatch(_ *session.Session) nqrelay.FrameDispatch {
-	return nqrelay.FrameDispatch{
-		HandleControlFrame: func(_ *nqrelay.Relay, payload []byte) []byte {
+func (app *nexusApp) buildFrameDispatch() trunk.FrameDispatch {
+	return trunk.FrameDispatch{
+		HandleControlFrame: func(_ *trunk.Conn, payload []byte) []byte {
 			if orch.IsSlistRequest(payload) {
 				return app.serverMgr.BuildSlistResponse()
 			}
@@ -47,7 +46,7 @@ func convertServerSnapshots(snaps []orch.ServerSnapshot) []admin.ServerInfo {
 
 // buildAdminEnv constructs the admin.Env, wiring server manager and session
 // registry capabilities without additional adapter types.
-func buildAdminEnv(serverMgr *orch.ServerManager, sessionReg *session.Registry, ipAlloc *nqrelay.NQIPAllocator) *admin.Env {
+func buildAdminEnv(serverMgr *orch.ServerManager, sessionReg *admin.SessionRegistry, ipAlloc *trunk.VirtualIPAllocator) *admin.Env {
 	return &admin.Env{
 		ServerSnapshots: func() []admin.ServerInfo {
 			return convertServerSnapshots(serverMgr.Snapshots())
@@ -67,12 +66,12 @@ func buildAdminEnv(serverMgr *orch.ServerManager, sessionReg *session.Registry, 
 		RestartServersAll:   serverMgr.RestartServersAll,
 		RemoveServer:        serverMgr.RemoveServer,
 		LaunchServer:        serverMgr.LaunchServer,
-		DispatchInstanceCmd:   serverMgr.DispatchInstanceCmd,
+		DispatchInstanceCmd: serverMgr.DispatchInstanceCmd,
 		IsManagedListenPort: serverMgr.IsManagedListenPort,
 		TailNexusLog:        tailNexusLogLines,
 		Auditf:              auditf,
 		SessionSnapshots:    sessionReg.SnapshotAll,
-		SnapshotByNQIP:       sessionReg.SnapshotByNQIP,
+		SnapshotByVirtualIP: sessionReg.SnapshotByVirtualIP,
 		ReserveAndBlock:     ipAlloc.ReserveAndBlock,
 	}
 }

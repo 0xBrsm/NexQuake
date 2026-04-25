@@ -8,22 +8,13 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-
-	"github.com/0xBrsm/NexQuake/nexus/internal/session"
 )
-
-// Session is the admin package's alias for session.Session — used in handlers
-// that act on live connections (kick, ban).
-type Session = session.Session
-
-// BanTarget is the admin package's alias for session.BanTarget.
-type BanTarget = session.BanTarget
 
 // SessionEntry is a point-in-time view of a single session for RPC responses.
 // Server-side enrichment adds the resolved server hostname for the session's
 // active port so clients don't need a separate server.list lookup.
 type SessionEntry struct {
-	NQIP        string `json:"nqip"`
+	VirtualIP        string `json:"nqip"`
 	SourceIP         string `json:"source_ip,omitempty"`
 	UserID           string `json:"user_id,omitempty"`
 	IsAdmin          bool   `json:"is_admin"`
@@ -48,7 +39,7 @@ func sessionListHandler(env *Env, _ Actor, _ any) (any, error) {
 
 // SessionLookup is the common param shape for session.info and session.ban.
 type SessionLookup struct {
-	NQIP string `json:"nqip"`
+	VirtualIP string `json:"nqip"`
 }
 
 func parseSessionLookup(raw json.RawMessage) (any, error) {
@@ -56,25 +47,25 @@ func parseSessionLookup(raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(p.NQIP) == "" {
+	if strings.TrimSpace(p.VirtualIP) == "" {
 		return nil, fmt.Errorf("nqip is required")
 	}
 	return p, nil
 }
 
 type SessionInfoResult struct {
-	Session     SessionEntry `json:"session"`
-	StatusSlot  int          `json:"status_slot,omitempty"`
-	StatusLine  string       `json:"status_line,omitempty"`
-	StatusAddr  string       `json:"status_addr,omitempty"`
-	StatusNote  string       `json:"status_note,omitempty"`
+	Session    SessionEntry `json:"session"`
+	StatusSlot int          `json:"status_slot,omitempty"`
+	StatusLine string       `json:"status_line,omitempty"`
+	StatusAddr string       `json:"status_addr,omitempty"`
+	StatusNote string       `json:"status_note,omitempty"`
 }
 
 func sessionInfoHandler(env *Env, _ Actor, params any) (any, error) {
 	p := params.(*SessionLookup)
-	entry, ok := lookupSessionEntry(env, p.NQIP)
+	entry, ok := lookupSessionEntry(env, p.VirtualIP)
 	if !ok {
-		return nil, &MethodError{Code: ErrCodeNotFound, Message: fmt.Sprintf("no session with nqip %q", p.NQIP)}
+		return nil, &MethodError{Code: ErrCodeNotFound, Message: fmt.Sprintf("no session with nqip %q", p.VirtualIP)}
 	}
 	result := SessionInfoResult{Session: entry}
 	if entry.ActiveServerPort < 1 || entry.ActiveServerPort > 65535 {
@@ -89,7 +80,7 @@ func sessionInfoHandler(env *Env, _ Actor, params any) (any, error) {
 	if err != nil {
 		return nil, &MethodError{Code: ErrCodeDispatch, Message: fmt.Sprintf("status lookup failed: %v", err)}
 	}
-	match, ok := statusPlayerForNQIP(reply, entry.NQIP)
+	match, ok := statusPlayerForNQIP(reply, entry.VirtualIP)
 	if !ok {
 		result.StatusNote = "player not present in server status output"
 		return result, nil
@@ -101,7 +92,7 @@ func sessionInfoHandler(env *Env, _ Actor, params any) (any, error) {
 }
 
 type SessionBanResult struct {
-	NQIP          string   `json:"nqip"`
+	VirtualIP    string   `json:"nqip"`
 	SourceIPs    []string `json:"source_ips,omitempty"`
 	Disconnected int      `json:"disconnected"`
 	ServerKicks  int      `json:"server_kicks"`
@@ -110,11 +101,11 @@ type SessionBanResult struct {
 
 func sessionBanHandler(env *Env, _ Actor, params any) (any, error) {
 	p := params.(*SessionLookup)
-	nqip := strings.TrimSpace(p.NQIP)
-	if env == nil || env.SnapshotByNQIP == nil {
+	nqip := strings.TrimSpace(p.VirtualIP)
+	if env == nil || env.SnapshotByVirtualIP == nil {
 		return nil, &MethodError{Code: ErrCodeUnavailable, Message: "session manager unavailable"}
 	}
-	sessions, targets := env.SnapshotByNQIP(nqip)
+	sessions, targets := env.SnapshotByVirtualIP(nqip)
 	if len(sessions) == 0 {
 		return nil, &MethodError{Code: ErrCodeNotFound, Message: fmt.Sprintf("no active session with nqip %q", nqip)}
 	}
@@ -128,7 +119,7 @@ func sessionBanHandler(env *Env, _ Actor, params any) (any, error) {
 
 	if env.ReserveAndBlock != nil {
 		for _, s := range sessions {
-			env.ReserveAndBlock(s.ClientIP(), s.SourceKey())
+			env.ReserveAndBlock(s.VirtualIPBytes(), s.SourceKey())
 		}
 	}
 	for _, s := range sessions {
@@ -136,7 +127,7 @@ func sessionBanHandler(env *Env, _ Actor, params any) (any, error) {
 	}
 
 	result := SessionBanResult{
-		NQIP:          nqip,
+		VirtualIP:    nqip,
 		SourceIPs:    uniqueSortedSourceIPs(sessions),
 		Disconnected: len(sessions),
 		ServerKicks:  applied,
@@ -158,20 +149,20 @@ func enrichedSessionEntries(env *Env) []SessionEntry {
 	out := make([]SessionEntry, 0, len(snaps))
 	for _, s := range snaps {
 		entry := SessionEntry{
-			NQIP:        strings.TrimSpace(s.NQIP),
+			VirtualIP:        strings.TrimSpace(s.VirtualIP),
 			SourceIP:         strings.TrimSpace(s.SourceIP),
 			UserID:           strings.TrimSpace(s.UserID),
 			IsAdmin:          s.IsAdmin,
 			ActiveServerPort: s.ActiveServerPort,
 		}
-		if entry.NQIP == "" {
+		if entry.VirtualIP == "" {
 			continue
 		}
 		applyActiveServer(&entry, env, serverByPort)
 		out = append(out, entry)
 	}
 	slices.SortFunc(out, func(a, b SessionEntry) int {
-		if c := compareClientIPText(a.NQIP, b.NQIP); c != 0 {
+		if c := compareClientIPText(a.VirtualIP, b.VirtualIP); c != 0 {
 			return c
 		}
 		return compareClientIPText(a.SourceIP, b.SourceIP)
@@ -179,21 +170,21 @@ func enrichedSessionEntries(env *Env) []SessionEntry {
 	return out
 }
 
-// lookupSessionEntry resolves one session by NQIP via the registry's direct
-// index (env.SnapshotByNQIP) instead of enriching the full list. Fast path for
+// lookupSessionEntry resolves one session by VirtualIP via the registry's direct
+// index (env.SnapshotByVirtualIP) instead of enriching the full list. Fast path for
 // session.info / any future single-session handler.
 func lookupSessionEntry(env *Env, nqip string) (SessionEntry, bool) {
 	nqip = strings.TrimSpace(nqip)
-	if nqip == "" || env == nil || env.SnapshotByNQIP == nil {
+	if nqip == "" || env == nil || env.SnapshotByVirtualIP == nil {
 		return SessionEntry{}, false
 	}
-	sessions, _ := env.SnapshotByNQIP(nqip)
+	sessions, _ := env.SnapshotByVirtualIP(nqip)
 	if len(sessions) == 0 {
 		return SessionEntry{}, false
 	}
 	s := sessions[0]
 	entry := SessionEntry{
-		NQIP:        nqip,
+		VirtualIP:        nqip,
 		SourceIP:         strings.TrimSpace(s.SourceIP()),
 		UserID:           strings.TrimSpace(s.Identity()),
 		IsAdmin:          s.IsAdmin(),
@@ -261,12 +252,12 @@ func compareClientIPText(a, b string) int {
 	return cmp.Compare(a, b)
 }
 
-func applyServerKickTargets(targets []session.BanTarget, env *Env) (applied int, errs []error) {
+func applyServerKickTargets(targets []BanTarget, env *Env) (applied int, errs []error) {
 	if env == nil || env.DispatchInstanceCmd == nil {
 		return 0, nil
 	}
 	for _, target := range targets {
-		if target.Port < 1 || target.Port > 65535 || strings.TrimSpace(target.NQIP) == "" {
+		if target.Port < 1 || target.Port > 65535 || strings.TrimSpace(target.VirtualIP) == "" {
 			continue
 		}
 		if err := kickServerTargetByNQIP(target, env); err != nil {
@@ -278,14 +269,14 @@ func applyServerKickTargets(targets []session.BanTarget, env *Env) (applied int,
 	return applied, errs
 }
 
-func kickServerTargetByNQIP(target session.BanTarget, env *Env) error {
+func kickServerTargetByNQIP(target BanTarget, env *Env) error {
 	statusReply, err := env.DispatchInstanceCmd(target.Port, "status", "")
 	if err != nil {
 		return fmt.Errorf("status lookup failed: %w", err)
 	}
-	match, ok := statusPlayerForNQIP(statusReply, target.NQIP)
+	match, ok := statusPlayerForNQIP(statusReply, target.VirtualIP)
 	if !ok {
-		return fmt.Errorf("no active player with nqip %q", target.NQIP)
+		return fmt.Errorf("no active player with nqip %q", target.VirtualIP)
 	}
 	kickCmd := fmt.Sprintf("kick # %d Nexus ban", match.slot)
 	if _, err := env.DispatchInstanceCmd(target.Port, kickCmd, ""); err != nil {
@@ -294,7 +285,7 @@ func kickServerTargetByNQIP(target session.BanTarget, env *Env) error {
 	return nil
 }
 
-func uniqueSortedSourceIPs(sessions []*session.Session) []string {
+func uniqueSortedSourceIPs(sessions []*Session) []string {
 	if len(sessions) == 0 {
 		return nil
 	}

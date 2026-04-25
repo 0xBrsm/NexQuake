@@ -30,7 +30,7 @@ A concise directory of all documentation located within the `src/` tree.
 | [bugfix/README.md](../bugfix/README.md) | **Bug Fix Catalog.** Patches and improvements for modern 64-bit systems. |
 | [client/README.md](../client/README.md) | **Web Client.** Documentation for the Emscripten/WASM client implementation. |
 | [nexus/README.md](../nexus/README.md) | **Nexus Service.** Documentation for the multiplayer routing, server management, and WebSocket gateway. |
-| [nexus/nqrelay/README.md](../nexus/nqrelay/README.md) | **Relay Package.** Standalone WebSocket↔UDP relay package notes. |
+| [nexus/trunk/README.md](../nexus/trunk/README.md) | **Relay Package.** Standalone WebSocket↔UDP relay package notes. |
 | [nexus/quake106/README.md](../nexus/quake106/README.md) | **Shareware Extractor.** Quake 1.06 extraction package and provenance. |
 | [server/README.md](../server/README.md) | **Dedicated Server.** Guide to the native `nqserver` build, configuration, and runtime. |
 | [ATTRIBUTIONS.md](../ATTRIBUTIONS.md) | **Attributions.** Third-party software attributions and legal notices. |

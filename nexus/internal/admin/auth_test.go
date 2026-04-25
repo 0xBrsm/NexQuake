@@ -5,20 +5,20 @@ import (
 	"testing"
 )
 
-func TestIsAdminIgnoresRconPasswordQueryToken(t *testing.T) {
+func TestIdentifyRequestIgnoresRconPasswordQueryToken(t *testing.T) {
 	auth := &Auth{rconPassword: "testpw"}
 
 	reqA := httptest.NewRequest("GET", "http://quake-a.local:1337/ws?token=dGVzdHB3", nil)
 	reqA.Host = "quake-a.local:1337"
-	if auth.isAdmin(reqA) {
-		t.Fatalf("expected isAdmin() false when only query token is provided")
+	if isAdmin, _ := auth.IdentifyRequest(reqA); isAdmin {
+		t.Fatalf("expected IdentifyRequest() admin=false when only query token is provided")
 	}
 
 	reqB := httptest.NewRequest("GET", "http://quake-b.local:1337/ws", nil)
 	reqB.Header.Set("Authorization", "Bearer dGVzdHB3")
 	reqB.Host = "quake-b.local:1337"
-	if auth.isAdmin(reqB) {
-		t.Fatalf("expected isAdmin() false when only rcon_password-derived bearer token is provided")
+	if isAdmin, _ := auth.IdentifyRequest(reqB); isAdmin {
+		t.Fatalf("expected IdentifyRequest() admin=false when only rcon_password-derived bearer token is provided")
 	}
 }
 

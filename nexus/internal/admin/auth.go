@@ -213,12 +213,6 @@ func (a *Auth) IdentifyRequest(r *http.Request) (bool, string) {
 	return false, "anonymous"
 }
 
-// isAdmin checks whether the HTTP request carries valid admin credentials.
-func (a *Auth) isAdmin(r *http.Request) bool {
-	ok, _ := a.IdentifyRequest(r)
-	return ok
-}
-
 func (v *oidcValidator) validate(r *http.Request, debugf func(string, ...any)) (bool, map[string]any) {
 	raw := r.Header.Get(v.headerName)
 	if strings.EqualFold(v.headerName, "Authorization") {

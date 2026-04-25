@@ -15,8 +15,7 @@ import (
 	"github.com/0xBrsm/NexQuake/nexus/internal/admin"
 	"github.com/0xBrsm/NexQuake/nexus/internal/assets"
 	"github.com/0xBrsm/NexQuake/nexus/internal/orch"
-	"github.com/0xBrsm/NexQuake/nexus/internal/session"
-	"github.com/0xBrsm/NexQuake/nexus/nqrelay"
+	"github.com/0xBrsm/NexQuake/nexus/trunk"
 )
 
 // nexusApp is the central application object. It wires together the
@@ -27,8 +26,8 @@ type nexusApp struct {
 	cfg        runtimeConfig
 	auth       *admin.Auth
 	id         *admin.Identity
-	ipAlloc    *nqrelay.NQIPAllocator
-	sessionReg *session.Registry
+	ipAlloc    *trunk.VirtualIPAllocator
+	sessionReg *admin.SessionRegistry
 	serverMgr  *orch.ServerManager
 	adminEnv   *admin.Env
 	pakCache   *assets.PakIndexCache
@@ -58,9 +57,9 @@ func main() {
 	}
 
 	// Initialize networking layer.
-	nqServerIP := net.ParseIP(nqrelay.DefaultNQServerIP).To4()
-	ipAlloc := nqrelay.NewNQIPAllocator(nqServerIP)
-	sessionReg := session.NewRegistry()
+	nqServerIP := net.ParseIP(trunk.DefaultServerIP).To4()
+	ipAlloc := trunk.NewVirtualIPAllocator(nqServerIP)
+	sessionReg := admin.NewSessionRegistry()
 
 	runCtx, runCancel := context.WithCancel(context.Background())
 	defer runCancel()

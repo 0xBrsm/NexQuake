@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"hash/fnv"
 	"io"
 	"net/http"
 	"os"
@@ -125,10 +124,6 @@ func closeNexusLogFile() {
 	}
 }
 
-func setOperatorConsoleTimestamps(enabled bool) {
-	operatorConsoleTimestamp.Store(enabled)
-}
-
 func operatorConsoleTimestampsEnabled() bool {
 	return operatorConsoleTimestamp.Load()
 }
@@ -234,6 +229,7 @@ func errorf(format string, args ...any) { logf(logError, format, args...) }
 func warnf(format string, args ...any)  { logf(logWarn, format, args...) }
 func infof(format string, args ...any)  { logf(logInfo, format, args...) }
 func debugf(format string, args ...any) { logf(logDebug, format, args...) }
+
 // auditf always records the message to the tail buffer and log file regardless
 // of the current log level. It also writes to the operator console when debug
 // level is active. Use for security-sensitive events (bans, promotions, etc.).
@@ -333,18 +329,6 @@ func currentVersionInfo() versionInfo {
 }
 
 // ---- Misc runtime helpers ----
-
-// fnv64aSum returns the FNV-1a 64-bit hash of text.
-func fnv64aSum(text string) uint64 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(text))
-	return h.Sum64()
-}
-
-// fnv64aHex returns fnv64aSum(text) formatted as a 16-char lowercase hex string.
-func fnv64aHex(text string) string {
-	return fmt.Sprintf("%016x", fnv64aSum(text))
-}
 
 // getEnv returns the value of key, or defaultValue when the variable is unset or empty.
 func getEnv(key, defaultValue string) string {

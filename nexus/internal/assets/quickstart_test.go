@@ -100,7 +100,7 @@ func TestQuickstartGame_AllSelectsAllGamesInCatalogOrder(t *testing.T) {
 	if strings.Contains(s, "nqserver @def -game id1") {
 		t.Fatalf("expected base entries to be excluded from generated servers.ini, got:\n%s", s)
 	}
-	if strings.Index(s, "nqserver @def -game arena") < 0 || strings.Index(s, "nqserver @def -game ctf") < 0 {
+	if !strings.Contains(s, "nqserver @def -game arena") || !strings.Contains(s, "nqserver @def -game ctf") {
 		t.Fatalf("expected both entries, got:\n%s", s)
 	}
 	if strings.Index(s, "nqserver @def -game arena") > strings.Index(s, "nqserver @def -game ctf") {

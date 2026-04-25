@@ -68,7 +68,7 @@ func TestUpdateSearchPath_FinalizesSpecWhenPortKnown(t *testing.T) {
 		Running:           &managedServer{},
 	}
 
-	m.updateSearchPath(rec, []string{"ctf", "id1"})
+	m.updateSearchPathNormalized(rec, normalizeSearchPath([]string{"ctf", "id1"}))
 
 	if rec.spec == nil {
 		t.Fatalf("expected resolved spec after port and search path are known")
@@ -93,7 +93,7 @@ func TestUpdateSearchPath_DedupesConsolePathEntries(t *testing.T) {
 		resolvedPort:      26007,
 	}
 
-	m.updateSearchPath(rec, []string{"arena", "arena", "id1", "id1", "id1"})
+	m.updateSearchPathNormalized(rec, normalizeSearchPath([]string{"arena", "arena", "id1", "id1", "id1"}))
 
 	want := []string{"arena", "id1"}
 	if !slices.Equal(rec.resolvedSearchPath, want) {
@@ -113,7 +113,7 @@ func TestUpdateSearchPath_IgnoresPathFragmentsAndPakNames(t *testing.T) {
 		resolvedPort:      26008,
 	}
 
-	m.updateSearchPath(rec, []string{"arena", "arena/pak0.pak", "/tmp/id1", "id1"})
+	m.updateSearchPathNormalized(rec, normalizeSearchPath([]string{"arena", "arena/pak0.pak", "/tmp/id1", "id1"}))
 
 	want := []string{"arena", "id1"}
 	if !slices.Equal(rec.resolvedSearchPath, want) {
@@ -156,7 +156,7 @@ func TestRemoveServer_RemovesStoppedRecordByIndex(t *testing.T) {
 		t.Fatalf("register server A: %v", err)
 	}
 	m.updatePort(recA, 26001)
-	m.updateSearchPath(recA, []string{"id1"})
+	m.updateSearchPathNormalized(recA, normalizeSearchPath([]string{"id1"}))
 
 	recB, err := m.registerServerLaunch(serverLaunch{
 		Line:   1,
@@ -167,7 +167,7 @@ func TestRemoveServer_RemovesStoppedRecordByIndex(t *testing.T) {
 		t.Fatalf("register server B: %v", err)
 	}
 	m.updatePort(recB, 26002)
-	m.updateSearchPath(recB, []string{"ctf", "id1"})
+	m.updateSearchPathNormalized(recB, normalizeSearchPath([]string{"ctf", "id1"}))
 
 	if err := m.RemoveServer(1); err != nil {
 		t.Fatalf("RemoveServer(index) error = %v", err)
@@ -230,8 +230,8 @@ func TestRemoveServer_RemovesEveryInstanceFromServer(t *testing.T) {
 	}
 
 	var (
-		replicaA *instance
-		replicaB *instance
+		replicaA   *instance
+		replicaB   *instance
 		serverID   int
 		serverLine int
 	)
