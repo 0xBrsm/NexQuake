@@ -6,7 +6,7 @@ Authentication is handled either by connection-level OIDC JWT auth or by shared-
 
 External tools can reach the same command surface over HTTP by POSTing JSON-RPC 2.0 envelopes to `/rcon` with the same `Authorization` header. See [HTTP API](#http-api) below for the full reference.
 
-Throughout this document, **NQIP** refers to a client's NexQuake IP: the deterministic `127.x.x.x` loopback address Nexus assigns per-client from a hashed source key. Sessions are identified by NQIP in `session.info`, `session.ban`, and the `session.list` output; inside running game servers the NQIP appears as the player's address in commands like `status`.
+Throughout this document, **NQIP** refers to a client's NexQuake IP: the deterministic `127.x.x.x` loopback address Nexus assigns per-client from a hashed source key. Clients are identified by NQIP in `client.info`, `client.ban`, and the `client.list` output; inside running game servers the NQIP appears as the player's address in commands like `status`.
 
 ## Targeting
 
@@ -15,6 +15,7 @@ Throughout this document, **NQIP** refers to a client's NexQuake IP: the determi
 | `rcon <cmd...>` | If connected to a server, forwards to that server's console. If disconnected, dispatches to Nexus admin. |
 | `rcon nexus <cmd...>` | Forces a Nexus admin dispatch even while connected to a game server. |
 | `rcon <port> <cmd...>` | Forwards a raw console command to the instance listening on that port (1–65535). |
+| `rcon login` | Browser/WASM client only. Opens an OIDC popup for an edge-gated `/rcon`; on success Nexus pushes a `rcon: authenticated.` echo back via the trunk control channel. Has no JSON-RPC equivalent (the API has no popup to open). |
 
 ## Nexus Command Reference
 
@@ -28,9 +29,9 @@ Throughout this document, **NQIP** refers to a client's NexQuake IP: the determi
 | **server restart** | `rcon nexus server restart <idx\|all> [secs]` | Restart a specific server or all servers. Equivalent to `stop` followed by `start`. |
 | **server remove** | `rcon nexus server remove <idx>` | Remove a **stopped** server from the runtime registry. Useful for cleaning up temporary `server launch` instances. |
 | **server launch** | `rcon nexus server launch <binary> [args...]` | Launch and register a new server dynamically. Example: `rcon nexus server launch nqserver -dedicated -game ctf +map ctf2m3`. |
-| **session list** | `rcon nexus session list` | List all connected client sessions. Displays role, user identity, server, and port. If no authenticated user identity is available, shows the public source IP in parentheses. |
-| **session info** | `rcon nexus session info <nqip>` | Show details for one session by NQIP, including source identity and status-derived player slot/address when connected to a server. |
-| **session ban** | `rcon nexus session ban <nqip>` | Ban one session by NQIP from all servers and disconnect it immediately. Nexus issues server `kick` by status slot first (best effort), then closes session sockets and blocks route identity until Nexus restart. Admin sessions cannot be banned. |
+| **client list** | `rcon nexus client list` | List all connected clients with NQIP, source IP, and user identity when available. |
+| **client info** | `rcon nexus client info <nqip>` | Show details for one active client by NQIP. |
+| **client ban** | `rcon nexus client ban <nqip>` | Ban one client's source IP until Nexus restart and disconnect it immediately. |
 
 ## Privileged Gameplay Commands (`please`)
 
@@ -44,7 +45,7 @@ Usage flow:
     2. Note the number of the player you want to promote.
     3. Run `rcon <port> please # <player number>`.
 3. That player is promoted to admin on that server only.
-4. The promoted player can then use `cmd <server command>` from their client console, and can also run privileged gameplay commands directly (`god`, `notarget`, `noclip`, `fly`, `give`, `kick`, `ban`). Note that `ban` in this case is only for that particular game server. To ban a player from the entire NexQuake instance, you must be a global admin and use `rcon session ban`.
+4. The promoted player can then use `cmd <server command>` from their client console, and can also run privileged gameplay commands directly (`god`, `notarget`, `noclip`, `fly`, `give`, `kick`, `ban`). Note that `ban` in this case is only for that particular game server. To ban a player from the entire NexQuake instance, you must be a global admin and use `rcon client ban`.
 
 ## HTTP API
 
@@ -52,14 +53,15 @@ Nexus exposes the same admin command surface over HTTP as JSON-RPC 2.0 at `POST 
 
 ### Endpoint and Authentication
 
-- **Endpoint**: `POST /rcon` on the Nexus HTTP listener (`HTTP_PORT`, default `1337`).
-- **Content-Type**: `application/json`.
-- **Body size limit**: 8 KiB.
+- **Endpoints**: `POST /rcon` (JSON-RPC) and `GET /rcon` (auto-closing landing page used by the WASM shell's `rcon login` popup) on the Nexus HTTP listener (`HTTP_PORT`, default `1337`).
+- **Content-Type**: `application/json` (POST). `GET /rcon` returns `text/html`.
+- **Body size limit**: 8 KiB (POST).
 - **Authentication** — one of:
   - `Authorization: Rcon <password>` — shared secret from `AUTH_RCON_PASSWORD`.
   - `Authorization: Bearer <jwt>` — OIDC JWT. See `AUTH_ISSUER`, `AUTH_AUDIENCE`, and `AUTH_JWT_HEADER` in [ENVIRONMENT.md](./ENVIRONMENT.md). If `AUTH_JWT_HEADER` is set, Nexus reads the JWT from that header instead of `Authorization` — useful behind a proxy that writes the token into a non-standard header.
-- **Pre-auth IP block**: requests from source IPs banned via `session.ban` are rejected with HTTP `403 Forbidden` before JSON parsing.
-- **Unauthorized**: a valid envelope with an unauthenticated or non-admin caller returns JSON-RPC error `-32000 unauthorized`.
+- **Pre-auth IP block**: requests from source IPs banned via `client.ban` are rejected with HTTP `403 Forbidden` before JSON parsing.
+- **Unauthorized**: a valid envelope with an unauthenticated or non-admin caller returns JSON-RPC error `-32000 unauthorized`. The error envelope's `data.hint` field carries an operator-facing one-liner describing how to authenticate against this Nexus, derived from what's actually configured (`set rcon_password <secret>`, `authenticate via OIDC`, both, or "admin auth not configured").
+- **GET /rcon**: returns a small auto-closing HTML page. Reaching it proves an upstream OIDC gate (e.g. Cloudflare Access) let the request through; Nexus then pushes a `rcon: authenticated.` console echo down the trunk control channel to every active session sharing the request's source IP, so the in-game shell sees the success without any popup-tracking machinery (which COOP-same-origin breaks). Gated behind the same admin check as POST so it can't be used as an unauthenticated amplification primitive.
 
 ### Request and Response Envelope
 
@@ -95,8 +97,8 @@ Error response:
 | `-32601` | MethodNotFound | Unknown method name.                                                |
 | `-32602` | InvalidParams  | Params failed validation.                                           |
 | `-32603` | Internal       | Unclassified server error.                                          |
-| `-32000` | Unauthorized   | Valid envelope but the caller is not an admin.                      |
-| `-32001` | NotFound       | Target does not exist (e.g. no session for the given NQIP).         |
+| `-32000` | Unauthorized   | Valid envelope but the caller is not an admin. `error.data.hint` carries auth instructions. |
+| `-32001` | NotFound       | Target does not exist (e.g. no client for the given NQIP).          |
 | `-32002` | Conflict       | Operation not allowed in the current state (e.g. banning an admin). |
 | `-32003` | Dispatch       | Downstream operation failed (server/instance manager, PTY, etc.).   |
 | `-32004` | Unavailable    | Required capability is not wired in this build.                     |
@@ -168,27 +170,27 @@ Forward a raw console command to a specific instance's PTY and capture the reply
 - Params: `{"port": <int>, "cmd": "<text>"}` — `port` is the listen port of a live instance (1..65535).
 - Result: `{"reply": "<captured console output>"}`.
 
-#### `session.list`
-List all active client sessions, enriched with the attached server's hostname.
+#### `client.list`
+List all active clients.
 
 - Params: _none_.
-- Result: `{"sessions": [SessionEntry, ...]}`.
+- Result: `{"clients": [Connection, ...]}`.
 
-`SessionEntry` fields: `nqip`, `source_ip`, `user_id`, `is_admin`, `server_port`, `server_host`.
+`Connection` fields: `nqip`, `source_ip`, `identity` (caller's OIDC identity if available), `transport`, `server_port`, `server_host`, `connected_at`.
 
-#### `session.info`
-Detail for one session, including the server-reported status slot when the session is connected to a server.
-
-- Params: `{"nqip": "<127.x.x.x>"}`.
-- Result: `{"session": SessionEntry, "status_slot": <int>, "status_line": "<text>", "status_addr": "<text>", "status_note": "<text>"}`. `status_*` fields are omitted when the session is not connected to a server.
-- Errors: `-32001 NotFound` if the NQIP has no active session.
-
-#### `session.ban`
-Disconnect all sessions matching an NQIP and block their source IPs until Nexus restart. Issues server-side `kick` by status slot first (best effort), then closes sockets and adds the source key to the allocator block list.
+#### `client.info`
+Detail for one active client.
 
 - Params: `{"nqip": "<127.x.x.x>"}`.
-- Result: `{"nqip": "<nqip>", "source_ips": ["<ip>", ...], "disconnected": <int>, "server_kicks": <int>, "warnings": ["<text>", ...]}`.
-- Errors: `-32001 NotFound` (no session matches); `-32002 Conflict` (target is an admin session).
+- Result: `{"client": Connection}`.
+- Errors: `-32001 NotFound` if the NQIP has no active client.
+
+#### `client.ban`
+Disconnect one active client matching an NQIP and block its source IP until Nexus restart. Nexus sends the client a console message, then closes the connection.
+
+- Params: `{"nqip": "<127.x.x.x>"}`.
+- Result: `{"nqip": "<nqip>", "source_ips": ["<ip>"], "disconnected": 1, "server_kicks": 0}`.
+- Errors: `-32001 NotFound` if the NQIP has no active client.
 
 ### Example Flows
 
@@ -221,30 +223,30 @@ curl -sH 'Authorization: Rcon s3cret' -H 'Content-Type: application/json' \
      http://nexus:1337/rcon
 ```
 
-Ban a session by NQIP:
+Ban a client by NQIP:
 
 ```bash
 curl -sH 'Authorization: Rcon s3cret' -H 'Content-Type: application/json' \
-     -d '{"jsonrpc":"2.0","method":"session.ban","params":{"nqip":"127.100.10.1"},"id":4}' \
+     -d '{"jsonrpc":"2.0","method":"client.ban","params":{"nqip":"127.100.10.1"},"id":4}' \
      http://nexus:1337/rcon
 ```
 
 ### Audit Log
 
-Each dispatched RPC emits one or more audit lines to the Nexus log. The format is:
+Each authorized dispatch and each unauthorized valid RPC request emits one or more audit lines to the Nexus log. The format is:
 
 ```
 admin-rcon <direction> actor="<id>" method=<method> <direction>=<payload>
 ```
 
-- `direction` is `request` (admitted), `result` (handler succeeded), or `error` (parse failure, missing method, or handler error).
-- `actor` is the caller's OIDC identity if available, otherwise their source IP.
+- `direction` is `request` (admitted), `result` (handler succeeded), or `error` (authorization failure, missing method, invalid params, or handler error).
+- `actor` is the caller's OIDC identity if available, otherwise their source IP. If neither is available, Nexus logs `admin` for an authorized request and `anonymous` for an unauthorized caller.
 - `<payload>` carries the params (on `request`), result (on `result`), or error message (on `error`), with CR/LF collapsed to spaces and truncated at 512 characters.
 
 Example:
 
 ```
-admin-rcon request actor="alice@example.com" method=server.stop request={"Target":"1","GraceSeconds":5}
+admin-rcon request actor="alice@example.com" method=server.stop request={"target":"1","grace_seconds":5}
 admin-rcon result actor="alice@example.com" method=server.stop result={"ok":true}
-admin-rcon error actor="198.51.100.11" method=session.ban error="cannot ban admin sessions"
+admin-rcon error actor="198.51.100.11" method=client.ban error="nqip is required"
 ```

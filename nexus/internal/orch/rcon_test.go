@@ -9,16 +9,36 @@ import (
 	"time"
 )
 
-func TestDispatchServerCmd_CapturesConsoleOutput(t *testing.T) {
-	oldMaxWait := serverCommandCaptureMaxWait
-	oldIdleWait := serverCommandCaptureIdleWait
-	t.Cleanup(func() {
-		serverCommandCaptureMaxWait = oldMaxWait
-		serverCommandCaptureIdleWait = oldIdleWait
-	})
-	serverCommandCaptureMaxWait = 120 * time.Millisecond
-	serverCommandCaptureIdleWait = 10 * time.Millisecond
+// fakeServerWriteSentinels reads the framed command Nexus wrote to the PTY,
+// extracts the BEGIN/END markers, and replays them around the supplied response
+// lines on the console's publish path. Tests use this to stand in for the
+// dedicated server's output without depending on real timing.
+//
+// Safe to call from a test goroutine — uses t.Errorf rather than t.Fatalf to
+// avoid go vet's non-test-goroutine warning.
+func fakeServerWriteSentinels(t *testing.T, ptyRead *os.File, console *serverConsole, responseLines ...string) string {
+	t.Helper()
+	buf := make([]byte, 512)
+	n, err := ptyRead.Read(buf)
+	if err != nil {
+		t.Errorf("read pty: %v", err)
+		return ""
+	}
+	written := string(buf[:n])
+	begin, end := extractConsoleSentinelsFromWrite(written)
+	if begin == "" || end == "" {
+		t.Errorf("expected sentinel markers in framed command, got %q", written)
+		return written
+	}
+	console.publishLine(begin + "\n")
+	for _, line := range responseLines {
+		console.publishLine(line)
+	}
+	console.publishLine(end + "\n")
+	return written
+}
 
+func TestDispatchServerCmd_CapturesConsoleOutput(t *testing.T) {
 	process, err := os.FindProcess(os.Getpid())
 	if err != nil {
 		t.Fatalf("FindProcess(self): %v", err)
@@ -30,19 +50,14 @@ func TestDispatchServerCmd_CapturesConsoleOutput(t *testing.T) {
 	t.Cleanup(func() { _ = ptyRead.Close(); _ = ptyWrite.Close() })
 
 	srv := &managedServer{Cmd: &exec.Cmd{Process: process}, Console: newServerConsole(ptyWrite)}
-	go func() {
-		buf := make([]byte, 128)
-		_, _ = ptyRead.Read(buf)
-		srv.Console.publishLine("sv_maxspeed is \"320\"\n")
-	}()
+	go fakeServerWriteSentinels(t, ptyRead, srv.Console, "sv_maxspeed is \"320\"\n")
 
-	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 	rec := mgr.registerBareInstance(serverLaunch{Line: 0})
 	mgr.updatePort(rec, 26000)
 	rec.Running = srv
-	globalMgr := mgr
 
-	reply, err := globalMgr.DispatchInstanceCmd(26000, "sv_maxspeed", "")
+	reply, err := mgr.DispatchInstanceCmd(26000, "sv_maxspeed", "")
 	if err != nil {
 		t.Fatalf("DispatchInstanceCmd error = %v", err)
 	}
@@ -52,18 +67,12 @@ func TestDispatchServerCmd_CapturesConsoleOutput(t *testing.T) {
 	if strings.Contains(reply, "Command executed successfully.") {
 		t.Fatalf("expected real output, got fallback reply %q", reply)
 	}
+	if strings.Contains(reply, consoleSentinelPrefix) {
+		t.Fatalf("expected sentinel markers stripped from reply, got %q", reply)
+	}
 }
 
 func TestDispatchServerCmd_FiltersNoisyConsoleOutput(t *testing.T) {
-	oldMaxWait := serverCommandCaptureMaxWait
-	oldIdleWait := serverCommandCaptureIdleWait
-	t.Cleanup(func() {
-		serverCommandCaptureMaxWait = oldMaxWait
-		serverCommandCaptureIdleWait = oldIdleWait
-	})
-	serverCommandCaptureMaxWait = 120 * time.Millisecond
-	serverCommandCaptureIdleWait = 10 * time.Millisecond
-
 	process, err := os.FindProcess(os.Getpid())
 	if err != nil {
 		t.Fatalf("FindProcess(self): %v", err)
@@ -75,14 +84,12 @@ func TestDispatchServerCmd_FiltersNoisyConsoleOutput(t *testing.T) {
 	t.Cleanup(func() { _ = ptyRead.Close(); _ = ptyWrite.Close() })
 
 	srv := &managedServer{Cmd: &exec.Cmd{Process: process}, Console: newServerConsole(ptyWrite)}
-	go func() {
-		buf := make([]byte, 128)
-		_, _ = ptyRead.Read(buf)
-		srv.Console.publishLine("FindFile: maps/e1m1.bsp\n")
-		srv.Console.publishLine("sv_maxspeed is \"320\"\n")
-	}()
+	go fakeServerWriteSentinels(t, ptyRead, srv.Console,
+		"FindFile: maps/e1m1.bsp\n",
+		"sv_maxspeed is \"320\"\n",
+	)
 
-	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 	rec := mgr.registerBareInstance(serverLaunch{Line: 0})
 	mgr.updatePort(rec, 26000)
 	rec.Running = srv
@@ -99,24 +106,15 @@ func TestDispatchServerCmd_FiltersNoisyConsoleOutput(t *testing.T) {
 	}
 }
 
-func TestAppendServerCommandAuditEcho_TrimsTrailingSemicolon(t *testing.T) {
-	got := appendServerCommandAuditEcho("status;  ", "alice@example.com")
-	want := `echo "alice@example.com: status"; wait; wait; wait; status`
+func TestFormatServerCommandAuditEcho_TrimsTrailingSemicolon(t *testing.T) {
+	got := formatServerCommandAuditEcho("status;  ", "alice@example.com")
+	want := `echo "alice@example.com: status"`
 	if got != want {
-		t.Fatalf("appendServerCommandAuditEcho()=%q want=%q", got, want)
+		t.Fatalf("formatServerCommandAuditEcho()=%q want=%q", got, want)
 	}
 }
 
-func TestDispatchServerCmd_AppendsAuditEcho(t *testing.T) {
-	oldMaxWait := serverCommandCaptureMaxWait
-	oldIdleWait := serverCommandCaptureIdleWait
-	t.Cleanup(func() {
-		serverCommandCaptureMaxWait = oldMaxWait
-		serverCommandCaptureIdleWait = oldIdleWait
-	})
-	serverCommandCaptureMaxWait = 120 * time.Millisecond
-	serverCommandCaptureIdleWait = 10 * time.Millisecond
-
+func TestDispatchServerCmd_FramesCommandWithAuditPreambleAndSentinels(t *testing.T) {
 	process, err := os.FindProcess(os.Getpid())
 	if err != nil {
 		t.Fatalf("FindProcess(self): %v", err)
@@ -130,13 +128,10 @@ func TestDispatchServerCmd_AppendsAuditEcho(t *testing.T) {
 	srv := &managedServer{Cmd: &exec.Cmd{Process: process}, Console: newServerConsole(ptyWrite)}
 	wroteLine := make(chan string, 1)
 	go func() {
-		buf := make([]byte, 256)
-		n, _ := ptyRead.Read(buf)
-		wroteLine <- string(buf[:n])
-		srv.Console.publishLine("host: ok\n")
+		wroteLine <- fakeServerWriteSentinels(t, ptyRead, srv.Console, "host: ok\n")
 	}()
 
-	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 	rec := mgr.registerBareInstance(serverLaunch{Line: 0})
 	mgr.updatePort(rec, 26000)
 	rec.Running = srv
@@ -151,25 +146,24 @@ func TestDispatchServerCmd_AppendsAuditEcho(t *testing.T) {
 
 	select {
 	case got := <-wroteLine:
-		want := "echo \"alice@example.com: status\"; wait; wait; wait; status;\n"
-		if got != want {
-			t.Fatalf("expected audited pty command %q, got %q", want, got)
+		if !strings.Contains(got, `echo "alice@example.com: status";`) {
+			t.Fatalf("expected audit preamble in framed command, got %q", got)
 		}
-	case <-time.After(200 * time.Millisecond):
+		if !strings.Contains(got, "echo "+consoleSentinelPrefix+"B_") {
+			t.Fatalf("expected begin sentinel echo in framed command, got %q", got)
+		}
+		if !strings.Contains(got, "echo "+consoleSentinelPrefix+"E_") {
+			t.Fatalf("expected end sentinel echo in framed command, got %q", got)
+		}
+		if !strings.Contains(got, "; status;") {
+			t.Fatalf("expected user command preserved between sentinels, got %q", got)
+		}
+	case <-time.After(500 * time.Millisecond):
 		t.Fatalf("expected command write to pty")
 	}
 }
 
-func TestDispatchServerCmd_SuppressesEchoAndCapturesDelayedOutput(t *testing.T) {
-	oldMaxWait := serverCommandCaptureMaxWait
-	oldIdleWait := serverCommandCaptureIdleWait
-	t.Cleanup(func() {
-		serverCommandCaptureMaxWait = oldMaxWait
-		serverCommandCaptureIdleWait = oldIdleWait
-	})
-	serverCommandCaptureMaxWait = 300 * time.Millisecond
-	serverCommandCaptureIdleWait = 50 * time.Millisecond
-
+func TestDispatchServerCmd_SuppressesPtyEchoFromReply(t *testing.T) {
 	process, err := os.FindProcess(os.Getpid())
 	if err != nil {
 		t.Fatalf("FindProcess(self): %v", err)
@@ -182,14 +176,19 @@ func TestDispatchServerCmd_SuppressesEchoAndCapturesDelayedOutput(t *testing.T) 
 
 	srv := &managedServer{Cmd: &exec.Cmd{Process: process}, Console: newServerConsole(ptyWrite)}
 	go func() {
-		buf := make([]byte, 128)
+		buf := make([]byte, 512)
 		n, _ := ptyRead.Read(buf)
-		srv.Console.publishLine(string(buf[:n]))
-		time.Sleep(120 * time.Millisecond)
+		written := string(buf[:n])
+		// Replay the verbatim PTY echo of the framed command — the
+		// suppressed-relay-echo map should swallow it before subscribers see it.
+		srv.Console.publishLine(written)
+		begin, end := extractConsoleSentinelsFromWrite(written)
+		srv.Console.publishLine(begin + "\n")
 		srv.Console.publishLine("host: delayed-response\n")
+		srv.Console.publishLine(end + "\n")
 	}()
 
-	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 	rec := mgr.registerBareInstance(serverLaunch{Line: 0})
 	mgr.updatePort(rec, 26000)
 	rec.Running = srv
@@ -198,54 +197,11 @@ func TestDispatchServerCmd_SuppressesEchoAndCapturesDelayedOutput(t *testing.T) 
 	if err != nil {
 		t.Fatalf("DispatchInstanceCmd error = %v", err)
 	}
-	if strings.Contains(reply, "status;") {
-		t.Fatalf("expected echoed command to be suppressed, got %q", reply)
+	if strings.Contains(reply, "echo "+consoleSentinelPrefix) {
+		t.Fatalf("expected framed-command echo suppressed from reply, got %q", reply)
 	}
 	if !strings.Contains(reply, "host: delayed-response") {
-		t.Fatalf("expected delayed command output to be captured, got %q", reply)
-	}
-}
-
-func TestDispatchServerCmd_AuditEchoCapturesOutputAfterWaitGap(t *testing.T) {
-	oldMaxWait := serverCommandCaptureMaxWait
-	oldIdleWait := serverCommandCaptureIdleWait
-	t.Cleanup(func() {
-		serverCommandCaptureMaxWait = oldMaxWait
-		serverCommandCaptureIdleWait = oldIdleWait
-	})
-	serverCommandCaptureMaxWait = 600 * time.Millisecond
-	serverCommandCaptureIdleWait = 80 * time.Millisecond
-
-	process, err := os.FindProcess(os.Getpid())
-	if err != nil {
-		t.Fatalf("FindProcess(self): %v", err)
-	}
-	ptyRead, ptyWrite, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	t.Cleanup(func() { _ = ptyRead.Close(); _ = ptyWrite.Close() })
-
-	srv := &managedServer{Cmd: &exec.Cmd{Process: process}, Console: newServerConsole(ptyWrite)}
-	go func() {
-		buf := make([]byte, 256)
-		_, _ = ptyRead.Read(buf)
-		srv.Console.publishLine("alice@example.com: timelimit\n")
-		time.Sleep(220 * time.Millisecond)
-		srv.Console.publishLine(`"timelimit" is "20"` + "\n")
-	}()
-
-	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
-	rec := mgr.registerBareInstance(serverLaunch{Line: 0})
-	mgr.updatePort(rec, 26000)
-	rec.Running = srv
-
-	reply, err := mgr.DispatchInstanceCmd(26000, "timelimit", "alice@example.com")
-	if err != nil {
-		t.Fatalf("DispatchInstanceCmd error = %v", err)
-	}
-	if !strings.Contains(reply, `"timelimit" is "20"`) {
-		t.Fatalf("expected delayed cvar reply to be captured, got %q", reply)
+		t.Fatalf("expected command output to be captured, got %q", reply)
 	}
 }
 
@@ -259,7 +215,7 @@ func TestDispatchServerCmd_TailDefaultsToLastTenLines(t *testing.T) {
 		srv.Console.publishLine(fmt.Sprintf("line %02d\n", i))
 	}
 
-	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 	rec := mgr.registerBareInstance(serverLaunch{Line: 0})
 	mgr.updatePort(rec, 26000)
 	rec.Running = srv
@@ -288,7 +244,7 @@ func TestDispatchServerCmd_TailUsesFilteredOutput(t *testing.T) {
 	srv.Console.publishLine("FindFile: can't find progs.dat\n")
 	srv.Console.publishLine("line b\n")
 
-	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 	rec := mgr.registerBareInstance(serverLaunch{Line: 0})
 	mgr.updatePort(rec, 26000)
 	rec.Running = srv
@@ -311,7 +267,7 @@ func TestDispatchServerCmd_TailUsageError(t *testing.T) {
 		t.Fatalf("FindProcess(self): %v", err)
 	}
 	srv := &managedServer{Cmd: &exec.Cmd{Process: process}, Console: newServerConsole(nil)}
-	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 	rec := mgr.registerBareInstance(serverLaunch{Line: 0})
 	mgr.updatePort(rec, 26000)
 	rec.Running = srv
@@ -326,15 +282,6 @@ func TestDispatchServerCmd_TailUsageError(t *testing.T) {
 }
 
 func TestDispatchServerCmd_NoOutputUsesSuccessFallback(t *testing.T) {
-	oldMaxWait := serverCommandCaptureMaxWait
-	oldIdleWait := serverCommandCaptureIdleWait
-	t.Cleanup(func() {
-		serverCommandCaptureMaxWait = oldMaxWait
-		serverCommandCaptureIdleWait = oldIdleWait
-	})
-	serverCommandCaptureMaxWait = 20 * time.Millisecond
-	serverCommandCaptureIdleWait = 5 * time.Millisecond
-
 	process, err := os.FindProcess(os.Getpid())
 	if err != nil {
 		t.Fatalf("FindProcess(self): %v", err)
@@ -345,10 +292,13 @@ func TestDispatchServerCmd_NoOutputUsesSuccessFallback(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = ptyRead.Close(); _ = ptyWrite.Close() })
 
-	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	srv := &managedServer{Cmd: &exec.Cmd{Process: process}, Console: newServerConsole(ptyWrite)}
+	go fakeServerWriteSentinels(t, ptyRead, srv.Console)
+
+	mgr := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 	rec := mgr.registerBareInstance(serverLaunch{Line: 0})
 	mgr.updatePort(rec, 26000)
-	rec.Running = &managedServer{Cmd: &exec.Cmd{Process: process}, Console: newServerConsole(ptyWrite)}
+	rec.Running = srv
 
 	reply, err := mgr.DispatchInstanceCmd(26000, "status", "")
 	if err != nil {

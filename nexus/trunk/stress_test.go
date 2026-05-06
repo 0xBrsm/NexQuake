@@ -23,6 +23,45 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// stressUpgrader is a minimal in-test WS upgrader; the real one lives in
+// trunk/websocket but importing it from here would create a cycle.
+var stressUpgrader = websocket.Upgrader{
+	HandshakeTimeout:  10 * time.Second,
+	ReadBufferSize:    4096,
+	WriteBufferSize:   4096,
+	Subprotocols:      []string{"binary"},
+	CheckOrigin:       func(r *http.Request) bool { return true },
+	EnableCompression: false,
+}
+
+// stressWSAdapter is a minimal in-test Transport adapter for gorilla/websocket;
+// mirrors trunk/websocket internally for the same cycle reason.
+type stressWSAdapter struct{ conn *websocket.Conn }
+
+func (a *stressWSAdapter) Name() string { return "WebSocket" }
+func (a *stressWSAdapter) ReadFrame() ([]byte, error) {
+	for {
+		mt, data, err := a.conn.ReadMessage()
+		if err != nil {
+			return nil, err
+		}
+		if mt != websocket.BinaryMessage {
+			continue
+		}
+		return data, nil
+	}
+}
+func (a *stressWSAdapter) WriteFrame(data []byte) error {
+	_ = a.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	err := a.conn.WriteMessage(websocket.BinaryMessage, data)
+	_ = a.conn.SetWriteDeadline(time.Time{})
+	return err
+}
+func (a *stressWSAdapter) Ping() error {
+	return a.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
+}
+func (a *stressWSAdapter) Close() error { return a.conn.Close() }
+
 func TestRelayStressSimultaneousClients(t *testing.T) {
 	tiers := []struct {
 		name    string
@@ -36,9 +75,9 @@ func TestRelayStressSimultaneousClients(t *testing.T) {
 	for _, tier := range tiers {
 		tier := tier
 		t.Run(tier.name, func(t *testing.T) {
-			alloc := NewVirtualIPAllocator(net.ParseIP(DefaultServerIP).To4())
+			srv := New()
 
-			relays, err := spawnStressRelays(tier.clients, alloc)
+			relays, err := spawnStressRelays(tier.clients, srv)
 			if err != nil {
 				t.Fatalf("spawnStressRelays(%d): %v", tier.clients, err)
 			}
@@ -50,25 +89,22 @@ func TestRelayStressSimultaneousClients(t *testing.T) {
 				t.Fatalf("relay count = %d, want %d", got, tier.clients)
 			}
 
-			seenVirtualIPs := make(map[string]struct{}, tier.clients)
+			seenVirtualIPs := make(map[[4]byte]struct{}, tier.clients)
 			for _, r := range relays {
-				vip := r.VirtualIP()
-				if vip == "" {
+				vip := r.virtualIP
+				if vip[0] == 0 {
 					t.Fatalf("relay has empty virtual IP")
 				}
 				if _, dup := seenVirtualIPs[vip]; dup {
-					t.Fatalf("duplicate virtual IP: %s", vip)
+					t.Fatalf("duplicate virtual IP: %v", vip)
 				}
 				seenVirtualIPs[vip] = struct{}{}
-				if port := r.ActiveServerPort(); port < 26000 || port > 26007 {
-					t.Fatalf("active server port = %d, want range [26000,26007]", port)
-				}
 			}
 
 			closeRelaysConcurrently(relays)
 			for _, r := range relays {
-				if ip := r.VirtualIPBytes(); ip[0] != 0 {
-					t.Fatalf("relay still holds virtual IP %v after Close", ip)
+				if r.virtualIP[0] != 0 {
+					t.Fatalf("relay still holds virtual IP %v after Close", r.virtualIP)
 				}
 			}
 		})
@@ -104,8 +140,8 @@ type udpProbeClientMetrics struct {
 	latencyNanos []int64
 }
 
-func spawnStressRelays(clientCount int, alloc *VirtualIPAllocator) ([]*Conn, error) {
-	relays := make([]*Conn, clientCount)
+func spawnStressRelays(clientCount int, srv *Trunk) ([]*Session, error) {
+	relays := make([]*Session, clientCount)
 	if clientCount == 0 {
 		return relays, nil
 	}
@@ -126,23 +162,20 @@ func spawnStressRelays(clientCount int, alloc *VirtualIPAllocator) ([]*Conn, err
 			for idx := range jobs {
 				sourceKey := fmt.Sprintf("stress-client:%d", idx)
 
-				clientIP, err := alloc.alloc(sourceKey)
+				virtualIP, err := srv.allocator.alloc(sourceKey)
 				if err != nil {
 					errCh <- fmt.Errorf("alloc %d: %w", idx, err)
 					continue
 				}
 
 				ctx, cancel := context.WithCancel(context.Background())
-				relay := &Conn{
-					clientIP:  clientIP,
+				relay := &Session{
+					virtualIP: virtualIP,
 					sourceKey: sourceKey,
-					alloc:     alloc,
-					warnf:     noopLogf,
-					debugf:    noopLogf,
+					trunk:     srv,
 					ctx:       ctx,
 					cancel:    cancel,
 				}
-				relay.noteServerRoutePort(26000 + (idx % 8))
 				relays[idx] = relay
 			}
 		}()
@@ -165,12 +198,12 @@ func spawnStressRelays(clientCount int, alloc *VirtualIPAllocator) ([]*Conn, err
 	return relays, nil
 }
 
-func closeRelaysConcurrently(relays []*Conn) {
+func closeRelaysConcurrently(relays []*Session) {
 	if len(relays) == 0 {
 		return
 	}
 
-	jobs := make(chan *Conn, len(relays))
+	jobs := make(chan *Session, len(relays))
 	workers := len(relays)
 	if workers > 256 {
 		workers = 256
@@ -183,7 +216,7 @@ func closeRelaysConcurrently(relays []*Conn) {
 			defer wg.Done()
 			for relay := range jobs {
 				if relay != nil {
-					relay.Close()
+					relay.End()
 				}
 			}
 		}()
@@ -284,14 +317,10 @@ func runFullStackStressTier(t *testing.T, clientCount int) {
 		t.Fatalf("parse NQNET_STRESS_FULLSTACK_UDP_TIMEOUT: %v", err)
 	}
 
-	serverIP := net.ParseIP(DefaultServerIP).To4()
-	if serverIP == nil {
-		t.Fatalf("parse server ip: %q", DefaultServerIP)
-	}
+	serverIP := net.ParseIP("127.0.0.1").To4()
+	srv := New(WithServerIP(serverIP))
 
-	alloc := NewVirtualIPAllocator(serverIP)
-
-	echoConn, err := net.ListenUDP("udp4", serverUDPAddr(serverIP, 0))
+	echoConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: serverIP, Port: 0})
 	if err != nil {
 		t.Fatalf("listen udp echo: %v", err)
 	}
@@ -331,7 +360,7 @@ func runFullStackStressTier(t *testing.T, clientCount int) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := Upgrader.Upgrade(w, r, nil)
+		conn, err := stressUpgrader.Upgrade(w, r, nil)
 		if err != nil {
 			serverErrMu.Lock()
 			serverErrs = append(serverErrs, fmt.Errorf("upgrade: %w", err))
@@ -345,7 +374,7 @@ func runFullStackStressTier(t *testing.T, clientCount int) {
 		}
 		sourceKey := "stress-fullstack:" + clientID
 
-		relay, err := NewConn(WebSocket(conn), alloc, sourceKey)
+		relay, err := srv.NewSession(&stressWSAdapter{conn: conn}, sourceKey)
 		if err != nil {
 			serverErrMu.Lock()
 			serverErrs = append(serverErrs, fmt.Errorf("new relay: %w", err))
@@ -412,24 +441,8 @@ func runFullStackStressTier(t *testing.T, clientCount int) {
 					continue
 				}
 
-				if err := c.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
-					_ = c.Close()
-					connectErr = fmt.Errorf("set read deadline[%d] attempt %d: %w", idx, attempt, err)
-					time.Sleep(time.Duration(attempt*25) * time.Millisecond)
-					continue
-				}
-				if err := expectWSIdentityFrame(c, idx); err != nil {
-					_ = c.Close()
-					connectErr = fmt.Errorf("identity[%d] attempt %d: %w", idx, attempt, err)
-					time.Sleep(time.Duration(attempt*25) * time.Millisecond)
-					continue
-				}
-				if err := c.SetReadDeadline(time.Time{}); err != nil {
-					_ = c.Close()
-					connectErr = fmt.Errorf("clear read deadline[%d] attempt %d: %w", idx, attempt, err)
-					time.Sleep(time.Duration(attempt*25) * time.Millisecond)
-					continue
-				}
+				// trunk no longer sends an unsolicited identity frame; the
+				// session is ready as soon as the WS handshake completes.
 
 				conn = c
 				connectErr = nil
@@ -654,28 +667,6 @@ func runUDPEchoLoop(conn *net.UDPConn, stop <-chan struct{}) {
 		}
 		_, _ = conn.WriteToUDP(buffer[:n], remote)
 	}
-}
-
-func expectWSIdentityFrame(conn *websocket.Conn, idx int) error {
-	messageType, frame, err := conn.ReadMessage()
-	if err != nil {
-		return fmt.Errorf("read identity[%d]: %w", idx, err)
-	}
-	if messageType != websocket.BinaryMessage {
-		return fmt.Errorf("identity message type[%d] = %d, want binary", idx, messageType)
-	}
-
-	minLen := 2 + len(defaultIdentityMagic) + 4
-	if len(frame) < minLen {
-		return fmt.Errorf("identity frame too short[%d]: %d < %d", idx, len(frame), minLen)
-	}
-	if frame[0] != 0 || frame[1] != 0 {
-		return fmt.Errorf("identity frame port[%d] = [%d %d], want [0 0]", idx, frame[0], frame[1])
-	}
-	if !bytes.Equal(frame[2:2+len(defaultIdentityMagic)], []byte(defaultIdentityMagic)) {
-		return fmt.Errorf("identity frame magic mismatch[%d]", idx)
-	}
-	return nil
 }
 
 func startUDPEchoResponseReader(conn *websocket.Conn, idx int, echoPort int) (<-chan []byte, <-chan error) {

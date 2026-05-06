@@ -26,7 +26,7 @@ The client patches and overlays are a mix of required and additive features. The
 
 | File | Purpose |
 |------|---------|
-| `net_wasm.c/h` | Browser landriver shell. Implements Quake's `net_landriver` interface, owns socket lifecycle, and dispatches over a pluggable substrate (WebSocket today). |
+| `net_wasm.c/h` | Browser transport manager. Owns the ordered transport registry, shared lifecycle, handshake waits, fallback, logging hooks, and raw byte send/receive dispatch. |
 | `net_nqchan.c/h` | NexQuake channel/protocol adapter: port-header framing, CTL/DATA demux, ring buffers, virtual 127.x.y.z addressing, and route/server-id tracking. |
 | `net_ws.c` | WebSocket substrate. Owns the Emscripten WebSocket lifecycle; pushes received bytes into `WASM_OnPacket`. |
 | `net_bsd.c` | Driver table registering only the NexQuake landriver. |
@@ -48,9 +48,12 @@ The client patches and overlays are a mix of required and additive features. The
 
 **Quality-of-life addition.** Stock WinQuake has a hidden `cmd` admin feature, but this only forwards commands to the currently connected server. NexQuake adds a browser-safe `rcon` command that targets a specific instance by listen port, the connected server when already connected, or Nexus itself for system-wide actions. In-game `rcon` posts JSON-RPC envelopes to Nexus at `/rcon`; external tools can hit the same endpoint directly. See [Admin Guide](../docs/ADMIN.md) for in-game forms and the full HTTP API reference.
 
+The control channel also flows the other way: Nexus can push admin-driven console commands at the client by sending an `NQ_RCON_MAGIC` ("RCON") + UTF-8 + `0x00` payload on port 0. The handler in `net_nqchan.c` strips the prefix and feeds the remainder into `Cbuf_AddText` as if the user had typed it. This is how `client.ban` delivers the kick (`quit`) and how `rcon login` surfaces the post-OIDC `echo "rcon: authenticated."` back into the in-game console.
+
 | File | Purpose |
 |------|---------|
 | `cmd_rcon.c` | `rcon` console command: sends commands over Nexus control channel with host/port targeting. |
+| `shell/55-rcon.js` | Parses `rcon` text, builds JSON-RPC envelopes, formats results. Owns the WASM-only `rcon login` command (opens an OIDC popup at `GET /rcon`). |
 
 ### 5. Nexus Server List
 

@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * Transport-level primitives only:
- *   - Pluggable backend vtable (wasm_backend_t) for browser substrates
+ *   - Pluggable transport vtable (wasm_transport_t) for browser substrates
+ *   - Ordered transport registry in net_wasm.c
  *   - Logging bridge to the JS console
  *   - Opaque send/receive of raw byte buffers
  *
@@ -23,18 +24,19 @@ enum { WASM_LOG_INFO = 0, WASM_LOG_WARN = 1, WASM_LOG_ERROR = 2 };
 
 void WASM_Log (int level, const char *fmt, ...);
 
-// Lifecycle hooks — each backend calls these on its underlying event or
+// Lifecycle hooks — each transport calls these on its underlying event or
 // polled state transition. `transport` is the display name (matches
-// wasm_backend_t.name). Shared behavior (logging format, open-hook fire,
-// NET_InvalidateHostCache) lives here so every backend stays identical.
+// wasm_transport_t.name). Shared behavior (logging format, open-hook fire,
+// NET_InvalidateHostCache) lives here so every transport stays identical.
 void WASM_OnOpen  (const char *transport);
 void WASM_OnError (const char *transport, const char *reason);
 void WASM_OnClose (const char *transport, qboolean expected);
 
-// Backend interface. Each substrate is a bag of function pointers with these
+// Transport interface. Each substrate is a bag of function pointers with these
 // exact semantics: start() is non-blocking, send_raw() never sleeps. All
 // waiting happens one layer up in WASM_SendPacket. Adding a new substrate =
-// filling out this struct and exporting a wasm_<name>_backend instance.
+// filling out this struct, exporting a wasm_<name>_transport instance, and
+// adding it to the registry in net_wasm.c.
 typedef struct {
 	qboolean (*is_available) (void); // runtime capability check
 	qboolean (*is_ready) (void);     // connected and able to send
@@ -45,9 +47,7 @@ typedef struct {
 	void (*tick) (void);             // optional per-poll hook (e.g. drain JS queue); may be NULL
 	const char *(*last_error) (void);
 	const char *name;
-} wasm_backend_t;
-
-extern const wasm_backend_t wasm_ws_backend;
+} wasm_transport_t;
 
 qboolean    WASM_EnsureTransportOpen (void);
 void        WASM_CloseTransport (void);

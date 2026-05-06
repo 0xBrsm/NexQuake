@@ -58,31 +58,59 @@ void WASM_OnClose (const char *transport, qboolean expected)
 }
 
 //----------------------------------------------------------------------------
-// Transport dispatch. A single backend drives send/receive here; the vtable
-// shape (wasm_backend_t) is the plug point for additional backends layered on
-// top later. Handshake waits live in WASM_SendPacket so Asyncify unwinds
-// during emscripten_sleep never race with emscripten_set_main_loop.
+// Transport registry. Ordered by preference.
 
-static const wasm_backend_t *active = &wasm_ws_backend;
+extern const wasm_transport_t wasm_ws_transport;
+
+static const wasm_transport_t * const transports[] = {
+	&wasm_ws_transport,
+};
+
+static const int transport_count = sizeof(transports) / sizeof(transports[0]);
+
+//----------------------------------------------------------------------------
+// Transport selection. The ordered registry defines transport preference; this
+// layer only walks that list. On disconnect+reconnect, keep the previously-
+// selected transport when it still starts cleanly. Handshake waits live in
+// WASM_SendPacket so Asyncify unwinds during emscripten_sleep never race with
+// emscripten_set_main_loop.
+
+static const wasm_transport_t *active = NULL;
+static int active_index = -1;
 static qboolean started = false;
+
+static qboolean start_transport_from (int first)
+{
+	int i;
+
+	for (i = first; i < transport_count; i++)
+	{
+		const wasm_transport_t *transport = transports[i];
+		if (!transport->is_available ()) continue;
+		active = transport;
+		active_index = i;
+		if (active->start () == 0) { started = true; return true; }
+	}
+	return false;
+}
 
 qboolean WASM_EnsureTransportOpen (void)
 {
-	if (active->tick) active->tick ();
-	if (active->is_ready ()) return true;
+	if (active && active->tick) active->tick ();
+	if (active && active->is_ready ()) return true;
 
 	if (!started)
 	{
-		if (active->start () == 0) { started = true; return true; }
-		return false;
+		return start_transport_from (active_index < 0 ? 0 : active_index);
 	}
 
-	// Started but the backend died — try restarting once.
+	// Started but current transport died. Fall forward through the registry; if
+	// there is no later transport, retry the current one once.
 	if (active->is_closed ())
 	{
 		started = false;
-		if (active->start () == 0) { started = true; return true; }
-		return false;
+		if (start_transport_from (active_index + 1)) return true;
+		return start_transport_from (active_index);
 	}
 
 	// Started, handshaking — caller's Send path will wait for ready.
@@ -91,29 +119,37 @@ qboolean WASM_EnsureTransportOpen (void)
 
 void WASM_CloseTransport (void)
 {
-	active->close ();
+	if (active) active->close ();
 	started = false;
+	// Keep `active` — reopen uses the same transport.
 }
 
 int WASM_SendPacket (const byte *packet, int len)
 {
-	int waited;
+	int attempt, attempts, waited;
 
 	if (len < 0 || len > WASM_MAX_FRAME_SIZE) return -1;
 
-	if (!WASM_EnsureTransportOpen ()) return -1;
-	if (active->is_ready ()) return active->send_raw (packet, len);
+	// One pass per registered transport gives the manager room to fall forward
+	// if the current transport dies mid-handshake.
+	attempts = transport_count > 0 ? transport_count : 1;
+	for (attempt = 0; attempt < attempts; attempt++)
+	{
+		if (!WASM_EnsureTransportOpen ()) return -1;
+		if (active->is_ready ()) return active->send_raw (packet, len);
 
-	for (waited = 0;
-		!active->is_ready () && !active->is_closed () && waited < 2000;
-		waited += 10)
-		emscripten_sleep (10);
+		for (waited = 0;
+			!active->is_ready () && !active->is_closed () && waited < 2000;
+			waited += 10)
+			emscripten_sleep (10);
 
-	if (active->is_ready ()) return active->send_raw (packet, len);
+		if (active->is_ready ()) return active->send_raw (packet, len);
+		// Closed while waiting; next loop iteration advances the transport.
+	}
 	return -1;
 }
 
 const char *WASM_LastSendError (void)
 {
-	return active->last_error ();
+	return active ? active->last_error () : "no transport";
 }

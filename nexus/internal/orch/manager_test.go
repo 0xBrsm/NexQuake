@@ -37,7 +37,7 @@ func TestParsePortConsoleLine(t *testing.T) {
 }
 
 func TestUpdatePort_AssignsResolvedPortBucket(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 
 	rec := m.registerBareInstance(serverLaunch{})
 
@@ -59,7 +59,7 @@ func TestUpdatePort_AssignsResolvedPortBucket(t *testing.T) {
 }
 
 func TestUpdateSearchPath_FinalizesSpecWhenPortKnown(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 
 	rec := &instance{
 		Launch:            serverLaunch{Line: 3},
@@ -85,7 +85,7 @@ func TestUpdateSearchPath_FinalizesSpecWhenPortKnown(t *testing.T) {
 }
 
 func TestUpdateSearchPath_DedupesConsolePathEntries(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 
 	rec := &instance{
 		Launch:            serverLaunch{Line: 7},
@@ -105,7 +105,7 @@ func TestUpdateSearchPath_DedupesConsolePathEntries(t *testing.T) {
 }
 
 func TestUpdateSearchPath_IgnoresPathFragmentsAndPakNames(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 
 	rec := &instance{
 		Launch:            serverLaunch{Line: 8},
@@ -125,7 +125,7 @@ func TestUpdateSearchPath_IgnoresPathFragmentsAndPakNames(t *testing.T) {
 }
 
 func TestLaunchServer_RegistersNewEntry(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 	m.runtimeBasedir = t.TempDir()
 
 	if err := m.LaunchServer("definitely-not-a-real-binary", []string{"-dedicated"}); err == nil {
@@ -145,7 +145,7 @@ func TestLaunchServer_RegistersNewEntry(t *testing.T) {
 }
 
 func TestRemoveServer_RemovesStoppedRecordByIndex(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 
 	recA, err := m.registerServerLaunch(serverLaunch{
 		Line:   0,
@@ -188,7 +188,7 @@ func TestRemoveServer_RemovesStoppedRecordByIndex(t *testing.T) {
 }
 
 func TestRemoveServer_RunningServerMustBeStoppedFirst(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 
 	process, err := os.FindProcess(os.Getpid())
 	if err != nil {
@@ -218,7 +218,7 @@ func TestRemoveServer_RunningServerMustBeStoppedFirst(t *testing.T) {
 }
 
 func TestRemoveServer_RemovesEveryInstanceFromServer(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 
 	seed, err := m.registerServerLaunch(serverLaunch{
 		Line:   0,
@@ -271,7 +271,7 @@ func TestRemoveServer_RemovesEveryInstanceFromServer(t *testing.T) {
 }
 
 func TestServerConsoleLabel_UsesHostnameAndLine(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 	rec := &instance{
 		id:       7,
 		Launch:   serverLaunch{Line: 3},
@@ -285,7 +285,7 @@ func TestServerConsoleLabel_UsesHostnameAndLine(t *testing.T) {
 }
 
 func TestServerConsoleLabel_FallbacksWhenHostnameMissing(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 	rec := &instance{
 		id:     5,
 		Launch: serverLaunch{Line: -1},
@@ -298,7 +298,7 @@ func TestServerConsoleLabel_FallbacksWhenHostnameMissing(t *testing.T) {
 }
 
 func TestFormatServerConsoleRelayLine_PrefixesAndTrims(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 	rec := &instance{
 		Launch:   serverLaunch{Line: 2},
 		Hostname: "quake-a",
@@ -318,7 +318,7 @@ func TestFormatServerConsoleRelayLine_PrefixesAndTrims(t *testing.T) {
 }
 
 func TestFormatServerConsoleRelayLine_FiltersFindAndPackNoise(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 	rec := &instance{
 		Launch:   serverLaunch{Line: 1},
 		Hostname: "quake-b",
@@ -344,7 +344,7 @@ func TestFormatServerConsoleRelayLine_FiltersFindAndPackNoise(t *testing.T) {
 }
 
 func TestServerConsoleRelayEnabled_GatedUntilFirstServerInfo(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 	rec := m.registerBareInstance(serverLaunch{Line: 2})
 
 	console := newServerConsole(nil)
@@ -374,7 +374,7 @@ func TestServerConsoleRelayEnabled_GatedUntilFirstServerInfo(t *testing.T) {
 }
 
 func TestUpdateServerState_FirstServerInfoWritesOnlineEchoCommand(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 	rec := m.registerBareInstance(serverLaunch{Line: 6})
 
 	ptyRead, ptyWrite, err := os.Pipe()
@@ -437,7 +437,7 @@ func TestBuildServerSnapshot_UsesServerInfoReadinessForState(t *testing.T) {
 }
 
 func TestMonitorServerStartupTimeout_MarksTimedOutWhenStillStarting(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 	rec := m.registerBareInstance(serverLaunch{Line: 4})
 	srv := &managedServer{}
 
@@ -457,7 +457,7 @@ func TestMonitorServerStartupTimeout_MarksTimedOutWhenStillStarting(t *testing.T
 }
 
 func TestMonitorServerStartupTimeout_IgnoresAlreadyOnlineServer(t *testing.T) {
-	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil, nil, nil, nil, nil)
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 	rec := m.registerBareInstance(serverLaunch{Line: 5})
 	srv := &managedServer{}
 

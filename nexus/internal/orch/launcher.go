@@ -1,10 +1,10 @@
 package orch
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,23 +14,7 @@ import (
 
 	"github.com/0xBrsm/NexQuake/nexus/internal/assets"
 	"github.com/creack/pty"
-	"github.com/google/shlex"
 )
-
-// serverLaunch is the parsed launch spec for a single server entry.
-type serverLaunch struct {
-	Line   int      // 0-based servers.ini line index; -1 for replicas
-	LogDir string   // subdirectory name under logsDir for this server's log file
-	Binary string   // path or name of the server binary
-	Args   []string // command-line arguments passed to the binary
-}
-
-var unsupportedLaunchArgs = map[string]struct{}{
-	"-basedir":  {},
-	"-hipnotic": {},
-	"-path":     {},
-	"-rogue":    {},
-}
 
 const serverStartupCCREPTimeout = 10 * time.Second
 
@@ -59,7 +43,7 @@ func (m *ServerManager) StartAll() error {
 	if err != nil {
 		return err
 	}
-	m.infof("Launching %d servers...", len(launches))
+	slog.Info(fmt.Sprintf("Launching %d servers...", len(launches)))
 
 	runtimeBasedir, stopOverlay, err := assets.PrepareRuntimeBasedir(m.gameDir, mods)
 	if err != nil {
@@ -100,7 +84,7 @@ func (m *ServerManager) startRecord(rec *instance) error {
 		m.mu.Unlock()
 		return fmt.Errorf("runtime not initialized")
 	}
-	if rec.Running != nil && rec.Running.Cmd != nil && rec.Running.Cmd.Process != nil && isProcessAlive(rec.Running.Cmd.Process) {
+	if m.instanceRunningLocked(rec) {
 		m.mu.Unlock()
 		return errAlreadyRunning
 	}
@@ -126,13 +110,13 @@ func (m *ServerManager) startRecord(rec *instance) error {
 		launch,
 		func(port int) {
 			m.updatePort(rec, port)
-			m.debugf("Resolved server %s port: %d", m.serverConsoleLabel(rec), port)
+			slog.Debug(fmt.Sprintf("Resolved server %s port: %d", m.serverConsoleLabel(rec), port))
 		},
 		func(searchPath []string) {
 			normalized := normalizeSearchPath(searchPath)
 			m.updateSearchPathNormalized(rec, normalized)
-			m.debugf("Resolved server search path (%s active=%q paths=%q)",
-				m.serverConsoleLabel(rec), activeGameDir(normalized), normalized)
+			slog.Debug(fmt.Sprintf("Resolved server search path (%s active=%q paths=%q)",
+				m.serverConsoleLabel(rec), activeGameDir(normalized), normalized))
 		},
 	)
 	if err != nil {
@@ -182,7 +166,7 @@ func (m *ServerManager) monitorServerStartupTimeout(rec *instance, srv *managedS
 	label := m.serverConsoleLabelLocked(rec)
 	m.mu.Unlock()
 
-	m.warnf("server %s failed to start in %d seconds", label, int(timeout/time.Second))
+	slog.Warn(fmt.Sprintf("server %s failed to start in %d seconds", label, int(timeout/time.Second)))
 }
 
 func (m *ServerManager) startServer(runtimeBasedir string, launch serverLaunch, onPort func(int), onSearchPath func([]string)) (*managedServer, error) {
@@ -211,7 +195,7 @@ func (m *ServerManager) startServer(runtimeBasedir string, launch serverLaunch, 
 	cmd.Stdout = ptyChild
 	cmd.Stderr = ptyChild
 
-	m.debugf("Starting server %s: %s %s", launchLabel, launch.Binary, strings.Join(launch.Args, " "))
+	slog.Debug(fmt.Sprintf("Starting server %s: %s %s", launchLabel, launch.Binary, strings.Join(launch.Args, " ")))
 
 	if err := cmd.Start(); err != nil {
 		_ = ptyParent.Close()
@@ -231,7 +215,7 @@ func (m *ServerManager) startServer(runtimeBasedir string, launch serverLaunch, 
 
 	formatLogLine := m.formatLogLine
 	go func() {
-		go monitorServerStartup(console, true, onPort, onSearchPath)
+		go monitorServerStartup(console, onPort, onSearchPath)
 
 		copyDone := make(chan struct{})
 		go func() {
@@ -264,18 +248,13 @@ func (m *ServerManager) StopAll(ctx context.Context, killAfter time.Duration) er
 	running := m.runningServers()
 
 	for _, entry := range running {
-		s := entry.srv
-		if s != nil && s.Cmd != nil && s.Cmd.Process != nil && isProcessAlive(s.Cmd.Process) {
-			_ = s.Cmd.Process.Signal(syscall.SIGTERM)
+		if p := entry.srv.Cmd; p != nil && p.Process != nil && isProcessAlive(p.Process) {
+			_ = p.Process.Signal(syscall.SIGTERM)
 		}
 	}
 
 	for _, entry := range running {
-		s := entry.srv
-		if s == nil {
-			continue
-		}
-		if err := m.stopServer(ctx, entry.rec, s, killAfter, false); err != nil {
+		if err := m.stopServer(ctx, entry.rec, entry.srv, killAfter, false); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -306,7 +285,9 @@ func (m *ServerManager) stopServer(ctx context.Context, rec *instance, s *manage
 			rec.Running = nil
 			resetRecordStartupState(rec)
 			rec.lastError = ""
-			m.refreshServerForInstanceLocked(rec.id)
+			if owner := m.serverByInstanceID[rec.id]; owner != nil {
+				m.refreshServerSnapshotLocked(owner)
+			}
 		}
 		m.mu.Unlock()
 		// The caller asked for this process to stop; any exit — clean or
@@ -321,7 +302,9 @@ func (m *ServerManager) stopServer(ctx context.Context, rec *instance, s *manage
 	}
 
 	if sendSignal && s.Cmd != nil && s.Cmd.Process != nil && isProcessAlive(s.Cmd.Process) {
-		_, _ = execManagedServerCommand(s, "quit", serverCommandOptions{})
+		if s.Console != nil {
+			_ = s.Console.writeCommand("quit")
+		}
 
 		quitGrace := 750 * time.Millisecond
 		if killAfter > 0 && killAfter < quitGrace {
@@ -379,222 +362,4 @@ func isProcessAlive(p *os.Process) bool {
 		return false
 	}
 	return p.Signal(syscall.Signal(0)) == nil
-}
-
-func (m *ServerManager) planLaunches() ([]serverLaunch, []string, error) {
-	iniPath := filepath.Join(m.gameDir, "servers.ini")
-	startedAt := time.Now().UTC()
-	entries, ok, err := loadServersIni(iniPath, startedAt, m.warnf)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !ok {
-		startTag := startedAt.Format("20060102T150405Z")
-		binary := "nqserver"
-		entries = []serverLaunch{
-			{
-				Line:   0,
-				LogDir: fmt.Sprintf("%d-%s-%s", 0, filepath.Base(binary), startTag),
-				Binary: binary,
-				Args:   []string{"-dedicated"},
-			},
-		}
-		m.infof("Launch plan not found at %s; launching default server", iniPath)
-	} else {
-		m.debugf("Using launch plan: %s (%d server entries)", iniPath, len(entries))
-	}
-
-	// Build merged runtime dirs from whatever mods exist in GAME_DIR.
-	mods, err := assets.ListMods(m.gameDir)
-	if err != nil {
-		return nil, nil, err
-	}
-	return entries, mods, nil
-}
-
-func loadServersIni(iniPath string, startedAt time.Time, warnf func(string, ...any)) (entries []serverLaunch, found bool, err error) {
-	st, err := os.Stat(iniPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, fmt.Errorf("stat %s: %w", iniPath, err)
-	}
-	if st.IsDir() {
-		return nil, false, fmt.Errorf("servers.ini path is a directory: %s", iniPath)
-	}
-
-	f, err := os.Open(iniPath)
-	if err != nil {
-		return nil, false, fmt.Errorf("open %s: %w", iniPath, err)
-	}
-	defer f.Close()
-
-	startTag := startedAt.UTC().Format("20060102T150405Z")
-	scanner := bufio.NewScanner(f)
-	launchGroups := make(map[string][]string)
-	launchLine := -1
-	lineNo := 0
-
-	for scanner.Scan() {
-		lineNo++
-		raw := strings.TrimSpace(scanner.Text())
-		if raw == "" {
-			continue
-		}
-		if strings.HasPrefix(raw, "#") || strings.HasPrefix(raw, "//") || strings.HasPrefix(raw, ";") {
-			continue
-		}
-
-		fields, err := shlex.Split(raw)
-		if err != nil {
-			return nil, true, fmt.Errorf("servers.ini line %d: %w", lineNo, err)
-		}
-		if len(fields) == 0 {
-			continue
-		}
-
-		if strings.HasPrefix(fields[0], "@") {
-			if len(fields[0]) <= 1 {
-				return nil, true, fmt.Errorf("servers.ini line %d: invalid group name %q", lineNo, fields[0])
-			}
-			launchGroups[fields[0]] = append([]string(nil), fields[1:]...)
-			continue
-		}
-
-		if len(launchGroups) != 0 {
-			fields = mergeLaunchGroups(fields, launchGroups)
-		}
-		if len(fields) == 0 {
-			continue
-		}
-
-		launchLine++
-
-		binary := fields[0]
-		args := applyLaunchArgTemplates(fields[1:])
-		if unsupportedArg, ok := findUnsupportedLaunchArg(args); ok {
-			warnf("Skipping servers.ini line %d: %s is not currently supported", lineNo, unsupportedArg)
-			continue
-		}
-
-		logDir := fmt.Sprintf("%d-%s-%s", launchLine, filepath.Base(binary), startTag)
-
-		entries = append(entries, serverLaunch{
-			Line:   launchLine,
-			LogDir: logDir,
-			Binary: binary,
-			Args:   args,
-		})
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, true, fmt.Errorf("read %s: %w", iniPath, err)
-	}
-	if len(entries) == 0 {
-		return nil, true, fmt.Errorf("servers.ini has no server launch lines: %s", iniPath)
-	}
-
-	return entries, true, nil
-}
-
-func findUnsupportedLaunchArg(args []string) (string, bool) {
-	for _, arg := range args {
-		if _, unsupported := unsupportedLaunchArgs[arg]; unsupported {
-			return arg, true
-		}
-	}
-	return "", false
-}
-
-func applyLaunchArgTemplates(args []string) []string {
-	if len(args) == 0 {
-		return nil
-	}
-
-	out := append([]string(nil), args...)
-	seen := make(map[string]string)
-
-	for i := 0; i < len(out); i++ {
-		if !isLaunchKeyToken(out[i]) {
-			continue
-		}
-		key := out[i][1:]
-		if _, found := seen[key]; !found && i+1 < len(out) && !isLaunchKeyToken(out[i+1]) {
-			seen[key] = out[i+1]
-		}
-		for i+1 < len(out) && !isLaunchKeyToken(out[i+1]) {
-			i++
-		}
-	}
-
-	for i, token := range out {
-		if !strings.HasPrefix(token, "%") {
-			continue
-		}
-		if v, found := seen[token[1:]]; found {
-			out[i] = v
-		}
-	}
-
-	return out
-}
-
-func mergeLaunchGroups(fields []string, launchGroups map[string][]string) []string {
-	if len(fields) == 0 || len(launchGroups) == 0 {
-		return fields
-	}
-
-	// The launch line's explicit args win over group-provided defaults.
-	explicitKeys := make(map[string]struct{})
-	for i := 1; i < len(fields); i++ {
-		token := fields[i]
-		if !isLaunchKeyToken(token) {
-			continue
-		}
-		explicitKeys[token[1:]] = struct{}{}
-	}
-
-	insertedKeys := make(map[string]struct{})
-	out := make([]string, 0, len(fields))
-	for i := 0; i < len(fields); i++ {
-		token := fields[i]
-		groupFields, ok := launchGroups[token]
-		if !ok {
-			out = append(out, token)
-			continue
-		}
-
-		// Insert group fields at the reference point, but skip any keys already
-		// provided by the launch line (or earlier groups).
-		for j := 0; j < len(groupFields); j++ {
-			token := groupFields[j]
-			if !isLaunchKeyToken(token) {
-				out = append(out, token)
-				continue
-			}
-
-			key := token[1:]
-			_, inExplicit := explicitKeys[key]
-			_, inInserted := insertedKeys[key]
-			if inExplicit || inInserted {
-				for j+1 < len(groupFields) && !isLaunchKeyToken(groupFields[j+1]) {
-					j++
-				}
-				continue
-			}
-			insertedKeys[key] = struct{}{}
-
-			out = append(out, token)
-			for j+1 < len(groupFields) && !isLaunchKeyToken(groupFields[j+1]) {
-				j++
-				out = append(out, groupFields[j])
-			}
-		}
-	}
-
-	return out
-}
-
-func isLaunchKeyToken(token string) bool {
-	return len(token) >= 2 && (token[0] == '-' || token[0] == '+')
 }

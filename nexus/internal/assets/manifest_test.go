@@ -1,10 +1,8 @@
 package assets
 
 import (
-	"encoding/base64"
-	"encoding/json"
-	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,23 +11,7 @@ import (
 	"testing"
 )
 
-func decodeStartBundle(t *testing.T, body []byte) startManifestBundle {
-	t.Helper()
-
-	encoded := strings.TrimSpace(string(body))
-	decoded, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		t.Fatalf("decode start bundle (base64): %v", err)
-	}
-
-	var bundle startManifestBundle
-	if err := json.Unmarshal(decoded, &bundle); err != nil {
-		t.Fatalf("decode start bundle (json): %v", err)
-	}
-	return bundle
-}
-
-func TestHashedAssetServer_StartAndAssetFetch(t *testing.T) {
+func TestHashedAssetServer_IssueAndAssetFetch(t *testing.T) {
 	gameDir := t.TempDir()
 	cdDir := t.TempDir()
 
@@ -44,44 +26,20 @@ func TestHashedAssetServer_StartAndAssetFetch(t *testing.T) {
 		t.Fatalf("write cd file: %v", err)
 	}
 
-	gateway := NewHashedAssetServer(
-		gameDir,
-		cdDir,
-		NewPakIndexCache(),
-		9,
-		true,
-		[]string{"-nosound", "+skill", "3"},
-		true,
-	)
+	gateway := NewHashedAssetServer(gameDir, cdDir, NewPakIndexCache())
 
-	startReq := httptest.NewRequest(http.MethodGet, "/start", nil)
-	startRec := httptest.NewRecorder()
-	gateway.StartHandler().ServeHTTP(startRec, startReq)
-	if startRec.Code != http.StatusOK {
-		t.Fatalf("start status=%d body=%q", startRec.Code, startRec.Body.String())
+	game, cd, ref, err := gateway.IssueManifest()
+	if err != nil {
+		t.Fatalf("IssueManifest: %v", err)
 	}
-	bundle := decodeStartBundle(t, startRec.Body.Bytes())
-	if bundle.Client.PrefetchConcurrency != 9 {
-		t.Fatalf("client.prefetchConcurrency=%d want=9", bundle.Client.PrefetchConcurrency)
-	}
-	if !bundle.Client.SMenuOnFirstLoad {
-		t.Fatalf("client.smenuOnFirstLoad=%v want=true", bundle.Client.SMenuOnFirstLoad)
-	}
-	if !bundle.Client.URLArgs {
-		t.Fatalf("client.urlArgs=%v want=true", bundle.Client.URLArgs)
-	}
-	if got := strings.Join(bundle.Client.SendArgs, " "); got != "-nosound +skill 3" {
-		t.Fatalf("client.sendArgs=%q want=%q", got, "-nosound +skill 3")
-	}
-	ref := strings.TrimSpace(startRec.Header().Get(headerNexQuakeRef))
 	if ref == "" {
-		t.Fatalf("missing %s header", headerNexQuakeRef)
+		t.Fatalf("expected non-empty ref")
 	}
-	if len(bundle.Game["id1"]) == 0 {
-		t.Fatalf("id1 manifest missing entries: %+v", bundle.Game)
+	if len(game["id1"]) == 0 {
+		t.Fatalf("id1 manifest missing entries: %+v", game)
 	}
 
-	hasPath := func(entries []startManifestEntry, path string) bool {
+	hasPath := func(entries []StartManifestEntry, path string) bool {
 		for _, entry := range entries {
 			if entry.Path == path {
 				return true
@@ -90,11 +48,11 @@ func TestHashedAssetServer_StartAndAssetFetch(t *testing.T) {
 		return false
 	}
 
-	if !hasPath(bundle.Game["id1"], "foo.txt") {
-		t.Fatalf("foo.txt path missing from start manifest: %+v", bundle.Game["id1"])
+	if !hasPath(game["id1"], "foo.txt") {
+		t.Fatalf("foo.txt path missing from issued manifest: %+v", game["id1"])
 	}
-	if !hasPath(bundle.CD, "02-intro.ogg") {
-		t.Fatalf("cd track path missing from start manifest: %+v", bundle.CD)
+	if !hasPath(cd, "02-intro.ogg") {
+		t.Fatalf("cd track path missing from issued manifest: %+v", cd)
 	}
 
 	fooHash := hashAssetKey(ref, "mod:id1:"+normalizeVFSKey("foo.txt"))
@@ -135,43 +93,16 @@ func TestHashedAssetServer_RangeRequests(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	gateway := NewHashedAssetServer(
-		gameDir,
-		filepath.Join(t.TempDir(), "missing"),
-		NewPakIndexCache(),
-		4,
-		false,
-		nil,
-		false,
-	)
-	startReq := httptest.NewRequest(http.MethodGet, "/start", nil)
-	startRec := httptest.NewRecorder()
-	gateway.StartHandler().ServeHTTP(startRec, startReq)
-	if startRec.Code != http.StatusOK {
-		t.Fatalf("start status=%d body=%q", startRec.Code, startRec.Body.String())
-	}
+	gateway := NewHashedAssetServer(gameDir, filepath.Join(t.TempDir(), "missing"), NewPakIndexCache())
 
-	bundle := decodeStartBundle(t, startRec.Body.Bytes())
-	if bundle.Client.PrefetchConcurrency != 4 {
-		t.Fatalf("client.prefetchConcurrency=%d want=4", bundle.Client.PrefetchConcurrency)
+	game, _, ref, err := gateway.IssueManifest()
+	if err != nil {
+		t.Fatalf("IssueManifest: %v", err)
 	}
-	if bundle.Client.SMenuOnFirstLoad {
-		t.Fatalf("client.smenuOnFirstLoad=%v want=false", bundle.Client.SMenuOnFirstLoad)
-	}
-	if bundle.Client.URLArgs {
-		t.Fatalf("client.urlArgs=%v want=false", bundle.Client.URLArgs)
-	}
-	if len(bundle.Client.SendArgs) != 0 {
-		t.Fatalf("client.sendArgs=%v want=empty", bundle.Client.SendArgs)
-	}
-	if len(bundle.Game["id1"]) == 0 {
+	if len(game["id1"]) == 0 {
 		t.Fatalf("expected id1 manifest entries")
 	}
-	ref := strings.TrimSpace(startRec.Header().Get(headerNexQuakeRef))
-	if ref == "" {
-		t.Fatalf("missing %s header", headerNexQuakeRef)
-	}
-	hash := hashAssetKey(ref, "mod:id1:"+normalizeVFSKey(bundle.Game["id1"][0].Path))
+	hash := hashAssetKey(ref, "mod:id1:"+normalizeVFSKey(game["id1"][0].Path))
 
 	rangeReq := httptest.NewRequest(http.MethodGet, "/nq/"+hash, nil)
 	rangeReq.Header.Set("Range", "bytes=1-3")
@@ -189,7 +120,7 @@ func TestHashedAssetServer_RangeRequests(t *testing.T) {
 	}
 }
 
-func TestHashedAssetServer_StartIgnoresCorruptPakInOtherMod(t *testing.T) {
+func TestHashedAssetServer_IssueIgnoresCorruptPakInOtherMod(t *testing.T) {
 	gameDir := t.TempDir()
 	id1CommonDir := filepath.Join(gameDir, "id1", "common")
 	if err := os.MkdirAll(id1CommonDir, 0o755); err != nil {
@@ -212,29 +143,19 @@ func TestHashedAssetServer_StartIgnoresCorruptPakInOtherMod(t *testing.T) {
 		t.Fatalf("write corrupt pak: %v", err)
 	}
 
-	gateway := NewHashedAssetServer(
-		gameDir,
-		filepath.Join(t.TempDir(), "missing"),
-		NewPakIndexCache(),
-		4,
-		false,
-		nil,
-		false,
-	)
-	var errorLogs []string
-	gateway.SetErrorf(func(format string, args ...any) {
-		errorLogs = append(errorLogs, fmt.Sprintf(format, args...))
-	})
-	startReq := httptest.NewRequest(http.MethodGet, "/start", nil)
-	startRec := httptest.NewRecorder()
-	gateway.StartHandler().ServeHTTP(startRec, startReq)
-	if startRec.Code != http.StatusOK {
-		t.Fatalf("start status=%d body=%q", startRec.Code, startRec.Body.String())
-	}
+	gateway := NewHashedAssetServer(gameDir, filepath.Join(t.TempDir(), "missing"), NewPakIndexCache())
 
-	bundle := decodeStartBundle(t, startRec.Body.Bytes())
-	if len(bundle.Game["id1"]) == 0 {
-		t.Fatalf("expected id1 entries in bundle, got=%+v", bundle.Game)
+	var errorLogs []string
+	prev := slog.Default()
+	slog.SetDefault(slog.New(captureHandler{entries: &errorLogs}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	game, _, _, err := gateway.IssueManifest()
+	if err != nil {
+		t.Fatalf("IssueManifest: %v", err)
+	}
+	if len(game["id1"]) == 0 {
+		t.Fatalf("expected id1 entries, got=%+v", game)
 	}
 	if len(errorLogs) == 0 {
 		t.Fatalf("expected gateway to log corrupt pak")

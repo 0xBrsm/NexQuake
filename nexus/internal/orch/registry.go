@@ -1,6 +1,8 @@
 package orch
 
 import (
+	"fmt"
+	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
@@ -42,7 +44,7 @@ type instanceState struct {
 
 // server groups one or more instance server processes behind a single
 // configured server line. Fixed-port servers have exactly one instance and a
-// stable candidate port; "-port 0" servers may have multiple dynamically spawned
+// stable listen port; "-port 0" servers may have multiple dynamically spawned
 // replicas.
 type server struct {
 	// ServerID is the unique identifier assigned at registration.
@@ -55,9 +57,6 @@ type server struct {
 	Autoscales bool
 	// InstanceIDs lists the IDs of all instance records in this server.
 	InstanceIDs []int
-
-	// CandidatePort is the stable UDP port for fixed-port servers; 0 for autoscaling servers.
-	CandidatePort int
 
 	// RoundRobinCursor advances each time a instance is selected for routing.
 	RoundRobinCursor int
@@ -100,15 +99,9 @@ func (m *ServerManager) appendServerInstanceLocked(s *server, launch serverLaunc
 	if s.instanceStates == nil {
 		s.instanceStates = make(map[int]*instanceState)
 	}
-	s.instanceStates[rec.id] = newInstanceState(lifecycle)
+	s.instanceStates[rec.id] = &instanceState{Lifecycle: lifecycle}
 	m.refreshServerSnapshotLocked(s)
 	return rec
-}
-
-func newInstanceState(lifecycle instanceLifecycle) *instanceState {
-	return &instanceState{
-		Lifecycle: lifecycle,
-	}
 }
 
 func (m *ServerManager) ensureServerInstanceStateLocked(s *server, serverID int) *instanceState {
@@ -120,30 +113,10 @@ func (m *ServerManager) ensureServerInstanceStateLocked(s *server, serverID int)
 	}
 	state := s.instanceStates[serverID]
 	if state == nil {
-		state = newInstanceState(instanceLifecycleWarming)
+		state = &instanceState{Lifecycle: instanceLifecycleWarming}
 		s.instanceStates[serverID] = state
 	}
 	return state
-}
-
-func transitionInstanceLifecycle(state *instanceState, next instanceLifecycle) {
-	if state == nil {
-		return
-	}
-	if state.Lifecycle == next {
-		return
-	}
-	state.Lifecycle = next
-}
-
-func instanceAllowsRouting(state *instanceState, allowDraining bool) bool {
-	if state == nil {
-		return false
-	}
-	if state.Lifecycle == instanceLifecycleActive {
-		return true
-	}
-	return allowDraining && state.Lifecycle == instanceLifecycleDraining
 }
 
 func applyServerDisplayFromInstance(s *server, rec *instance) {
@@ -161,16 +134,12 @@ func applyServerDisplayFromInstance(s *server, rec *instance) {
 	}
 }
 
-func (m *ServerManager) setServerInstanceLifecycleLocked(s *server, serverID int, lifecycle instanceLifecycle, ensureState bool) {
+func (m *ServerManager) setServerInstanceLifecycleLocked(s *server, serverID int, lifecycle instanceLifecycle) {
 	if s == nil {
 		return
 	}
-	state := s.instanceStates[serverID]
-	if state == nil && ensureState {
-		state = m.ensureServerInstanceStateLocked(s, serverID)
-	}
-	if state != nil {
-		transitionInstanceLifecycle(state, lifecycle)
+	if state := s.instanceStates[serverID]; state != nil {
+		state.Lifecycle = lifecycle
 		state.ZeroPollStreak = 0
 	}
 	m.refreshServerSnapshotLocked(s)
@@ -178,7 +147,6 @@ func (m *ServerManager) setServerInstanceLifecycleLocked(s *server, serverID int
 
 func (m *ServerManager) resetServerRegistryLocked() {
 	m.serversByID = make(map[int]*server)
-	m.serverByCandidatePort = make(map[int]*server)
 	m.serverByInstanceID = make(map[int]*server)
 	m.nextServerID = 1
 }
@@ -227,77 +195,40 @@ func forceLaunchPortZero(args []string) []string {
 
 func (m *ServerManager) registerServerLaunch(launch serverLaunch) (*instance, error) {
 	configuredPort, hasConfiguredPort := launchConfiguredPort(launch)
-	candidatePort := 0
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	autoscales := hasConfiguredPort && configuredPort == 0 && max(1, m.serverMaxInstances) > 1
-	if !autoscales && hasConfiguredPort && configuredPort > 0 {
-		candidatePort = configuredPort
-	}
 
 	s := &server{
 		ServerID:       m.nextServerID,
 		Line:           launch.Line,
 		TemplateLaunch: cloneServerLaunch(launch),
 		Autoscales:     autoscales,
-		CandidatePort:  candidatePort,
 		instanceStates: make(map[int]*instanceState),
 	}
 	m.nextServerID++
 	m.serversByID[s.ServerID] = s
-	if s.CandidatePort > 0 {
-		m.serverByCandidatePort[s.CandidatePort] = s
-	}
 
 	rec := m.appendServerInstanceLocked(s, launch, instanceLifecycleWarming)
 
 	if s.Autoscales {
-		m.infof("Server %d enabled for line %d (autoscaling)", s.ServerID, s.Line+1)
+		slog.Info(fmt.Sprintf("Server %d enabled for line %d (autoscaling)", s.ServerID, s.Line+1))
 	}
 	return rec, nil
 }
 
-func (m *ServerManager) updateServerCandidatePortLocked(s *server, port int) {
-	if s == nil || s.Autoscales || port < 1 || port > 65535 {
-		return
-	}
-	if s.CandidatePort == port {
-		return
-	}
-	if s.CandidatePort > 0 {
-		delete(m.serverByCandidatePort, s.CandidatePort)
-	}
-	s.CandidatePort = port
-	m.serverByCandidatePort[port] = s
-}
-
-func (m *ServerManager) updateServerCandidatePortForInstanceLocked(rec *instance) {
-	if rec == nil {
-		return
-	}
-	s := m.serverByInstanceID[rec.id]
-	if s == nil {
-		return
-	}
-	m.updateServerCandidatePortLocked(s, recordListenPort(rec))
-}
-
 func (m *ServerManager) resetServerInstanceState(serverID int) {
 	m.mu.Lock()
-	s := m.serverByInstanceID[serverID]
-	if s != nil {
-		m.setServerInstanceLifecycleLocked(s, serverID, instanceLifecycleWarming, true)
-	}
-	m.mu.Unlock()
-}
-
-func (m *ServerManager) refreshServerForInstanceLocked(serverID int) {
+	defer m.mu.Unlock()
 	s := m.serverByInstanceID[serverID]
 	if s == nil {
 		return
 	}
+	state := m.ensureServerInstanceStateLocked(s, serverID)
+	state.Lifecycle = instanceLifecycleWarming
+	state.ZeroPollStreak = 0
 	m.refreshServerSnapshotLocked(s)
 }
 
@@ -320,16 +251,6 @@ func recordGameDir(rec *instance) string {
 	return activeGameDir(rec.resolvedSearchPath)
 }
 
-func clampUint16(value int) uint16 {
-	if value < 0 {
-		return 0
-	}
-	if value > 0xffff {
-		return 0xffff
-	}
-	return uint16(value)
-}
-
 func (m *ServerManager) refreshServerSnapshotLocked(s *server) {
 	if s == nil {
 		return
@@ -350,10 +271,10 @@ func (m *ServerManager) refreshServerSnapshotLocked(s *server) {
 		applyServerDisplayFromInstance(s, rec)
 	}
 
-	s.aggregateUsers = clampUint16(users)
-	s.aggregateMaxUsers = clampUint16(maxUsers)
-	s.joinableInstances = clampUint16(m.serverRoutableCandidateCountLocked(s, false))
-	s.aggregateInstances = clampUint16(instances)
+	s.aggregateUsers = uint16(min(max(users, 0), 0xffff))
+	s.aggregateMaxUsers = uint16(min(max(maxUsers, 0), 0xffff))
+	s.joinableInstances = uint16(min(max(len(m.serverRoutableCandidatesLocked(s, false)), 0), 0xffff))
+	s.aggregateInstances = uint16(min(max(instances, 0), 0xffff))
 }
 
 func (m *ServerManager) removeServerRecordLocked(serverID int) {

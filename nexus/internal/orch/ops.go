@@ -17,6 +17,15 @@ var (
 )
 
 func (m *ServerManager) findServerByIndexLocked(target int) (*server, error) {
+	servers := m.serversLocked()
+	index := target - 1
+	if index >= 0 && index < len(servers) {
+		return servers[index], nil
+	}
+	return nil, fmt.Errorf("unknown target %d", target)
+}
+
+func (m *ServerManager) serversLocked() []*server {
 	servers := make([]*server, 0, len(m.serversByID))
 	for _, s := range m.serversByID {
 		if s == nil {
@@ -27,25 +36,7 @@ func (m *ServerManager) findServerByIndexLocked(target int) (*server, error) {
 	slices.SortFunc(servers, func(a, b *server) int {
 		return cmp.Compare(a.Line, b.Line)
 	})
-	index := target - 1
-	if index >= 0 && index < len(servers) {
-		return servers[index], nil
-	}
-
-	return nil, fmt.Errorf("unknown target %d", target)
-}
-
-func (m *ServerManager) nextServerLineLocked() int {
-	maxLine := -1
-	for _, s := range m.serversByID {
-		if s == nil {
-			continue
-		}
-		if s.Line > maxLine {
-			maxLine = s.Line
-		}
-	}
-	return maxLine + 1
+	return servers
 }
 
 func (m *ServerManager) serverInstancesLocked(s *server) []*instance {
@@ -99,7 +90,13 @@ func (m *ServerManager) LaunchServer(binary string, args []string) error {
 	startTag := time.Now().UTC().Format("20060102T150405Z")
 
 	m.mu.Lock()
-	line := m.nextServerLineLocked()
+	line := -1
+	for _, s := range m.serversByID {
+		if s != nil && s.Line > line {
+			line = s.Line
+		}
+	}
+	line++
 	launch := serverLaunch{
 		Line:   line,
 		LogDir: fmt.Sprintf("%d-%s-%s", line, filepath.Base(binary), startTag),
@@ -282,7 +279,7 @@ func (m *ServerManager) RemoveServer(target int) error {
 		if rec == nil {
 			continue
 		}
-		if rec.Running != nil && rec.Running.Cmd != nil && rec.Running.Cmd.Process != nil && isProcessAlive(rec.Running.Cmd.Process) {
+		if m.instanceRunningLocked(rec) {
 			return fmt.Errorf("server is running; stop server first")
 		}
 		if rec.Running != nil {
@@ -292,9 +289,6 @@ func (m *ServerManager) RemoveServer(target int) error {
 		m.removeServerRecordLocked(rec.id)
 	}
 
-	if s.CandidatePort > 0 {
-		delete(m.serverByCandidatePort, s.CandidatePort)
-	}
 	delete(m.serversByID, s.ServerID)
 	return nil
 }

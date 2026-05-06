@@ -8,7 +8,7 @@
 //   server.list, server.instances, server.start, server.stop,
 //   server.restart, server.remove, server.launch,
 //   server.instance.command,
-//   session.list, session.info, session.ban,
+//   client.list, client.info, client.ban,
 //   logs.tail
 //
 // Addressing rules:
@@ -32,9 +32,12 @@
 //   server restart <idx|all> [secs]  — server.restart
 //   server remove <idx>              — server.remove
 //   server launch <binary> [args...] — server.launch
-//   session list                     — session.list
-//   session info <nqip>              — session.info
-//   session ban <nqip>               — session.ban
+//   client list                      — client.list
+//   client info <nqip>               — client.info
+//   client ban <nqip>                — client.ban
+//
+// Client-only commands (handled here, never sent to Nexus):
+//   login                            — drive an OIDC popup for edge-gated /rcon
 
 (function () {
   'use strict';
@@ -79,7 +82,10 @@
   }
 
   // Dispatch an in-game rcon line to the right JSON-RPC method.
-  // Returns { method, params } or { error } for client-side errors.
+  // Returns one of:
+  //   { method, params } — JSON-RPC call to make
+  //   { clientCmd }      — client-only command (no server call)
+  //   { error }          — client-side validation error
   // connectedPort is the currently-connected game-server listen port (or 0),
   // used as a fallback target for bare `rcon <cmd...>` while in-game.
   function planCall(tokens, connectedPort) {
@@ -102,6 +108,12 @@
       if (tokens.length < 2) return { error: 'usage: rcon nexus <cmd...>\n' };
       tokens = tokens.slice(1);
       explicitAdmin = true;
+    }
+
+    // Client-only commands always run locally — never forwarded to a connected
+    // server's console, never sent to Nexus.
+    if (tokens[0].toLowerCase() === 'login') {
+      return { clientCmd: 'login' };
     }
 
     // When connected without an explicit admin prefix, forward everything to
@@ -169,13 +181,13 @@
       return { error: serverUsage };
     }
 
-    if (head === 'session') {
-      if (rest.length < 1) return { error: 'usage: rcon session list | info <nqip> | ban <nqip>\n' };
+    if (head === 'client') {
+      if (rest.length < 1) return { error: 'usage: rcon client list | info <nqip> | ban <nqip>\n' };
       var sub = rest[0].toLowerCase();
-      if (sub === 'list') return { method: 'session.list', params: {} };
-      if (sub === 'info' && rest.length >= 2) return { method: 'session.info', params: { nqip: rest[1] } };
-      if (sub === 'ban' && rest.length >= 2) return { method: 'session.ban', params: { nqip: rest[1] } };
-      return { error: 'usage: rcon session list | info <nqip> | ban <nqip>\n' };
+      if (sub === 'list') return { method: 'client.list', params: {} };
+      if (sub === 'info' && rest.length >= 2) return { method: 'client.info', params: { nqip: rest[1] } };
+      if (sub === 'ban' && rest.length >= 2) return { method: 'client.ban', params: { nqip: rest[1] } };
+      return { error: 'usage: rcon client list | info <nqip> | ban <nqip>\n' };
     }
 
     // Unknown admin verb.
@@ -190,17 +202,17 @@
 
   function formatServerList(result) {
     var servers = (result && result.servers) || [];
-    if (servers.length === 0) return '\nNo Quake servers found.\n\n';
+    if (servers.length === 0) return '\nno quake servers found.\n\n';
     var out = '\n' +
-      pad('#', 3) + ' ' + pad('Server', 15) + ' ' + pad('Candidate', 9) + ' ' +
-      pad('Game', 15) + ' ' + pad('Users', 12) + ' ' + 'State\n' +
+      pad('#', 3) + ' ' + pad('server', 15) + ' ' + pad('candidate', 9) + ' ' +
+      pad('game', 15) + ' ' + pad('users', 12) + ' ' + 'state\n' +
       '--- --------------- --------- --------------- ------------ --------\n';
     for (var i = 0; i < servers.length; i++) {
       var s = servers[i];
       var users = s.max_players > 0
         ? (s.players + '/' + s.max_players + (s.instances > 0 ? ' (' + s.instances + ')' : ''))
         : '--/--';
-      out += pad(String(i + 1), 3) + ' ' + pad(s.hostname || 'UNNAMED', 15) + ' ' +
+      out += pad(String(i + 1), 3) + ' ' + pad(s.hostname || 'unnamed', 15) + ' ' +
              pad(String(s.candidate_port || ''), 9) + ' ' +
              pad(s.game_dir || '?', 15) + ' ' + pad(users, 12) + ' ' + (s.state || '') + '\n';
     }
@@ -217,12 +229,12 @@
 
   function formatServerInstances(result) {
     var servers = (result && result.servers) || [];
-    if (servers.length === 0) return '\nNo Quake servers found.\n\n';
+    if (servers.length === 0) return '\nno quake servers found.\n\n';
     var out = '';
     var any = false;
     for (var i = 0; i < servers.length; i++) {
       var s = servers[i];
-      out += '\n[' + s.index + '] ' + (s.hostname || 'UNNAMED') +
+      out += '\n[' + s.index + '] ' + (s.hostname || 'unnamed') +
              '  game=' + (s.game_dir || '?') +
              '  users=' + formatServerUsers(s) +
              (s.candidate_port ? '  candidate=' + s.candidate_port : '') +
@@ -232,7 +244,7 @@
         continue;
       }
       any = true;
-      out += '    #  Port  Map             Users   State\n' +
+      out += '    #  port  map             users   state\n' +
              '    -- ----- --------------- ------- --------\n';
       for (var j = 0; j < s.instances.length; j++) {
         var inst = s.instances[j];
@@ -241,35 +253,33 @@
                pad(inst.map_name || '?', 15) + ' ' + pad(users, 7) + ' ' + (inst.state || '') + '\n';
       }
     }
-    if (!any) return '\nNo running server instances found.\n\n';
+    if (!any) return '\nno running server instances found.\n\n';
     return out + '== end list ==\n\n';
   }
 
-  function formatSessionList(result) {
-    var sessions = (result && result.sessions) || [];
-    if (sessions.length === 0) return '\nNo active sessions.\n\n';
+  function formatClientList(result) {
+    var clients = (result && result.clients) || [];
+    if (clients.length === 0) return '\nno active clients.\n\n';
     var out = '\n' +
-      pad('NQIP', 15) + ' ' + pad('Source', 15) + ' ' + pad('User', 24) + ' ' +
-      pad('Role', 6) + ' ' + pad('Server', 15) + ' ' + 'Port\n' +
-      '--------------- --------------- ------------------------ ------ --------------- -----\n';
-    for (var i = 0; i < sessions.length; i++) {
-      var s = sessions[i];
+      pad('nqip', 15) + ' ' + pad('source', 15) + ' ' + pad('identity', 24) + ' ' +
+      pad('server', 15) + ' ' + 'port\n' +
+      '--------------- --------------- ------------------------ --------------- -----\n';
+    for (var i = 0; i < clients.length; i++) {
+      var s = clients[i];
       out += pad(s.nqip, 15) + ' ' + pad(s.source_ip || '-', 15) + ' ' +
-             pad(s.user_id || '(anonymous)', 24) + ' ' +
-             pad(s.is_admin ? 'admin' : 'client', 6) + ' ' +
+             pad(s.identity || '(anonymous)', 24) + ' ' +
              pad(s.server_host || '-', 15) + ' ' +
              (s.server_port > 0 ? String(s.server_port) : '-') + '\n';
     }
     return out + '== end list ==\n\n';
   }
 
-  function formatSessionInfo(result) {
-    if (!result || !result.session) return 'session not found\n';
-    var s = result.session;
-    var out = '\nsession ' + s.nqip + '\n' +
+  function formatClientInfo(result) {
+    if (!result || !result.client) return 'client not found\n';
+    var s = result.client;
+    var out = '\nclient ' + s.nqip + '\n' +
       '  source ip: ' + (s.source_ip || 'unknown') + '\n' +
-      '  user:      ' + (s.user_id || '(anonymous)') + '\n' +
-      '  role:      ' + (s.is_admin ? 'admin' : 'client') + '\n' +
+      '  identity:  ' + (s.identity || '(anonymous)') + '\n' +
       '  server:    ' + (s.server_host || '-') +
         (s.server_port > 0 ? ' (:' + s.server_port + ')' : '') + '\n';
     if (result.status_slot) {
@@ -282,9 +292,9 @@
     return out + '\n';
   }
 
-  function formatSessionBan(result) {
+  function formatClientBan(result) {
     var out = '\nbanned ' + result.nqip + '\n' +
-      '  disconnected: ' + result.disconnected + ' session(s)\n' +
+      '  disconnected: ' + result.disconnected + ' client(s)\n' +
       '  server kicks: ' + result.server_kicks + '\n';
     if (result.source_ips && result.source_ips.length > 0) {
       out += '  source ip(s): ' + result.source_ips.join(', ') + '\n';
@@ -299,7 +309,7 @@
 
   function formatLogsTail(result) {
     var lines = (result && result.lines) || [];
-    if (lines.length === 0) return 'No buffered Nexus logs.\n';
+    if (lines.length === 0) return 'no buffered Nexus logs.\n';
     return lines.join('\n') + '\n';
   }
 
@@ -308,7 +318,15 @@
   }
 
   var FORMATTERS = {
-    'rcon.help':               function (r) { return (r && r.text) ? r.text : ''; },
+    'rcon.help':               function (r) {
+                                 var text = (r && r.text) ? r.text : '';
+                                 // login is a WASM-client-only command (drives an OIDC popup
+                                 // the API can't reach) so it lives in the client's help layout,
+                                 // not in Nexus's server-rendered text.
+                                 return text +
+                                   'client-only commands (in-game shell):\n' +
+                                   '  rcon login                            authenticate via OIDC popup\n\n';
+                               },
     'server.list':             formatServerList,
     'server.instances':        formatServerInstances,
     'server.start':            okFormatter('ok', 'complete\n'),
@@ -317,9 +335,9 @@
     'server.remove':           okFormatter('removed', 'server removed\n'),
     'server.launch':           okFormatter('ok', 'server launched\n'),
     'server.instance.command': function (r) { return (r && r.reply) ? r.reply : ''; },
-    'session.list':            formatSessionList,
-    'session.info':            formatSessionInfo,
-    'session.ban':             formatSessionBan,
+    'client.list':             formatClientList,
+    'client.info':             formatClientInfo,
+    'client.ban':              formatClientBan,
     'logs.tail':               formatLogsTail,
   };
 
@@ -339,19 +357,28 @@
     var timer = setTimeout(function () { controller.abort(); }, REQUEST_TIMEOUT_MS);
     try {
       var envelope = { jsonrpc: '2.0', method: method, params: params, id: 1 };
+      // redirect: 'manual' so a CF-Access-style cross-origin login redirect
+      // surfaces as response.type === 'opaqueredirect' instead of throwing
+      // CORS. The caller pops a top-level login window in that case.
       var resp = await fetch(rpcURL, {
         method: 'POST',
         headers: headers,
         body: JSON.stringify(envelope),
         credentials: 'same-origin',
+        redirect: 'manual',
         signal: controller.signal,
       });
+      if (resp.type === 'opaqueredirect') {
+        return { needsLogin: true };
+      }
       var parsed;
       try { parsed = await resp.json(); }
       catch (e) { return { error: 'rcon: invalid response (' + resp.status + ')\n' }; }
       if (parsed.error) {
-        return { error: 'rcon: ' + (parsed.error.message || 'error') +
-                  ' (code ' + parsed.error.code + ')\n' };
+        var msg = 'rcon: ' + (parsed.error.message || 'error');
+        var hint = parsed.error.data && parsed.error.data.hint;
+        if (hint) msg += '. ' + hint;
+        return { error: msg + '\n' };
       }
       return { result: parsed.result };
     } catch (e) {
@@ -362,13 +389,30 @@
     }
   }
 
+  // Open the OIDC login pop-up. If the user is already authenticated the
+  // popup just flashes through the auto-close landing page and Nexus
+  // pushes "rcon: authenticated." back via the trunk control channel —
+  // same flow either way, no client-side state checks.
+  function runClientLogin() {
+    var loginURL = resolveRPCURL();
+    var popup = window.open(loginURL, 'nq_rcon_login', 'width=500,height=600');
+    if (!popup) {
+      return 'rcon: pop-up blocked. open ' + loginURL + ' in a new tab,\n' +
+             '      log in to continue.\n';
+    }
+    return '';
+  }
+
   // Exported entry point — called from cmd_rcon.c via EM_ASYNC_JS.
   // connectedPort is the currently-connected server's listen port (0 if none).
   Module.nqRcon = async function (password, argsLine, connectedPort) {
     var tokens = tokenize(String(argsLine || ''));
     var plan = planCall(tokens, connectedPort | 0);
     if (plan.error) return plan.error;
+    if (plan.clientCmd === 'login') return runClientLogin();
+
     var r = await postRPC(plan.method, plan.params, String(password || ''));
+    if (r.needsLogin) return 'rcon: not authenticated. run: rcon login.\n';
     if (r.error) return r.error;
     return formatResult(plan.method, r.result);
   };

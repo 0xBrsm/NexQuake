@@ -10,18 +10,12 @@ import (
 var (
 	errUnknownServerInstance = errors.New("unknown server instance")
 
-	serverCommandCaptureMaxWait  = 750 * time.Millisecond
-	serverCommandCaptureIdleWait = 100 * time.Millisecond
-	// Audited commands prepend an `echo` marker and `wait` frames before the
-	// actual command to keep per-server admin provenance in logs.
-	// Allow a longer idle window so replies like cvar reads are not cut off.
-	serverCommandCaptureAuditIdleWait = 300 * time.Millisecond
+	// serverCommandCaptureSafetyTimeout bounds how long Nexus waits for an END
+	// sentinel before giving up. It is a safety net for hung servers, not a
+	// hint that capture should return earlier — replies are bounded by the END
+	// marker, not by output rate.
+	serverCommandCaptureSafetyTimeout = 5 * time.Second
 )
-
-type serverCommandOptions struct {
-	ActorID       string
-	CaptureOutput bool
-}
 
 func trimTrailingCommandSemicolons(cmd string) string {
 	out := strings.TrimSpace(cmd)
@@ -42,7 +36,11 @@ func sanitizeServerAuditText(text string) string {
 	return strings.Join(strings.Fields(text), " ")
 }
 
-func appendServerCommandAuditEcho(cmd, actorID string) string {
+// formatServerCommandAuditEcho produces an `echo "<actor>: <cmd>"` preamble
+// that runs before the BEGIN sentinel. Its output lands in the on-disk server
+// log so operators can see who ran what; it is intentionally outside the
+// captured reply window.
+func formatServerCommandAuditEcho(cmd, actorID string) string {
 	execCmd := trimTrailingCommandSemicolons(cmd)
 	if execCmd == "" {
 		return ""
@@ -52,7 +50,7 @@ func appendServerCommandAuditEcho(cmd, actorID string) string {
 		actor = "admin"
 	}
 	auditCmd := sanitizeServerAuditText(execCmd)
-	return fmt.Sprintf(`echo "%s: %s"; wait; wait; wait; %s`, actor, auditCmd, execCmd)
+	return fmt.Sprintf(`echo "%s: %s"`, actor, auditCmd)
 }
 
 func formatServerCommandReply(output string) string {
@@ -66,32 +64,30 @@ func formatServerCommandReply(output string) string {
 	return output + "\n"
 }
 
-func serverCommandReplyFilter(cmd string) serverConsoleLineFilter {
-	expectedEcho := normalizeConsoleRelayLine(formatServerConsoleCommand(cmd))
-	return func(line string) (string, bool) {
-		if !shouldRelayServerConsoleLine(line) {
-			return "", false
-		}
-		if expectedEcho != "" && normalizeConsoleRelayLine(line) == expectedEcho {
-			return "", false
-		}
-		return line, true
+// serverCommandNoiseFilter drops the same low-signal lines the in-game console
+// relay drops. The verbatim PTY echo of the command we just wrote is handled
+// separately via the suppressed-relay-echo map, so it is not the filter's
+// concern.
+func serverCommandNoiseFilter(line string) (string, bool) {
+	if !shouldRelayServerConsoleLine(line) {
+		return "", false
 	}
+	return line, true
 }
 
-func parseServerTailArgs(cmd string) (lineCount int, isTail bool, err error) {
+func parseServerTailCommand(cmd string) (bool, error) {
 	fields := strings.Fields(strings.TrimSpace(cmd))
 	if len(fields) == 0 {
-		return 0, false, nil
+		return false, nil
 	}
 	if !strings.EqualFold(fields[0], "tail") {
-		return 0, false, nil
+		return false, nil
 	}
 
 	if len(fields) != 1 {
-		return 0, true, fmt.Errorf("usage: rcon <host|port|idx> tail")
+		return true, fmt.Errorf("usage: rcon <host|port|idx> tail")
 	}
-	return defaultServerTailLines, true, nil
+	return true, nil
 }
 
 const defaultServerTailLines = 10
@@ -117,39 +113,32 @@ func formatServerTailReply(lines []string) string {
 	return out.String()
 }
 
-func execManagedServerCommand(srv *managedServer, cmd string, opts serverCommandOptions) (string, error) {
+func captureManagedServerCommand(srv *managedServer, cmd, actorID string) (string, error) {
 	if srv == nil {
 		return "", errUnknownServerInstance
 	}
-	if !opts.CaptureOutput {
-		return "", srv.writeConsole(cmd)
+	if srv.Console == nil {
+		return "", fmt.Errorf("server console unavailable")
 	}
-	if tailLines, isTail, tailErr := parseServerTailArgs(cmd); isTail {
+	if isTail, tailErr := parseServerTailCommand(cmd); isTail {
 		if tailErr != nil {
 			return "", tailErr
 		}
-		if srv.Console == nil {
-			return "", fmt.Errorf("server console unavailable")
-		}
-		lines := srv.Console.tail(tailLines, func(line string) (string, bool) {
+		lines := srv.Console.tail(defaultServerTailLines, func(line string) (string, bool) {
 			return line, shouldRelayServerConsoleLine(line)
 		})
 		return formatServerTailReply(lines), nil
 	}
 
-	execCmd := cmd
-	captureIdleWait := serverCommandCaptureIdleWait
-	if strings.TrimSpace(opts.ActorID) != "" {
-		execCmd = appendServerCommandAuditEcho(cmd, opts.ActorID)
-		if captureIdleWait < serverCommandCaptureAuditIdleWait {
-			captureIdleWait = serverCommandCaptureAuditIdleWait
-		}
+	preamble := ""
+	if strings.TrimSpace(actorID) != "" {
+		preamble = formatServerCommandAuditEcho(cmd, actorID)
 	}
-	output, err := srv.writeConsoleAndCaptureFiltered(
-		execCmd,
-		serverCommandCaptureMaxWait,
-		captureIdleWait,
-		serverCommandReplyFilter(execCmd),
+	output, err := srv.Console.captureCommandBetweenSentinels(
+		preamble,
+		cmd,
+		serverCommandCaptureSafetyTimeout,
+		serverCommandNoiseFilter,
 	)
 	if err != nil {
 		return "", err
@@ -186,8 +175,5 @@ func (m *ServerManager) DispatchInstanceCmd(port int, cmd, actorID string) (stri
 	if srv == nil {
 		return "", errUnknownServerInstance
 	}
-	return execManagedServerCommand(srv, cmd, serverCommandOptions{
-		ActorID:       actorID,
-		CaptureOutput: true,
-	})
+	return captureManagedServerCommand(srv, cmd, actorID)
 }

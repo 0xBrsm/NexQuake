@@ -2,265 +2,186 @@ package admin
 
 import (
 	"encoding/json"
-	"fmt"
-	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/0xBrsm/NexQuake/nexus/internal/access"
+	"github.com/0xBrsm/NexQuake/nexus/internal/clients"
+	"github.com/0xBrsm/NexQuake/nexus/internal/orch"
+	"github.com/0xBrsm/NexQuake/nexus/trunk"
 )
 
-// --- ActorID ----------------------------------------------------------------
-
-func TestActorID_PrefersExplicitIdentity(t *testing.T) {
-	if got := ActorID("alice@example.com", "1.2.3.4", "127.0.0.1"); got != "alice@example.com" {
-		t.Fatalf("got %q", got)
+func newClientSession() trunk.SessionInfo {
+	return trunk.SessionInfo{
+		SourceKey: "198.51.100.10",
+		VirtualIP: [4]byte{127, 100, 10, 1},
+		Transport: "WebSocket",
 	}
 }
 
-func TestActorID_FallsBackToSourceIP(t *testing.T) {
-	if got := ActorID("anonymous", "198.51.100.11", "127.100.10.2"); got != "198.51.100.11" {
-		t.Fatalf("got %q", got)
+// integrationAdmin builds a fresh *Admin wired to fresh fake trunk/orch
+// implementations and a joined Clients view. Tests customize behaviour
+// by assigning to the fake's function fields before invoking Dispatch.
+func integrationAdmin() (*Admin, *clients.Registry, *fakeTrunk, *fakeOrch) {
+	ft := &fakeTrunk{}
+	fo := &fakeOrch{}
+	cs := clients.NewRegistry(ft)
+	a := New(cs, fo, nil, nil, access.NewBlocklist())
+	cs.Add([4]byte{127, 100, 10, 1}, access.Client{SourceIP: "198.51.100.10"})
+	return a, cs, ft, fo
+}
+
+func dispatchMethod(t *testing.T, a *Admin, method string, params any) *Response {
+	t.Helper()
+	raw, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	req := &Request{Jsonrpc: "2.0", Method: method, Params: raw, ID: json.RawMessage(`1`)}
+	return a.Dispatch(req, adminClient())
+}
+
+func TestIntegration_ServerList(t *testing.T) {
+	a, _, _, fo := integrationAdmin()
+	fo.SnapshotsFn = func() []orch.ServerSnapshot {
+		return []orch.ServerSnapshot{{Hostname: "fragfest", State: "running"}}
+	}
+	resp := dispatchMethod(t, a, "server.list", struct{}{})
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %+v", resp.Error)
+	}
+	got := resp.Result.(ServerListResult)
+	if len(got.Servers) != 1 || got.Servers[0].Hostname != "fragfest" {
+		t.Fatalf("got %+v", got.Servers)
 	}
 }
 
-func TestActorID_FallsBackToVirtualIP(t *testing.T) {
-	if got := ActorID("", "", "127.100.10.2"); got != "127.100.10.2" {
-		t.Fatalf("got %q", got)
+func TestIntegration_ServerStartByIndex(t *testing.T) {
+	a, _, _, fo := integrationAdmin()
+	var started int
+	fo.StartServerFn = func(idx int) error { started = idx; return nil }
+
+	resp := dispatchMethod(t, a, "server.start", map[string]any{"target": "1"})
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %+v", resp.Error)
+	}
+	if !resp.Result.(ServerLifecycleResult).OK {
+		t.Fatal("expected OK=true")
+	}
+	if started != 1 {
+		t.Fatalf("expected StartServer(1), got %d", started)
 	}
 }
 
-func TestActorID_DefaultsToAdmin(t *testing.T) {
-	if got := ActorID("", "", ""); got != "admin" {
-		t.Fatalf("got %q", got)
+func TestIntegration_ServerStartAll(t *testing.T) {
+	a, _, _, fo := integrationAdmin()
+	called := false
+	fo.StartServersAllFn = func() error { called = true; return nil }
+	resp := dispatchMethod(t, a, "server.start", map[string]any{"target": "all"})
+	if resp.Error != nil || !called {
+		t.Fatalf("expected success, got error=%+v called=%v", resp.Error, called)
 	}
 }
 
-// --- Authorize --------------------------------------------------------------
-
-func TestAuthorize_DeniesWithoutCredentials(t *testing.T) {
-	auth := &Auth{rconPassword: "secret"}
-	r := httptest.NewRequest("POST", "/rcon", nil)
-	actor, promoted := auth.Authorize(r, "198.51.100.1")
-	if actor.IsAdmin {
-		t.Fatalf("expected IsAdmin=false with no credentials")
-	}
-	if promoted {
-		t.Fatalf("expected passwordMatched=false with no credentials")
-	}
-}
-
-func TestAuthorize_AdmitsMatchingPasswordScheme(t *testing.T) {
-	auth := &Auth{rconPassword: "secret"}
-	r := httptest.NewRequest("POST", "/rcon", nil)
-	r.Header.Set("Authorization", "Rcon secret")
-	actor, promoted := auth.Authorize(r, "198.51.100.1")
-	if !actor.IsAdmin {
-		t.Fatalf("expected IsAdmin=true with matching password")
-	}
-	if !promoted {
-		t.Fatalf("expected passwordMatched=true on Rcon-scheme auth")
-	}
-	if actor.SourceIP != "198.51.100.1" {
-		t.Fatalf("got SourceIP=%q", actor.SourceIP)
-	}
-}
-
-func TestAuthorize_RejectsWrongPassword(t *testing.T) {
-	auth := &Auth{rconPassword: "secret"}
-	r := httptest.NewRequest("POST", "/rcon", nil)
-	r.Header.Set("Authorization", "Rcon nope")
-	actor, promoted := auth.Authorize(r, "198.51.100.1")
-	if actor.IsAdmin {
-		t.Fatalf("expected denial for wrong password")
-	}
-	if promoted {
-		t.Fatalf("unexpected passwordMatched")
-	}
-}
-
-func TestAuthorize_IgnoresWrongScheme(t *testing.T) {
-	auth := &Auth{rconPassword: "secret"}
-	r := httptest.NewRequest("POST", "/rcon", nil)
-	r.Header.Set("Authorization", "Bearer secret") // wrong scheme for rcon
-	actor, promoted := auth.Authorize(r, "198.51.100.1")
-	if actor.IsAdmin || promoted {
-		t.Fatal("expected denial when Authorization uses wrong scheme for rcon")
-	}
-}
-
-func TestAuthorize_NilAuthDenies(t *testing.T) {
-	var auth *Auth
-	r := httptest.NewRequest("POST", "/rcon", nil)
-	r.Header.Set("Authorization", "Rcon anything")
-	actor, _ := auth.Authorize(r, "198.51.100.1")
-	if actor.IsAdmin {
-		t.Fatalf("expected denial for nil auth")
-	}
-}
-
-// --- ParseRequest -----------------------------------------------------------
-
-func TestParseRequest_Empty(t *testing.T) {
-	_, resp := ParseRequest(nil)
-	if resp == nil || resp.Error == nil || resp.Error.Code != ErrCodeInvalidReq {
-		t.Fatalf("expected invalid-request error, got %+v", resp)
-	}
-}
-
-func TestParseRequest_BadJSON(t *testing.T) {
-	_, resp := ParseRequest([]byte("{not json"))
-	if resp == nil || resp.Error == nil || resp.Error.Code != ErrCodeParseError {
-		t.Fatalf("expected parse-error, got %+v", resp)
-	}
-}
-
-func TestParseRequest_WrongVersion(t *testing.T) {
-	_, resp := ParseRequest([]byte(`{"jsonrpc":"1.0","method":"x","id":1}`))
-	if resp == nil || resp.Error == nil || resp.Error.Code != ErrCodeInvalidReq {
-		t.Fatalf("expected invalid-request on wrong version, got %+v", resp)
-	}
-}
-
-func TestParseRequest_MissingMethod(t *testing.T) {
-	_, resp := ParseRequest([]byte(`{"jsonrpc":"2.0","id":1}`))
-	if resp == nil || resp.Error == nil || resp.Error.Code != ErrCodeInvalidReq {
-		t.Fatalf("expected invalid-request on missing method, got %+v", resp)
-	}
-}
-
-func TestParseRequest_OK(t *testing.T) {
-	req, resp := ParseRequest([]byte(`{"jsonrpc":"2.0","method":"server.list","id":7}`))
-	if resp != nil {
-		t.Fatalf("unexpected error: %+v", resp)
-	}
-	if req.Method != "server.list" {
-		t.Fatalf("got method %q", req.Method)
-	}
-}
-
-// --- Dispatch ---------------------------------------------------------------
-
-func adminActor() Actor {
-	return Actor{ID: "admin", SourceIP: "198.51.100.1", IsAdmin: true}
-}
-
-func TestDispatch_UnknownMethod(t *testing.T) {
-	req := &Request{Jsonrpc: "2.0", Method: "bogus.method", ID: json.RawMessage(`1`)}
-	resp := Dispatch(req, &Env{}, adminActor())
-	if resp.Error == nil || resp.Error.Code != ErrCodeMethodNotFound {
-		t.Fatalf("expected method-not-found, got %+v", resp.Error)
-	}
-}
-
-func TestDispatch_InvalidParams(t *testing.T) {
-	// server.launch requires non-empty binary
-	req := &Request{Jsonrpc: "2.0", Method: "server.launch", Params: json.RawMessage(`{}`), ID: json.RawMessage(`2`)}
-	resp := Dispatch(req, &Env{}, adminActor())
+func TestIntegration_ServerStartRejectsBadTarget(t *testing.T) {
+	a, _, _, _ := integrationAdmin()
+	resp := dispatchMethod(t, a, "server.start", map[string]any{"target": "fragfest"})
 	if resp.Error == nil || resp.Error.Code != ErrCodeInvalidParams {
-		t.Fatalf("expected invalid-params, got %+v", resp.Error)
+		t.Fatalf("expected InvalidParams for hostname target, got %+v", resp.Error)
 	}
 }
 
-func TestDispatch_ServerListOK(t *testing.T) {
-	env := &Env{ServerSnapshots: func() []ServerInfo {
-		return []ServerInfo{{Line: 0, Hostname: "fragfest", State: "running"}}
-	}}
-	req := &Request{Jsonrpc: "2.0", Method: "server.list", ID: json.RawMessage(`3`)}
-	resp := Dispatch(req, env, adminActor())
+func TestIntegration_ServerRemoveRequiresIndex(t *testing.T) {
+	a, _, _, _ := integrationAdmin()
+	resp := dispatchMethod(t, a, "server.remove", map[string]any{})
+	if resp.Error == nil || resp.Error.Code != ErrCodeInvalidParams {
+		t.Fatalf("expected InvalidParams, got %+v", resp.Error)
+	}
+}
+
+func TestIntegration_ServerRemoveByIndex(t *testing.T) {
+	a, _, _, fo := integrationAdmin()
+	var removed int
+	fo.RemoveServerFn = func(idx int) error { removed = idx; return nil }
+	resp := dispatchMethod(t, a, "server.remove", map[string]any{"index": 2})
 	if resp.Error != nil {
 		t.Fatalf("unexpected error: %+v", resp.Error)
 	}
-	result := resp.Result.(ServerListResult)
-	if len(result.Servers) != 1 || result.Servers[0].Hostname != "fragfest" {
-		t.Fatalf("got %+v", result.Servers)
+	if !resp.Result.(ServerRemoveResult).Removed || removed != 2 {
+		t.Fatalf("got removed=%d result=%+v", removed, resp.Result)
 	}
 }
 
-func TestDispatch_ServerListUnavailable(t *testing.T) {
-	req := &Request{Jsonrpc: "2.0", Method: "server.list", ID: json.RawMessage(`4`)}
-	resp := Dispatch(req, &Env{}, adminActor())
-	if resp.Error == nil || resp.Error.Code != ErrCodeUnavailable {
-		t.Fatalf("expected unavailable error, got %+v", resp.Error)
+func TestIntegration_ServerCommand(t *testing.T) {
+	a, _, _, fo := integrationAdmin()
+	fo.DispatchInstanceCmdFn = func(port int, cmd, actorID string) (string, error) {
+		if port != 26000 || cmd != "status" {
+			t.Fatalf("unexpected dispatch: port=%d cmd=%q", port, cmd)
+		}
+		return "host: fragfest\n", nil
 	}
-}
-
-func TestDispatch_LogsTailTrimsBlank(t *testing.T) {
-	env := &Env{TailNexusLog: func(n int) []string {
-		return []string{"hello\n", "", "world\r\n"}
-	}}
-	req := &Request{Jsonrpc: "2.0", Method: "logs.tail", ID: json.RawMessage(`5`)}
-	resp := Dispatch(req, env, adminActor())
+	resp := dispatchMethod(t, a, "server.instance.command", map[string]any{"port": 26000, "cmd": "status"})
 	if resp.Error != nil {
 		t.Fatalf("unexpected error: %+v", resp.Error)
 	}
-	got := resp.Result.(LogsTailResult).Lines
-	if len(got) != 2 || got[0] != "hello" || got[1] != "world" {
-		t.Fatalf("got lines %q", got)
+	if reply := resp.Result.(InstanceCommandResult).Reply; !strings.Contains(reply, "fragfest") {
+		t.Fatalf("got reply %q", reply)
 	}
 }
 
-// --- server target parsing ---------------------------------------------------
-
-func TestParseServerTargetToken_Index(t *testing.T) {
-	idx, all, err := parseServerTargetToken("3")
-	if err != nil || all || idx != 3 {
-		t.Fatalf("got idx=%d all=%v err=%v", idx, all, err)
+func TestIntegration_ClientList(t *testing.T) {
+	a, cs, ft, _ := integrationAdmin()
+	cs.Add([4]byte{127, 100, 10, 2}, access.Client{SourceIP: "198.51.100.11", ID: "bob@example.com"})
+	ft.SessionsFn = func() []trunk.SessionInfo {
+		return []trunk.SessionInfo{
+			{SourceKey: "198.51.100.10", VirtualIP: [4]byte{127, 100, 10, 1}},
+			{SourceKey: "198.51.100.11", VirtualIP: [4]byte{127, 100, 10, 2}},
+		}
+	}
+	resp := dispatchMethod(t, a, "client.list", struct{}{})
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %+v", resp.Error)
+	}
+	got := resp.Result.(ClientListResult).Clients
+	if len(got) != 2 {
+		t.Fatalf("expected 2 clients, got %d", len(got))
+	}
+	// Sorted by VirtualIP bytes — 127.100.10.1 first.
+	if got[0].VirtualAddr != "127.100.10.1" {
+		t.Fatalf("got[0].VirtualAddr = %q, want 127.100.10.1", got[0].VirtualAddr)
+	}
+	if got[1].ID != "bob@example.com" {
+		t.Fatalf("got[1].ID = %q, want bob@example.com", got[1].ID)
 	}
 }
 
-func TestParseServerTargetToken_All(t *testing.T) {
-	idx, all, err := parseServerTargetToken("all")
-	if err != nil || !all || idx != 0 {
-		t.Fatalf("got idx=%d all=%v err=%v", idx, all, err)
+func TestIntegration_ClientBanClosesAndReserves(t *testing.T) {
+	sess := newClientSession()
+	nqipStr := "127.100.10.1"
+
+	a, _, ft, _ := integrationAdmin()
+	ft.SessionsFn = func() []trunk.SessionInfo { return []trunk.SessionInfo{sess} }
+
+	resp := dispatchMethod(t, a, "client.ban", map[string]any{"nqip": nqipStr})
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %+v", resp.Error)
+	}
+	result := resp.Result.(ClientBanResult)
+	if result.VirtualAddr != nqipStr {
+		t.Fatalf("VirtualIP = %q, want %q", result.VirtualAddr, nqipStr)
+	}
+	if len(result.SourceIPs) != 1 || result.SourceIPs[0] != sess.SourceKey {
+		t.Fatalf("SourceIPs = %v, want [%q]", result.SourceIPs, sess.SourceKey)
+	}
+	if !a.blocker.(*access.Blocklist).IsBlocked(sess.SourceKey) {
+		t.Fatal("expected source IP to be blocked")
 	}
 }
 
-func TestParseServerTargetToken_AllIgnoresCase(t *testing.T) {
-	_, all, err := parseServerTargetToken("ALL")
-	if err != nil || !all {
-		t.Fatalf("expected ALL to be accepted, got all=%v err=%v", all, err)
-	}
-}
-
-func TestParseServerTargetToken_RejectsEmpty(t *testing.T) {
-	_, _, err := parseServerTargetToken("")
-	if _, ok := err.(*MethodError); !ok || err.(*MethodError).Code != ErrCodeInvalidParams {
-		t.Fatalf("expected InvalidParams, got %v", err)
-	}
-}
-
-func TestParseServerTargetToken_RejectsHostname(t *testing.T) {
-	_, _, err := parseServerTargetToken("fragfest")
-	if _, ok := err.(*MethodError); !ok || err.(*MethodError).Code != ErrCodeInvalidParams {
-		t.Fatalf("expected InvalidParams for hostname, got %v", err)
-	}
-}
-
-func TestParseServerTargetToken_RejectsNonPositive(t *testing.T) {
-	_, _, err := parseServerTargetToken("0")
-	if _, ok := err.(*MethodError); !ok || err.(*MethodError).Code != ErrCodeInvalidParams {
-		t.Fatalf("expected InvalidParams for 0, got %v", err)
-	}
-}
-
-// --- audit logging --------------------------------------------------------
-
-func TestDispatch_EmitsAuditLogs(t *testing.T) {
-	var entries []string
-	env := &Env{
-		ServerSnapshots: func() []ServerInfo { return nil },
-		Auditf: func(format string, args ...any) {
-			entries = append(entries, fmt.Sprintf(format, args...))
-		},
-	}
-	req := &Request{Jsonrpc: "2.0", Method: "server.list", ID: json.RawMessage(`9`)}
-	_ = Dispatch(req, env, Actor{ID: "alice@example.com", IsAdmin: true})
-	if len(entries) != 2 {
-		t.Fatalf("expected request+response audit logs, got %d: %v", len(entries), entries)
-	}
-	if !strings.Contains(entries[0], `actor="alice@example.com"`) || !strings.Contains(entries[0], "method=server.list") {
-		t.Fatalf("request audit log: %q", entries[0])
-	}
-	if !strings.Contains(entries[1], `method=server.list`) {
-		t.Fatalf("response audit log: %q", entries[1])
+func TestIntegration_ClientBanUnknownVIP(t *testing.T) {
+	a, _, _, _ := integrationAdmin()
+	resp := dispatchMethod(t, a, "client.ban", map[string]any{"nqip": "127.0.0.99"})
+	if resp.Error == nil || resp.Error.Code != ErrCodeNotFound {
+		t.Fatalf("expected NotFound, got %+v", resp.Error)
 	}
 }

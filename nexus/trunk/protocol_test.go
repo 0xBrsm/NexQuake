@@ -43,43 +43,25 @@ func TestDecodeFrame(t *testing.T) {
 	}
 }
 
-func TestBuildIdentityFrame(t *testing.T) {
-	if frame := buildIdentityFrame([4]byte{}); frame != nil {
-		t.Fatalf("expected nil identity frame for zero client ip")
-	}
-
-	frame := buildIdentityFrame([4]byte{127, 100, 10, 1})
-	if len(frame) != 2+len(defaultIdentityMagic)+4 {
-		t.Fatalf("identity frame len = %d", len(frame))
-	}
-	if frame[0] != byte(controlPort>>8) || frame[1] != byte(controlPort) {
-		t.Fatalf("identity frame port header = [%d %d], want control port", frame[0], frame[1])
-	}
-	if string(frame[2:2+len(defaultIdentityMagic)]) != defaultIdentityMagic {
-		t.Fatalf("identity frame magic mismatch")
-	}
-}
-
 func TestConnHandleFrame_ControlDispatch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	called := false
-	r := &Conn{
+	tk := &Trunk{
+		onCtrlFrame: func(s *Session, payload []byte) {
+			called = true
+			if string(payload) != "ping" {
+				t.Fatalf("control payload = %q, want %q", string(payload), "ping")
+			}
+			_ = s.SendControl([]byte("pong"))
+		},
+	}
+	r := &Session{
 		tx:     make(chan []byte, 1),
 		ctx:    ctx,
 		cancel: cancel,
-		warnf:  noopLogf,
-		debugf: noopLogf,
-		dispatch: FrameDispatch{
-			HandleControlFrame: func(conn *Conn, payload []byte) []byte {
-				called = true
-				if string(payload) != "ping" {
-					t.Fatalf("control payload = %q, want %q", string(payload), "ping")
-				}
-				return []byte("pong")
-			},
-		},
+		trunk:  tk,
 	}
 
 	r.handleFrame(buildFrame(controlPort, []byte("ping")))
@@ -97,25 +79,5 @@ func TestConnHandleFrame_ControlDispatch(t *testing.T) {
 		}
 	default:
 		t.Fatalf("expected control response frame")
-	}
-}
-
-func TestConnHandleFrame_DropsDisallowedPort(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	r := &Conn{
-		ctx:    ctx,
-		cancel: cancel,
-		warnf:  noopLogf,
-		debugf: noopLogf,
-		dispatch: FrameDispatch{
-			IsAllowedPort: func(port int) bool { return false },
-		},
-	}
-
-	r.handleFrame(buildFrame(26000, []byte{1}))
-	if got := r.ActiveServerPort(); got != 0 {
-		t.Fatalf("ActiveServerPort = %d, want 0 after disallowed frame", got)
 	}
 }

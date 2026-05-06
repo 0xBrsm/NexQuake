@@ -2,7 +2,7 @@ package assets
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,7 +25,7 @@ func TestQuickstartGame_CreatesFromCfgAndAppendsQuickstart(t *testing.T) {
 
 	t.Setenv("QUICKSTART", "ctf")
 
-	if err := QuickstartGame(context.Background(), gameDir, cfgDir, nil); err != nil {
+	if err := QuickstartGame(context.Background(), gameDir, cfgDir); err != nil {
 		t.Fatalf("QuickstartGame: %v", err)
 	}
 
@@ -59,7 +59,7 @@ func TestQuickstartGame_NoOverwriteExistingServersIni(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := QuickstartGame(context.Background(), gameDir, cfgDir, nil); err != nil {
+	if err := QuickstartGame(context.Background(), gameDir, cfgDir); err != nil {
 		t.Fatalf("QuickstartGame: %v", err)
 	}
 
@@ -88,7 +88,7 @@ func TestQuickstartGame_AllSelectsAllGamesInCatalogOrder(t *testing.T) {
 	}
 	t.Setenv("QUICKSTART", "all")
 
-	if err := QuickstartGame(context.Background(), gameDir, cfgDir, nil); err != nil {
+	if err := QuickstartGame(context.Background(), gameDir, cfgDir); err != nil {
 		t.Fatalf("QuickstartGame: %v", err)
 	}
 
@@ -125,11 +125,11 @@ func TestQuickstartGame_SkipsInvalidQuickstartValues(t *testing.T) {
 	t.Setenv("QUICKSTART", "bogus,ctf,still-nope")
 
 	var logs []string
-	logf := func(format string, args ...any) {
-		logs = append(logs, fmt.Sprintf(format, args...))
-	}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(captureHandler{entries: &logs}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	if err := QuickstartGame(context.Background(), gameDir, cfgDir, logf); err != nil {
+	if err := QuickstartGame(context.Background(), gameDir, cfgDir); err != nil {
 		t.Fatalf("QuickstartGame: %v", err)
 	}
 
@@ -147,14 +147,15 @@ func TestQuickstartGame_SkipsInvalidQuickstartValues(t *testing.T) {
 	if strings.Contains(s, "bogus") || strings.Contains(s, "still-nope") {
 		t.Fatalf("unexpected invalid quickstart entry in servers.ini:\n%s", s)
 	}
-	if len(logs) != 2 {
-		t.Fatalf("expected 2 skip logs, got %v", logs)
+	skipLogs := matching(logs, "quickstart: skipped QUICKSTART entry")
+	if len(skipLogs) != 2 {
+		t.Fatalf("expected 2 skip logs, got %d (all=%v)", len(skipLogs), logs)
 	}
-	if logs[0] != `quickstart: skipped QUICKSTART entry "bogus"` {
-		t.Fatalf("unexpected first skip log: %q", logs[0])
+	if !strings.Contains(skipLogs[0], `"bogus"`) {
+		t.Fatalf("unexpected first skip log: %q", skipLogs[0])
 	}
-	if logs[1] != `quickstart: skipped QUICKSTART entry "still-nope"` {
-		t.Fatalf("unexpected second skip log: %q", logs[1])
+	if !strings.Contains(skipLogs[1], `"still-nope"`) {
+		t.Fatalf("unexpected second skip log: %q", skipLogs[1])
 	}
 }
 
@@ -175,11 +176,11 @@ func TestQuickstartGame_SkipsBaseNameInQuickstart(t *testing.T) {
 	t.Setenv("QUICKSTART", "id1,ctf")
 
 	var logs []string
-	logf := func(format string, args ...any) {
-		logs = append(logs, fmt.Sprintf(format, args...))
-	}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(captureHandler{entries: &logs}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	if err := QuickstartGame(context.Background(), gameDir, cfgDir, logf); err != nil {
+	if err := QuickstartGame(context.Background(), gameDir, cfgDir); err != nil {
 		t.Fatalf("QuickstartGame: %v", err)
 	}
 
@@ -194,8 +195,9 @@ func TestQuickstartGame_SkipsBaseNameInQuickstart(t *testing.T) {
 	if !strings.Contains(s, "nqserver @def -game ctf") {
 		t.Fatalf("expected ctf quickstart entry appended, got:\n%s", s)
 	}
-	if len(logs) != 1 || logs[0] != `quickstart: skipped QUICKSTART entry "id1"` {
-		t.Fatalf("unexpected logs: %v", logs)
+	skipLogs := matching(logs, "quickstart: skipped QUICKSTART entry")
+	if len(skipLogs) != 1 || !strings.Contains(skipLogs[0], `"id1"`) {
+		t.Fatalf("unexpected skip logs: %v", skipLogs)
 	}
 }
 
@@ -223,7 +225,7 @@ func TestQuickstartGame_AlwaysBootstrapsBaseGame(t *testing.T) {
 	}
 	t.Setenv("QUICKSTART", "bogus")
 
-	if err := QuickstartGame(context.Background(), gameDir, cfgDir, nil); err != nil {
+	if err := QuickstartGame(context.Background(), gameDir, cfgDir); err != nil {
 		t.Fatalf("QuickstartGame: %v", err)
 	}
 
@@ -262,26 +264,32 @@ func TestQuickstartGame_LogsDownloadStartAndGameCompletion(t *testing.T) {
 	}
 
 	var logs []string
-	logf := func(format string, args ...any) {
-		logs = append(logs, fmt.Sprintf(format, args...))
-	}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(captureHandler{entries: &logs}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	if err := QuickstartGame(context.Background(), gameDir, cfgDir, logf); err != nil {
+	if err := QuickstartGame(context.Background(), gameDir, cfgDir); err != nil {
 		t.Fatalf("QuickstartGame: %v", err)
 	}
 
-	want := []string{
-		"Quickstart: downloading 2 game packs...",
-		"  id1 complete!",
-		"  ctf complete!",
+	starts := matching(logs, "Quickstart: downloading")
+	if len(starts) != 1 {
+		t.Fatalf("expected one downloading log, got=%v", logs)
 	}
-	if len(logs) != len(want) {
-		t.Fatalf("unexpected log count: got %d want %d logs=%v", len(logs), len(want), logs)
+	if !strings.Contains(starts[0], "2 game packs") {
+		t.Fatalf("expected pack count in log, got=%q", starts[0])
 	}
-	for i := range want {
-		if logs[i] != want[i] {
-			t.Fatalf("unexpected log[%d]: got %q want %q", i, logs[i], want[i])
+	var completes []string
+	for _, e := range logs {
+		if strings.Contains(e, "complete!") {
+			completes = append(completes, e)
 		}
+	}
+	if len(completes) != 2 {
+		t.Fatalf("expected 2 complete logs, got %d (all=%v)", len(completes), logs)
+	}
+	if !strings.Contains(completes[0], "id1") || !strings.Contains(completes[1], "ctf") {
+		t.Fatalf("unexpected complete logs: %v", completes)
 	}
 }
 
@@ -301,7 +309,7 @@ func TestQuickstartGame_IgnoresGameInMacroDefinition(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := QuickstartGame(context.Background(), gameDir, cfgDir, nil); err != nil {
+	if err := QuickstartGame(context.Background(), gameDir, cfgDir); err != nil {
 		t.Fatalf("QuickstartGame: %v", err)
 	}
 
@@ -325,11 +333,11 @@ func TestQuickstartGame_DoesNotLogMissingGameFromServersIni(t *testing.T) {
 	}
 
 	var logs []string
-	logf := func(format string, args ...any) {
-		logs = append(logs, fmt.Sprintf(format, args...))
-	}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(captureHandler{entries: &logs}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	if err := QuickstartGame(context.Background(), gameDir, cfgDir, logf); err != nil {
+	if err := QuickstartGame(context.Background(), gameDir, cfgDir); err != nil {
 		t.Fatalf("QuickstartGame: %v", err)
 	}
 
@@ -354,7 +362,7 @@ func TestQuickstartGame_ResolvesRelativeCatalogSourceFromCFGDIR(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := QuickstartGame(context.Background(), gameDir, cfgDir, nil); err != nil {
+	if err := QuickstartGame(context.Background(), gameDir, cfgDir); err != nil {
 		t.Fatalf("QuickstartGame: %v", err)
 	}
 
@@ -381,7 +389,7 @@ func TestQuickstartGame_DefaultQuickstartIsFFA(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := QuickstartGame(context.Background(), gameDir, cfgDir, nil); err != nil {
+	if err := QuickstartGame(context.Background(), gameDir, cfgDir); err != nil {
 		t.Fatalf("QuickstartGame: %v", err)
 	}
 
@@ -410,16 +418,17 @@ func TestQuickstartGame_DefaultQuickstartLogsWhenFFAIsMissing(t *testing.T) {
 	}
 
 	var logs []string
-	logf := func(format string, args ...any) {
-		logs = append(logs, fmt.Sprintf(format, args...))
-	}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(captureHandler{entries: &logs}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	if err := QuickstartGame(context.Background(), gameDir, cfgDir, logf); err != nil {
+	if err := QuickstartGame(context.Background(), gameDir, cfgDir); err != nil {
 		t.Fatalf("QuickstartGame: %v", err)
 	}
 
-	if len(logs) != 1 || logs[0] != `quickstart: skipped QUICKSTART entry "ffa"` {
-		t.Fatalf("unexpected logs: %v", logs)
+	skipLogs := matching(logs, "quickstart: skipped QUICKSTART entry")
+	if len(skipLogs) != 1 || !strings.Contains(skipLogs[0], `"ffa"`) {
+		t.Fatalf("unexpected skip logs: %v", skipLogs)
 	}
 
 	b, err := os.ReadFile(filepath.Join(gameDir, "servers.ini"))

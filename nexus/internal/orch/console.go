@@ -2,6 +2,10 @@ package orch
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/binary"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,8 +18,26 @@ import (
 
 type serverConsoleLineFilter func(line string) (filtered string, keep bool)
 
-type serverConsoleWriteOptions struct {
-	SuppressRelayEcho bool
+// consoleSentinelPrefix marks lines emitted by Nexus to bracket captured
+// command output. Lines with this prefix never reach the on-disk log, the tail
+// history, or the in-game console relay; the capture path that injected them
+// whitelists its specific begin/end markers and discards them after demarcation.
+const consoleSentinelPrefix = "__NQX_"
+
+// newConsoleSentinels returns a fresh begin/end pair. The random ID makes a
+// command's output impossible to truncate by user-injected `echo` text and
+// makes accidental collision with real server output negligible.
+func newConsoleSentinels() (begin, end string) {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		binary.BigEndian.PutUint64(buf[:], uint64(time.Now().UnixNano()))
+	}
+	id := hex.EncodeToString(buf[:])
+	return consoleSentinelPrefix + "B_" + id, consoleSentinelPrefix + "E_" + id
+}
+
+func isConsoleSentinelLine(line string) bool {
+	return strings.HasPrefix(strings.TrimSpace(line), consoleSentinelPrefix)
 }
 
 func parsePortConsoleLine(line string) (int, bool) {
@@ -119,10 +141,10 @@ func newServerConsole(pty *os.File) *serverConsole {
 }
 
 func (c *serverConsole) writeCommand(cmd string) error {
-	return c.writeCommandWithOptions(cmd, serverConsoleWriteOptions{})
+	return c.writeCommandWithOptions(cmd, false)
 }
 
-func (c *serverConsole) writeCommandWithOptions(cmd string, opts serverConsoleWriteOptions) error {
+func (c *serverConsole) writeCommandWithOptions(cmd string, suppressRelayEcho bool) error {
 	if c.pty == nil {
 		return io.ErrClosedPipe
 	}
@@ -130,7 +152,7 @@ func (c *serverConsole) writeCommandWithOptions(cmd string, opts serverConsoleWr
 	if line == "" {
 		return nil
 	}
-	if opts.SuppressRelayEcho {
+	if suppressRelayEcho {
 		c.queueSuppressedRelayEchoLine(line)
 	}
 
@@ -138,7 +160,7 @@ func (c *serverConsole) writeCommandWithOptions(cmd string, opts serverConsoleWr
 	defer c.writeMu.Unlock()
 
 	_, err := io.WriteString(c.pty, line)
-	if err != nil && opts.SuppressRelayEcho {
+	if err != nil && suppressRelayEcho {
 		c.consumeSuppressedRelayEchoLine(line)
 	}
 	return err
@@ -202,13 +224,11 @@ func (c *serverConsole) subscribe(buffer int) (<-chan string, func()) {
 }
 
 func (c *serverConsole) subscribeFiltered(buffer int, filter serverConsoleLineFilter) (<-chan string, func()) {
-	lines, cancel := c.subscribe(buffer)
 	if filter == nil {
-		filter = func(line string) (string, bool) {
-			return line, true
-		}
+		return c.subscribe(buffer)
 	}
 
+	lines, cancel := c.subscribe(buffer)
 	out := make(chan string, buffer)
 	done := make(chan struct{})
 	var cancelOnce sync.Once
@@ -249,7 +269,9 @@ func (c *serverConsole) publishLine(line string) {
 	if line == "" {
 		return
 	}
-	c.appendHistoryLine(line)
+	if !isConsoleSentinelLine(line) {
+		c.appendHistoryLine(line)
+	}
 
 	c.subscribersMu.RLock()
 	defer c.subscribersMu.RUnlock()
@@ -332,7 +354,9 @@ func (c *serverConsole) run(logFile *os.File, formatLogLine func(string, time.Ti
 				}
 				continue
 			}
-			_, _ = io.WriteString(logFile, formatLogLine(line, time.Now()))
+			if !isConsoleSentinelLine(line) {
+				_, _ = io.WriteString(logFile, formatLogLine(line, time.Now()))
+			}
 			c.publishLine(line)
 		}
 		if err != nil {
@@ -341,68 +365,78 @@ func (c *serverConsole) run(logFile *os.File, formatLogLine func(string, time.Ti
 	}
 }
 
-func (c *serverConsole) captureCommandOutputFiltered(cmd string, maxWait, idleWait time.Duration, filter serverConsoleLineFilter) (string, error) {
-	if maxWait <= 0 {
-		maxWait = 750 * time.Millisecond
+// captureCommandBetweenSentinels writes "<preamble; ?>echo BEGIN; <cmd>; echo END"
+// to the PTY and returns the lines emitted between the BEGIN and END markers.
+//
+// preamble runs before the BEGIN marker, so its output lands in the on-disk log
+// (audit trail) but is not included in the captured reply. baseFilter drops
+// uninteresting noise from inside the captured window; sentinel lines are
+// always passed through to the collector regardless of baseFilter.
+//
+// safetyTimeout only fires if the server hangs and never emits END — there is
+// no idle-wait heuristic. A long-running command's reply is bounded by END,
+// not by output rate.
+func (c *serverConsole) captureCommandBetweenSentinels(preamble, cmd string, safetyTimeout time.Duration, baseFilter serverConsoleLineFilter) (string, error) {
+	if safetyTimeout <= 0 {
+		safetyTimeout = serverCommandCaptureSafetyTimeout
 	}
-	if idleWait <= 0 {
-		idleWait = 100 * time.Millisecond
+	begin, end := newConsoleSentinels()
+
+	var framed strings.Builder
+	if pre := strings.TrimRight(strings.TrimSpace(preamble), ";"); pre != "" {
+		framed.WriteString(pre)
+		framed.WriteString("; ")
+	}
+	fmt.Fprintf(&framed, "echo %s; %s; echo %s", begin, cmd, end)
+
+	sentinelFilter := func(line string) (string, bool) {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == begin || trimmed == end {
+			return line, true
+		}
+		if baseFilter == nil {
+			return line, true
+		}
+		return baseFilter(line)
 	}
 
 	c.commandMu.Lock()
 	defer c.commandMu.Unlock()
 
-	lines, cancel := c.subscribeFiltered(256, filter)
+	lines, cancel := c.subscribeFiltered(256, sentinelFilter)
 	defer cancel()
 
-	if err := c.writeCommandWithOptions(cmd, serverConsoleWriteOptions{SuppressRelayEcho: true}); err != nil {
+	if err := c.writeCommandWithOptions(framed.String(), true); err != nil {
 		return "", err
 	}
-	return collectConsoleOutput(lines, maxWait, idleWait), nil
+	return collectBetweenSentinels(lines, begin, end, safetyTimeout), nil
 }
 
-func collectConsoleOutput(lines <-chan string, maxWait, idleWait time.Duration) string {
+func collectBetweenSentinels(lines <-chan string, begin, end string, safetyTimeout time.Duration) string {
 	var out strings.Builder
 
-	maxTimer := time.NewTimer(maxWait)
-	defer maxTimer.Stop()
+	timer := time.NewTimer(safetyTimeout)
+	defer timer.Stop()
 
-	var idleTimer *time.Timer
-	var idleC <-chan time.Time
-	resetIdle := func() {
-		if idleTimer == nil {
-			idleTimer = time.NewTimer(idleWait)
-			idleC = idleTimer.C
-			return
-		}
-		if !idleTimer.Stop() {
-			select {
-			case <-idleTimer.C:
-			default:
-			}
-		}
-		idleTimer.Reset(idleWait)
-	}
-	defer func() {
-		if idleTimer != nil && !idleTimer.Stop() {
-			select {
-			case <-idleTimer.C:
-			default:
-			}
-		}
-	}()
-
+	started := false
 	for {
 		select {
 		case line, ok := <-lines:
 			if !ok {
 				return out.String()
 			}
+			trimmed := strings.TrimSpace(line)
+			if !started {
+				if trimmed == begin {
+					started = true
+				}
+				continue
+			}
+			if trimmed == end {
+				return out.String()
+			}
 			out.WriteString(line)
-			resetIdle()
-		case <-idleC:
-			return out.String()
-		case <-maxTimer.C:
+		case <-timer.C:
 			return out.String()
 		}
 	}
@@ -410,14 +444,13 @@ func collectConsoleOutput(lines <-chan string, maxWait, idleWait time.Duration) 
 
 func monitorServerStartup(
 	console *serverConsole,
-	shouldProbePort bool,
 	onPort func(int),
 	onSearchPath func([]string),
 ) {
 	if console == nil {
 		return
 	}
-	needPort := shouldProbePort
+	needPort := onPort != nil
 	needPath := onSearchPath != nil
 	if !needPort && !needPath {
 		return
@@ -459,9 +492,7 @@ func monitorServerStartup(
 			port, ok := parsePortConsoleLine(trimmed)
 			if ok {
 				resolvedPort = true
-				if onPort != nil {
-					onPort(port)
-				}
+				onPort(port)
 			}
 		}
 		if needPath && requestedPath && !resolvedPath {

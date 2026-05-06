@@ -1,8 +1,8 @@
 /*
- * net_ws.c — WebSocket backend for net_wasm.c.
+ * net_ws.c — WebSocket transport for net_wasm.c.
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
- * Fills out wasm_ws_backend. Non-blocking start(); send_raw() assumes
+ * Fills out wasm_ws_transport. Non-blocking start(); send_raw() assumes
  * is_ready() per the contract in net_wasm.h. No sleeps here — all waits
  * live in WASM_SendPacket.
  *
@@ -27,13 +27,13 @@ static EMSCRIPTEN_WEBSOCKET_T  ws;
 static const char             *ws_last_error = "";
 
 // Headless: Module.websocketUrl / Module.WEBSOCKET_URL.
-// Browser:  ws(s)://<location.host>/ws.
+// Browser:  ws(s)://<location.host>/connect.
 EM_JS (char *, WS_ConnectUrl, (), {
 	var override = Module.websocketUrl || Module.WEBSOCKET_URL || "";
 	if (override) return stringToNewUTF8(String(override));
 	if (typeof location !== 'undefined' && location.host) {
 		var proto = (location.protocol === 'https:') ? 'wss:' : 'ws:';
-		return stringToNewUTF8(proto + '//' + location.host + '/ws');
+		return stringToNewUTF8(proto + '//' + location.host + '/connect');
 	}
 	return 0;
 });
@@ -81,7 +81,7 @@ static EM_BOOL WS_OnMessage (int eventType, const EmscriptenWebSocketMessageEven
 }
 
 //----------------------------------------------------------------------------
-// wasm_backend_t.
+// wasm_transport_t.
 
 static qboolean WS_IsAvailable (void) { return true; }
 static qboolean WS_IsReady (void)     { return ws_started && ws_connected; }
@@ -155,7 +155,7 @@ static const char *WS_LastError (void)
 	return ws_last_error[0] ? ws_last_error : "unknown error";
 }
 
-const wasm_backend_t wasm_ws_backend = {
+const wasm_transport_t wasm_ws_transport = {
 	WS_IsAvailable, WS_IsReady, WS_IsClosed,
 	WS_Start, WS_SendRaw, WS_Close,
 	NULL, // no per-poll tick; onmessage pushes to WASM_OnPacket directly

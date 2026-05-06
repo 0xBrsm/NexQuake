@@ -149,7 +149,23 @@ func TestSubscribeFiltered_AppliesFilter(t *testing.T) {
 	}
 }
 
-func TestCaptureCommandOutputFiltered_AppliesFilter(t *testing.T) {
+// extractConsoleSentinelsFromWrite parses the framed command Nexus wrote to the
+// PTY and returns the begin/end markers it embedded. Used by tests to play the
+// "server" side of the protocol — replay BEGIN, the canned reply, then END.
+func extractConsoleSentinelsFromWrite(written string) (begin, end string) {
+	for _, field := range strings.Fields(written) {
+		token := strings.TrimRight(field, ";")
+		switch {
+		case strings.HasPrefix(token, consoleSentinelPrefix+"B_"):
+			begin = token
+		case strings.HasPrefix(token, consoleSentinelPrefix+"E_"):
+			end = token
+		}
+	}
+	return begin, end
+}
+
+func TestCaptureCommandBetweenSentinels_AppliesFilter(t *testing.T) {
 	ptyRead, ptyWrite, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
@@ -161,26 +177,88 @@ func TestCaptureCommandOutputFiltered_AppliesFilter(t *testing.T) {
 
 	c := newServerConsole(ptyWrite)
 	go func() {
-		buf := make([]byte, 128)
-		_, _ = ptyRead.Read(buf)
+		buf := make([]byte, 256)
+		n, _ := ptyRead.Read(buf)
+		begin, end := extractConsoleSentinelsFromWrite(string(buf[:n]))
+		c.publishLine(begin + "\n")
 		c.publishLine("FindFile: maps/e1m1.bsp\n")
 		c.publishLine("hostname is \"fragfest\"\n")
+		c.publishLine(end + "\n")
 	}()
 
-	out, err := c.captureCommandOutputFiltered(
+	out, err := c.captureCommandBetweenSentinels(
+		"",
 		"hostname",
-		120*time.Millisecond,
-		10*time.Millisecond,
-		func(line string) (string, bool) { return line, shouldRelayServerConsoleLine(line) },
+		500*time.Millisecond,
+		serverCommandNoiseFilter,
 	)
 	if err != nil {
-		t.Fatalf("captureCommandOutputFiltered error = %v", err)
+		t.Fatalf("captureCommandBetweenSentinels error = %v", err)
 	}
 	if strings.Contains(out, "FindFile: maps/e1m1.bsp") {
 		t.Fatalf("expected FindFile noise to be filtered, got %q", out)
 	}
 	if !strings.Contains(out, "hostname is \"fragfest\"") {
 		t.Fatalf("expected hostname output to be retained, got %q", out)
+	}
+	if strings.Contains(out, consoleSentinelPrefix) {
+		t.Fatalf("expected sentinel markers stripped from reply, got %q", out)
+	}
+}
+
+func TestServerConsoleRun_StripsSentinelLinesFromLog(t *testing.T) {
+	ptyRead, ptyWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = ptyRead.Close()
+		_ = ptyWrite.Close()
+	})
+
+	logFile, err := os.CreateTemp(t.TempDir(), "server-log-*.log")
+	if err != nil {
+		t.Fatalf("CreateTemp(log): %v", err)
+	}
+	t.Cleanup(func() { _ = logFile.Close() })
+
+	c := newServerConsole(ptyRead)
+	done := make(chan struct{})
+	go func() {
+		c.run(logFile, testFormatLogLine)
+		close(done)
+	}()
+
+	if _, err := io.WriteString(ptyWrite, consoleSentinelPrefix+"B_deadbeef\n"); err != nil {
+		t.Fatalf("write begin sentinel: %v", err)
+	}
+	if _, err := io.WriteString(ptyWrite, "host: ok\n"); err != nil {
+		t.Fatalf("write payload: %v", err)
+	}
+	if _, err := io.WriteString(ptyWrite, consoleSentinelPrefix+"E_deadbeef\n"); err != nil {
+		t.Fatalf("write end sentinel: %v", err)
+	}
+	_ = ptyWrite.Close()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("timed out waiting for console run to exit")
+	}
+
+	if err := logFile.Close(); err != nil {
+		t.Fatalf("close log file: %v", err)
+	}
+	b, err := os.ReadFile(logFile.Name())
+	if err != nil {
+		t.Fatalf("ReadFile(log): %v", err)
+	}
+	got := string(b)
+	if strings.Contains(got, consoleSentinelPrefix) {
+		t.Fatalf("expected sentinel lines stripped from log, got %q", got)
+	}
+	if !strings.Contains(got, "host: ok") {
+		t.Fatalf("expected payload retained in log, got %q", got)
 	}
 }
 
@@ -316,7 +394,7 @@ func TestWriteCommandWithOptions_SuppressRelayEchoConsumesOnce(t *testing.T) {
 	c := newServerConsole(ptyWrite)
 	if err := c.writeCommandWithOptions(
 		"echo online and accepting clients",
-		serverConsoleWriteOptions{SuppressRelayEcho: true},
+		true,
 	); err != nil {
 		t.Fatalf("writeCommandWithOptions: %v", err)
 	}

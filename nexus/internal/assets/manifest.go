@@ -2,66 +2,23 @@ package assets
 
 import (
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"hash/fnv"
-	"io"
+	"log/slog"
 	"net/http"
-	"net/url"
-	"os"
-	"path"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 )
 
-const headerNexQuakeRef = "X-NexQuake-Ref"
 const defaultManifestTTL = 37 * time.Minute
 
-type startManifestEntry struct {
+// StartManifestEntry is one entry in an issued asset manifest. The Path field
+// is the logical asset path (e.g. "foo.txt"); the matching content-addressed
+// hash is registered internally and served from /nq/<hash>.
+type StartManifestEntry struct {
 	Path string `json:"path"`
-}
-
-type startClientConfig struct {
-	PrefetchConcurrency int      `json:"prefetchConcurrency"`
-	SMenuOnFirstLoad    bool     `json:"smenuOnFirstLoad"`
-	SendArgs            []string `json:"sendArgs,omitempty"`
-	URLArgs             bool     `json:"urlArgs"`
-}
-
-type startManifestBundle struct {
-	Client startClientConfig               `json:"client"`
-	Game   map[string][]startManifestEntry `json:"game"`
-	CD     []startManifestEntry            `json:"cd,omitempty"`
-}
-
-type readSeekCloser interface {
-	io.ReadSeeker
-	io.Closer
-}
-
-type sectionReadSeekCloser struct {
-	io.ReadSeeker
-	closeFn func() error
-}
-
-func (s *sectionReadSeekCloser) Close() error {
-	return s.closeFn()
-}
-
-type hashedAsset struct {
-	name        string
-	modTime     time.Time
-	contentType string
-	open        func() (readSeekCloser, error)
-}
-
-type hashedSnapshot struct {
-	bundle startManifestBundle
-	assets map[string]hashedAsset
 }
 
 type issuedManifest struct {
@@ -69,121 +26,73 @@ type issuedManifest struct {
 	assets    map[string]hashedAsset
 }
 
-// HashedAssetServer serves a bootstrap manifest and hash-addressed asset
-// requests for both VFS game data and CD tracks.
-//
-// Call StartHandler to obtain a per-session manifest, then AssetHandler to
-// serve the individual assets referenced by that manifest.
+// HashedAssetServer issues per-session asset manifests and serves the
+// content-addressed assets they reference. It owns asset state (mod tree
+// scanning, hash issuance, TTL pruning) and nothing about HTTP framing or
+// client/transport configuration.
 type HashedAssetServer struct {
-	gameDir             string
-	cdDir               string
-	pakCache            *PakIndexCache
-	prefetchConcurrency int
-	smenuOnFirstLoad    bool
-	sendArgs            []string
-	urlArgs             bool
-	manifestTTL         time.Duration
-	errorf              func(string, ...any)
+	gameDir     string
+	cdDir       string
+	pakCache    *PakIndexCache
+	manifestTTL time.Duration
 
 	mu           sync.RWMutex
 	manifests    map[string]*issuedManifest
 	assetsByHash map[string]hashedAsset
 }
 
-// NewHashedAssetServer creates a HashedAssetServer for the given directories
-// and client configuration.
-//
-//   - gameDir is the root of the layered mod tree (GAME_DIR).
-//   - cdDir is the directory containing CD-audio track files (may be empty/missing).
-//   - pakCache is an optional shared PakIndexCache; a new one is created if nil.
-//   - prefetchConcurrency is forwarded to the browser client as the max parallel
-//     prefetch request count.
-//   - smenuOnFirstLoad instructs the client to open the server menu on first connect.
-//   - sendArgs is an optional list of extra arguments sent to the Quake client.
-//   - urlArgs enables passing launch arguments via URL query string.
-func NewHashedAssetServer(gameDir, cdDir string, pakCache *PakIndexCache, prefetchConcurrency int, smenuOnFirstLoad bool, sendArgs []string, urlArgs bool) *HashedAssetServer {
+// NewHashedAssetServer creates a HashedAssetServer rooted at gameDir (the
+// layered mod tree) and cdDir (CD-audio tracks; may be empty/missing). A
+// nil pakCache gets a fresh one.
+func NewHashedAssetServer(gameDir, cdDir string, pakCache *PakIndexCache) *HashedAssetServer {
 	if pakCache == nil {
 		pakCache = NewPakIndexCache()
 	}
 	return &HashedAssetServer{
-		gameDir:             gameDir,
-		cdDir:               cdDir,
-		pakCache:            pakCache,
-		prefetchConcurrency: prefetchConcurrency,
-		smenuOnFirstLoad:    smenuOnFirstLoad,
-		sendArgs:            append([]string(nil), sendArgs...),
-		urlArgs:             urlArgs,
-		manifestTTL:         defaultManifestTTL,
-		errorf:              func(string, ...any) {},
-		manifests:           make(map[string]*issuedManifest),
-		assetsByHash:        make(map[string]hashedAsset),
+		gameDir:      gameDir,
+		cdDir:        cdDir,
+		pakCache:     pakCache,
+		manifestTTL:  defaultManifestTTL,
+		manifests:    make(map[string]*issuedManifest),
+		assetsByHash: make(map[string]hashedAsset),
 	}
 }
 
-// SetErrorf sets the error-logging function used for non-fatal warnings (e.g.
-// unreadable pak files). A nil logf silences all error output.
-func (g *HashedAssetServer) SetErrorf(logf func(string, ...any)) {
-	if logf == nil {
-		g.errorf = func(string, ...any) {}
-		return
-	}
-	g.errorf = logf
-}
-
-// StartHandler returns an HTTP handler that snapshots the current game/CD asset
-// state, registers a session, and responds with a base64-encoded JSON manifest.
+// IssueManifest scans the asset tree, registers a fresh per-session set of
+// hash addresses for each asset, and returns the manifest entries plus the
+// session ref. The hashes are valid until the session expires (manifestTTL,
+// default 37 min). The caller owns HTTP framing.
 //
-// The manifest includes per-session hash addresses for each asset; these hashes
-// are only valid until the session expires (default 37 minutes). The response
-// sets the X-NexQuake-Ref header to the session identifier.
-//
-// Returns 404 when no mod directories are found, 500 on internal errors.
-func (g *HashedAssetServer) StartHandler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-
-		ref := newManifestRef()
-		snap, err := g.buildSnapshot(ref)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if len(snap.bundle.Game) == 0 {
-			http.NotFound(w, r)
-			return
-		}
-
-		now := time.Now()
-		g.mu.Lock()
-		g.pruneExpiredLocked(now)
-		g.manifests[ref] = &issuedManifest{
-			createdAt: now,
-			assets:    snap.assets,
-		}
-		for hash, asset := range snap.assets {
-			g.assetsByHash[hash] = asset
-		}
-		g.mu.Unlock()
-
-		manifestBytes, err := json.Marshal(snap.bundle)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		encodedManifest := base64.StdEncoding.EncodeToString(manifestBytes)
-
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Cache-Control", "private, no-store")
-		w.Header().Set(headerNexQuakeRef, ref)
-		_, _ = io.WriteString(w, encodedManifest)
+// game is keyed by mod name. cd is empty when no CD tracks are configured.
+// Both may be empty (no mods found) — the caller decides whether that is a
+// 404 or some other shape.
+func (g *HashedAssetServer) IssueManifest() (game map[string][]StartManifestEntry, cd []StartManifestEntry, ref string, err error) {
+	ref = newManifestRef()
+	game, cd, assets, err := g.buildSnapshot(ref)
+	if err != nil {
+		return nil, nil, "", err
 	}
+	if len(game) == 0 {
+		return nil, nil, "", nil
+	}
+
+	now := time.Now()
+	g.mu.Lock()
+	g.pruneExpiredLocked(now)
+	g.manifests[ref] = &issuedManifest{
+		createdAt: now,
+		assets:    assets,
+	}
+	for hash, asset := range assets {
+		g.assetsByHash[hash] = asset
+	}
+	g.mu.Unlock()
+
+	return game, cd, ref, nil
 }
 
 // AssetHandler returns an HTTP handler that serves individual assets by the
-// per-session hash address issued by StartHandler.
+// per-session hash address issued by IssueManifest.
 //
 // The URL path must be /nq/<hash> where hash is a 16-character hex string.
 // Supports GET and HEAD. Returns 404 for unknown or expired hashes.
@@ -249,234 +158,69 @@ func (g *HashedAssetServer) pruneExpiredLocked(now time.Time) {
 	}
 }
 
-func (g *HashedAssetServer) buildSnapshot(ref string) (*hashedSnapshot, error) {
+func (g *HashedAssetServer) buildSnapshot(ref string) (game map[string][]StartManifestEntry, cd []StartManifestEntry, assets map[string]hashedAsset, err error) {
 	mods, err := ListMods(g.gameDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
-	bundle := startManifestBundle{
-		Client: startClientConfig{
-			PrefetchConcurrency: g.prefetchConcurrency,
-			SMenuOnFirstLoad:    g.smenuOnFirstLoad,
-			SendArgs:            append([]string(nil), g.sendArgs...),
-			URLArgs:             g.urlArgs,
-		},
-		Game: make(map[string][]startManifestEntry, len(mods)),
-	}
-	assets := make(map[string]hashedAsset)
-	errorf := g.errorf
+	game = make(map[string][]StartManifestEntry, len(mods))
+	assets = make(map[string]hashedAsset)
 
 	for _, mod := range mods {
 		manifest, manifestErr := buildVFSManifestWithWarnings(g.gameDir, mod, g.pakCache, func(format string, args ...any) {
-			errorf("asset manifest warning: "+format, args...)
+			slog.Error(fmt.Sprintf("asset manifest warning: "+format, args...))
 		})
 		if manifestErr != nil {
-			return nil, manifestErr
+			return nil, nil, nil, manifestErr
 		}
 
-		entries := make([]startManifestEntry, 0, len(manifest))
-		for _, ent := range manifest {
-			key := normalizeVFSKey(ent.Path)
-			if key == "" {
-				continue
-			}
-			hash := hashAssetKey(ref, "mod:"+mod+":"+key)
-			asset, err := g.resolveVFSAsset(ent.URL, ent.Path)
-			if err != nil {
-				return nil, err
-			}
-			if err := addAsset(assets, hash, asset, ent.Path); err != nil {
-				return nil, err
-			}
-			entries = append(entries, startManifestEntry{
-				Path: ent.Path,
-			})
+		entries, err := appendManifestAssets(ref, "mod:"+mod, manifest, assets)
+		if err != nil {
+			return nil, nil, nil, err
 		}
-		bundle.Game[mod] = entries
+		game[mod] = entries
 	}
 
 	cdManifest, err := buildCDManifest(g.cdDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	if len(cdManifest) > 0 {
-		bundle.CD = make([]startManifestEntry, 0, len(cdManifest))
-		for _, ent := range cdManifest {
-			key := normalizeVFSKey(ent.Path)
-			if key == "" {
-				continue
-			}
-			hash := hashAssetKey(ref, "cd:"+key)
-			asset, err := g.resolveCDAsset(ent.URL)
-			if err != nil {
-				return nil, err
-			}
-			if err := addAsset(assets, hash, asset, ent.Path); err != nil {
-				return nil, err
-			}
-			bundle.CD = append(bundle.CD, startManifestEntry{
-				Path: ent.Path,
-			})
+		cd, err = appendManifestAssets(ref, "cd", cdManifest, assets)
+		if err != nil {
+			return nil, nil, nil, err
 		}
 	}
 
-	return &hashedSnapshot{
-		bundle: bundle,
-		assets: assets,
-	}, nil
+	return game, cd, assets, nil
 }
 
-func (g *HashedAssetServer) resolveVFSAsset(assetURL, fallbackName string) (hashedAsset, error) {
-	switch {
-	case strings.HasPrefix(assetURL, "/game/"):
-		return resolveEscapedFileAsset(g.gameDir, strings.TrimPrefix(assetURL, "/game/"))
-	case strings.HasPrefix(assetURL, "/pak-extract/"):
-		rel := strings.TrimPrefix(assetURL, "/pak-extract/")
-		parts, err := decodeEscapedParts(rel)
-		if err != nil {
-			return hashedAsset{}, err
-		}
-		if len(parts) < 4 {
-			return hashedAsset{}, fmt.Errorf("invalid pak extract url: %s", assetURL)
-		}
-
-		mod := parts[0]
-		layer := parts[1]
-		pakName := parts[2]
-		internal := strings.Join(parts[3:], "/")
-		key := normalizeVFSKey(internal)
+func appendManifestAssets(ref, namespace string, manifest []assetManifestEntry, assets map[string]hashedAsset) ([]StartManifestEntry, error) {
+	out := make([]StartManifestEntry, 0, len(manifest))
+	for _, ent := range manifest {
+		key := normalizeVFSKey(ent.Path)
 		if key == "" {
-			return hashedAsset{}, fmt.Errorf("invalid pak path: %q", internal)
+			continue
 		}
-
-		pakPath := filepath.Join(g.gameDir, mod, layer, pakName)
-		idx, err := g.pakCache.get(pakPath)
-		if err != nil {
-			return hashedAsset{}, err
-		}
-
-		entry, ok := idx.entries[key]
-		if !ok {
-			return hashedAsset{}, fmt.Errorf("missing pak entry: %s", internal)
-		}
-
-		st, err := os.Stat(pakPath)
-		if err != nil {
-			return hashedAsset{}, err
-		}
-
-		entryName := path.Base(entry.name)
-		if entryName == "" {
-			entryName = fallbackName
-		}
-
-		return hashedAsset{
-			name:        entryName,
-			modTime:     st.ModTime(),
-			contentType: contentTypeForAsset(entryName),
-			open: func() (readSeekCloser, error) {
-				f, openErr := os.Open(pakPath)
-				if openErr != nil {
-					return nil, openErr
-				}
-				section := io.NewSectionReader(f, entry.offset, entry.size)
-				return &sectionReadSeekCloser{
-					ReadSeeker: section,
-					closeFn:    f.Close,
-				}, nil
-			},
-		}, nil
-	default:
-		return hashedAsset{}, fmt.Errorf("unsupported asset url: %s", assetURL)
-	}
-}
-
-func (g *HashedAssetServer) resolveCDAsset(assetURL string) (hashedAsset, error) {
-	if !strings.HasPrefix(assetURL, "/cd-stream/") {
-		return hashedAsset{}, fmt.Errorf("unsupported cd url: %s", assetURL)
-	}
-	return resolveEscapedFileAsset(g.cdDir, strings.TrimPrefix(assetURL, "/cd-stream/"))
-}
-
-func newFileAsset(fullPath, fallbackName string) (hashedAsset, error) {
-	st, err := os.Stat(fullPath)
-	if err != nil {
-		return hashedAsset{}, err
-	}
-	if st.IsDir() {
-		return hashedAsset{}, fmt.Errorf("expected file, got directory: %s", fullPath)
-	}
-
-	name := path.Base(filepath.ToSlash(fullPath))
-	if name == "" {
-		name = fallbackName
-	}
-
-	return hashedAsset{
-		name:        name,
-		modTime:     st.ModTime(),
-		contentType: contentTypeForAsset(name),
-		open: func() (readSeekCloser, error) {
-			return os.Open(fullPath)
-		},
-	}, nil
-}
-
-func resolveEscapedFileAsset(rootDir, raw string) (hashedAsset, error) {
-	parts, err := decodeEscapedParts(raw)
-	if err != nil {
-		return hashedAsset{}, err
-	}
-	rel := strings.Join(parts, "/")
-	full, err := safeJoin(rootDir, filepath.FromSlash(rel))
-	if err != nil {
-		return hashedAsset{}, err
-	}
-	return newFileAsset(full, path.Base(rel))
-}
-
-func decodeEscapedParts(raw string) ([]string, error) {
-	raw = strings.Trim(raw, "/")
-	if raw == "" {
-		return nil, fmt.Errorf("empty path")
-	}
-	parts := strings.Split(raw, "/")
-	for i, part := range parts {
-		decoded, err := url.PathUnescape(part)
+		asset, err := hashedAssetFromEntry(ent)
 		if err != nil {
 			return nil, err
 		}
-		parts[i] = decoded
+		hash := hashAssetKey(ref, namespace+":"+key)
+		if _, exists := assets[hash]; exists {
+			return nil, fmt.Errorf("hash collision for %q", ent.Path)
+		}
+		assets[hash] = asset
+		out = append(out, StartManifestEntry{Path: ent.Path})
 	}
-	return parts, nil
-}
-
-func contentTypeForAsset(name string) string {
-	switch strings.ToLower(path.Ext(name)) {
-	case ".ogg":
-		return "audio/ogg"
-	case ".mp3":
-		return "audio/mpeg"
-	case ".pak", ".data":
-		return "application/octet-stream"
-	default:
-		return ""
-	}
+	return out, nil
 }
 
 func hashAssetKey(ref, key string) string {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(ref + ":" + key))
 	return fmt.Sprintf("%016x", h.Sum64())
-}
-
-func addAsset(assets map[string]hashedAsset, hash string, asset hashedAsset, path string) error {
-	if _, exists := assets[hash]; exists {
-		return fmt.Errorf("hash collision for %q", path)
-	}
-	assets[hash] = asset
-	return nil
 }
 
 func newManifestRef() string {

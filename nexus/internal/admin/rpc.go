@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/0xBrsm/NexQuake/nexus/internal/access"
 )
 
 // JSON-RPC 2.0 error codes.
@@ -39,10 +41,13 @@ type Response struct {
 	ID      json.RawMessage `json:"id"`
 }
 
-// RPCError is the JSON-RPC error object.
+// RPCError is the JSON-RPC error object. Data is an optional structured
+// addendum (per JSON-RPC 2.0); we use it to carry operator-facing hints
+// like "Set rcon_password <secret>" alongside the canonical Message.
 type RPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
 }
 
 // MethodError is returned by a command handler to propagate an application-
@@ -75,37 +80,37 @@ func ParseRequest(body []byte) (*Request, *Response) {
 }
 
 // Dispatch runs a method against the registry and returns a response envelope.
-// Auth is the caller's responsibility; Dispatch assumes actor is already
+// Auth is the caller's responsibility; Dispatch assumes client is already
 // authorized for admin access. Handlers can still reject with MethodError if a
 // specific target is unauthorized.
-func Dispatch(req *Request, env *Env, actor Actor) *Response {
+func (a *Admin) Dispatch(req *Request, client access.Client) *Response {
 	cmd, ok := lookupCommand(req.Method)
 	if !ok {
 		msg := fmt.Sprintf("method %q not found", req.Method)
-		auditRPC(env, actor, req.Method, "error", msg)
+		a.auditRPC(client, req.Method, "error", msg)
 		return errorResponse(req.ID, ErrCodeMethodNotFound, msg)
 	}
 
 	params, err := cmd.ParseParams(req.Params)
 	if err != nil {
-		auditRPC(env, actor, req.Method, "error", err.Error())
+		a.auditRPC(client, req.Method, "error", err.Error())
 		return errorResponse(req.ID, ErrCodeInvalidParams, err.Error())
 	}
 
-	auditRPC(env, actor, req.Method, "request", params)
+	a.auditRPC(client, req.Method, "request", params)
 
-	result, err := cmd.Handler(env, actor, params)
+	result, err := cmd.Handler(a, client, params)
 	if err != nil {
 		var me *MethodError
 		code := ErrCodeInternal
 		if errors.As(err, &me) {
 			code = me.Code
 		}
-		auditRPC(env, actor, req.Method, "error", err.Error())
+		a.auditRPC(client, req.Method, "error", err.Error())
 		return errorResponse(req.ID, code, err.Error())
 	}
 
-	auditRPC(env, actor, req.Method, "result", result)
+	a.auditRPC(client, req.Method, "result", result)
 	return &Response{Jsonrpc: "2.0", Result: result, ID: req.ID}
 }
 
@@ -113,28 +118,33 @@ func errorResponse(id json.RawMessage, code int, message string) *Response {
 	return &Response{Jsonrpc: "2.0", Error: &RPCError{Code: code, Message: message}, ID: id}
 }
 
-// auditRPC emits a single structured audit record for one RPC leg. direction
-// is one of "request" / "result" / "error"; payload is JSON-marshaled and
-// flattened into one audit line.
-func auditRPC(env *Env, actor Actor, method, direction string, payload any) {
-	if env == nil || env.Auditf == nil {
+// AuditUnauthorized records a valid RPC request that failed admin
+// authorization before dispatch.
+func (a *Admin) AuditUnauthorized(client access.Client, method string) {
+	a.auditRPC(client, method, "error", "unauthorized")
+}
+
+// auditRPC emits one audit-log line for one RPC leg. direction is one of
+// "request" / "result" / "error"; payload is JSON-marshaled. The line shape
+// matches the format documented in src/docs/ADMIN.md "Audit Log":
+//
+//	admin-rcon <direction> actor=<id> method=<method> <direction>=<payload>
+func (a *Admin) auditRPC(client access.Client, method, direction string, payload any) {
+	if a == nil || a.audit == nil {
 		return
 	}
 	bytes, _ := json.Marshal(payload)
-	env.Auditf("admin-rcon %s actor=%q method=%s %s=%s",
-		direction, actor.ID, method, direction, sanitizeAuditText(string(bytes)))
+	a.audit.Info(fmt.Sprintf("admin-rcon %s actor=%q method=%s %s=%s",
+		direction, client.ID, method, direction, sanitizeAuditText(string(bytes))))
 }
 
 const auditTextMax = 512
 
 func sanitizeAuditText(text string) string {
-	text = strings.ReplaceAll(text, "\r", " ")
-	text = strings.ReplaceAll(text, "\n", " ")
-	text = strings.TrimSpace(text)
+	text = strings.Join(strings.Fields(text), " ")
 	if text == "" {
 		return "<empty>"
 	}
-	text = strings.Join(strings.Fields(text), " ")
 	if len(text) > auditTextMax {
 		text = text[:auditTextMax-3] + "..."
 	}

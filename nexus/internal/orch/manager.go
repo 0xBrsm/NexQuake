@@ -8,8 +8,7 @@
 //
 // Typical usage:
 //
-//	mgr := orch.NewServerManager(gameDir, logsDir, infof, consoleInfof,
-//	    debugf, warnf, errorf, formatLogLine)
+//	mgr := orch.NewServerManager(gameDir, logsDir, consoleInfof, formatLogLine)
 //	mgr.SetServerMaxInstances(cfg.serverMaxInstances)
 //	if err := mgr.StartAll(); err != nil { ... }
 //
@@ -17,6 +16,10 @@
 //	defer stopPoller()
 //	...
 //	mgr.StopAll(ctx, 2*time.Second)
+//
+// Severity logging (info/debug/warn/error) flows through the standard
+// log/slog default logger; only the two non-severity callbacks — server
+// console relay and per-server log-file line formatter — are injected.
 package orch
 
 import (
@@ -31,10 +34,6 @@ import (
 type ServerManager struct {
 	gameDir string
 	logsDir string
-	infof   func(string, ...any)
-	debugf  func(string, ...any)
-	warnf   func(string, ...any)
-	errorf  func(string, ...any)
 
 	consoleInfof  func(string, ...any)
 	formatLogLine func(string, time.Time) string
@@ -43,9 +42,8 @@ type ServerManager struct {
 	instancesByID     map[int]*instance
 	instanceIDsByPort map[int][]int
 
-	serversByID           map[int]*server
-	serverByCandidatePort map[int]*server
-	serverByInstanceID    map[int]*server
+	serversByID        map[int]*server
+	serverByInstanceID map[int]*server
 	nextServerID          int
 	serverMaxInstances    int
 	nextInstanceID        int
@@ -124,6 +122,9 @@ func shouldRelayServerConsoleLine(line string) bool {
 	if trimmed == "" {
 		return false
 	}
+	if strings.HasPrefix(trimmed, consoleSentinelPrefix) {
+		return false
+	}
 
 	lower := strings.ToLower(trimmed)
 	if strings.Contains(lower, "packfile:") {
@@ -168,61 +169,39 @@ func (m *ServerManager) relayServerConsoleToNexus(rec *instance, console *server
 	}
 }
 
-func noopLogf(string, ...any) {}
-
-func identityLogLine(line string, _ time.Time) string {
-	return line
-}
-
-// NewServerManager creates a [ServerManager] with injected logging callbacks.
+// NewServerManager creates a [ServerManager].
 //
 //   - gameDir: path to the game data directory (GAME_DIR); must exist before
 //     calling [ServerManager.StartAll].
 //   - logsDir: directory where per-server log files are written; created on
 //     demand by [ServerManager.StartAll].
-//   - infof, consoleInfof, debugf, warnf, errorf: printf-style log callbacks;
-//     any nil callback is silently replaced with a no-op.
-//     consoleInfof defaults to infof when nil.
+//   - consoleInfof: relay for server-console output (operator console only,
+//     no tail buffer or log file); nil substitutes a no-op.
 //   - formatLogLine: formats a raw console line with a timestamp for the
-//     on-disk log file; defaults to the identity function when nil.
+//     on-disk log file; nil substitutes the identity function.
+//
+// Severity logs (info/debug/warn/error) go through log/slog's default logger.
 func NewServerManager(
 	gameDir, logsDir string,
-	infof, consoleInfof, debugf, warnf, errorf func(string, ...any),
+	consoleInfof func(string, ...any),
 	formatLogLine func(string, time.Time) string,
 ) *ServerManager {
-	if infof == nil {
-		infof = noopLogf
-	}
 	if consoleInfof == nil {
-		consoleInfof = infof
-	}
-	if debugf == nil {
-		debugf = noopLogf
-	}
-	if warnf == nil {
-		warnf = noopLogf
-	}
-	if errorf == nil {
-		errorf = noopLogf
+		consoleInfof = func(string, ...any) {}
 	}
 	if formatLogLine == nil {
-		formatLogLine = identityLogLine
+		formatLogLine = func(line string, _ time.Time) string { return line }
 	}
 	return &ServerManager{
 		gameDir:               gameDir,
 		logsDir:               logsDir,
-		infof:                 infof,
-		debugf:                debugf,
-		warnf:                 warnf,
-		errorf:                errorf,
 		consoleInfof:          consoleInfof,
 		formatLogLine:         formatLogLine,
-		instancesByID:         make(map[int]*instance),
-		instanceIDsByPort:     make(map[int][]int),
-		serversByID:           make(map[int]*server),
-		serverByCandidatePort: make(map[int]*server),
-		serverByInstanceID:    make(map[int]*server),
-		nextServerID:          1,
-		serverMaxInstances:    defaultServerMaxInstances,
+		instancesByID:      make(map[int]*instance),
+		instanceIDsByPort:  make(map[int][]int),
+		serversByID:        make(map[int]*server),
+		serverByInstanceID: make(map[int]*server),
+		nextServerID:       1,
+		serverMaxInstances: defaultServerMaxInstances,
 	}
 }

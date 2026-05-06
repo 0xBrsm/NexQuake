@@ -2,12 +2,14 @@ package orch
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -149,10 +151,10 @@ func buildCCREPServerList(entries []serverListEntry) ([]byte, int) {
 			break
 		}
 
-		buf = appendSlistCString(buf, serverPortText)
-		buf = appendSlistCString(buf, e.Hostname)
-		buf = appendSlistCString(buf, e.MapName)
-		buf = appendSlistCString(buf, e.GameDir)
+		buf = appendCString(buf, serverPortText)
+		buf = appendCString(buf, e.Hostname)
+		buf = appendCString(buf, e.MapName)
+		buf = appendCString(buf, e.GameDir)
 		buf = append(buf, byte(e.Users&0xff), byte(e.Users>>8))
 		buf = append(buf, byte(e.MaxUsers&0xff), byte(e.MaxUsers>>8))
 		buf = append(buf, byte(e.Instances&0xff), byte(e.Instances>>8))
@@ -173,30 +175,13 @@ func truncateSlistField(s string, maxBytes int) string {
 	return s[:maxBytes]
 }
 
-func appendSlistCString(buf []byte, s string) []byte {
-	buf = append(buf, s...)
-	return append(buf, 0)
-}
-
 func serverListEntriesLocked(mgr *ServerManager, now time.Time, noteDemand bool) []serverListEntry {
-	ports := fillRunningPortsLocked(mgr, nil)
-	staleAfter := staleAfterForTargets(len(ports))
-	out := make([]serverListEntry, 0, len(ports)+len(mgr.serversByID))
-
-	servers := make([]*server, 0, len(mgr.serversByID))
-	for _, s := range mgr.serversByID {
-		if s != nil {
-			servers = append(servers, s)
-		}
-	}
-	sort.Slice(servers, func(i, j int) bool {
-		return servers[i].Line < servers[j].Line
-	})
-	for _, s := range servers {
+	out := make([]serverListEntry, 0, len(mgr.serversByID))
+	for _, s := range mgr.serversLocked() {
 		if s.aggregateInstances == 0 {
 			continue
 		}
-		instancePort, ok := mgr.pickServerInstanceLocked(s)
+		instancePort, ok := mgr.pickServerInstanceLocked(s, true)
 		if !ok {
 			continue
 		}
@@ -207,7 +192,7 @@ func serverListEntriesLocked(mgr *ServerManager, now time.Time, noteDemand bool)
 			}
 			instances = s.joinableInstances
 		}
-		out = append(out, normalizeServerListEntry(serverListEntry{
+		out = append(out, serverListEntry{
 			ListenPort: instancePort,
 			Hostname:   s.DisplayHostname,
 			MapName:    s.DisplayMap,
@@ -215,35 +200,8 @@ func serverListEntriesLocked(mgr *ServerManager, now time.Time, noteDemand bool)
 			Users:      s.aggregateUsers,
 			MaxUsers:   s.aggregateMaxUsers,
 			Instances:  instances,
-		}))
+		})
 	}
-
-	for _, port := range ports {
-		ids := mgr.instanceIDsByPort[port]
-		var rec *instance
-		for _, serverID := range ids {
-			r := mgr.instancesByID[serverID]
-			if !mgr.instanceRunningLocked(r) || mgr.serverByInstanceID[r.id] != nil {
-				continue
-			}
-			rec = r
-			break
-		}
-		if rec == nil || now.Sub(rec.LastSeen) > staleAfter || rec.spec == nil {
-			continue
-		}
-
-		out = append(out, normalizeServerListEntry(serverListEntry{
-			ListenPort: port,
-			Hostname:   rec.Hostname,
-			MapName:    rec.MapName,
-			GameDir:    activeGameDir(rec.spec.SearchPath),
-			Users:      uint16(rec.Players),
-			MaxUsers:   uint16(rec.MaxPlayers),
-			Instances:  0,
-		}))
-	}
-
 	return out
 }
 
@@ -279,25 +237,6 @@ func (m *ServerManager) BuildSlistResponse() []byte {
 	return data
 }
 
-// listenAddr returns an unspecified UDP listen address (any port).
-func listenAddr() *net.UDPAddr {
-	return &net.UDPAddr{IP: net.IPv4zero, Port: 0}
-}
-
-// serverUDPAddr returns the UDP address for a server on the given port.
-func serverUDPAddr(serverIP net.IP, port int) *net.UDPAddr {
-	return &net.UDPAddr{IP: serverIP, Port: port}
-}
-
-// serverSourcePortFromAddr extracts the source port from a UDP address.
-func serverSourcePortFromAddr(addr net.Addr) (int, bool) {
-	udpAddr, ok := addr.(*net.UDPAddr)
-	if !ok || udpAddr.Port < 1 || udpAddr.Port > 65535 {
-		return 0, false
-	}
-	return udpAddr.Port, true
-}
-
 const serverInfoPollStep = 500 * time.Millisecond
 
 // serverInfoPoller polls running instances via CCREQ_SERVER_INFO and forwards
@@ -310,17 +249,13 @@ type serverInfoPoller struct {
 	stopOnce sync.Once
 }
 
-func newServerInfoPoller(mgr *ServerManager, serverIP net.IP) *serverInfoPoller {
-	return &serverInfoPoller{mgr: mgr, serverIP: serverIP}
-}
-
 // StartInfoPoller starts a server-info poller for mgr and returns a stop
 // function. If the UDP socket cannot be bound, it logs a warning and returns
 // a no-op stop function. The poller also stops when ctx is cancelled.
 func (mgr *ServerManager) StartInfoPoller(ctx context.Context, serverIP net.IP) func() {
-	p := newServerInfoPoller(mgr, serverIP)
+	p := &serverInfoPoller{mgr: mgr, serverIP: serverIP}
 	if err := p.Start(ctx); err != nil {
-		mgr.warnf("Server info poller disabled: %v", err)
+		slog.Warn(fmt.Sprintf("Server info poller disabled: %v", err))
 		return func() {}
 	}
 	return p.Stop
@@ -330,7 +265,7 @@ func (mgr *ServerManager) StartInfoPoller(ctx context.Context, serverIP net.IP) 
 // It returns an error if the UDP socket cannot be bound.
 // The poller stops when ctx is cancelled or Stop is called.
 func (p *serverInfoPoller) Start(ctx context.Context) error {
-	udpConn, err := net.ListenUDP("udp4", listenAddr())
+	udpConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
 		return fmt.Errorf("server info poller: listen udp: %w", err)
 	}
@@ -378,15 +313,6 @@ func fillRunningPorts(mgr *ServerManager, dst []int) []int {
 	return fillRunningPortsLocked(mgr, dst)
 }
 
-func staleAfterForTargets(targetCount int) time.Duration {
-	pollPeriod := time.Duration(targetCount) * serverInfoPollStep
-	staleAfter := pollPeriod * 10
-	if staleAfter < 30*time.Second {
-		staleAfter = 30 * time.Second
-	}
-	return staleAfter
-}
-
 func snapshotForSlist(mgr *ServerManager) []serverListEntry {
 	now := time.Now()
 
@@ -394,13 +320,11 @@ func snapshotForSlist(mgr *ServerManager) []serverListEntry {
 	out := serverListEntriesLocked(mgr, now, true)
 	mgr.mu.Unlock()
 
-	sort.Slice(out, func(i, j int) bool {
-		hi := strings.ToLower(out[i].Hostname)
-		hj := strings.ToLower(out[j].Hostname)
-		if hi != hj {
-			return hi < hj
-		}
-		return out[i].ListenPort < out[j].ListenPort
+	slices.SortFunc(out, func(a, b serverListEntry) int {
+		return cmp.Or(
+			cmp.Compare(strings.ToLower(a.Hostname), strings.ToLower(b.Hostname)),
+			cmp.Compare(a.ListenPort, b.ListenPort),
+		)
 	})
 	return out
 }
@@ -413,15 +337,13 @@ func (p *serverInfoPoller) pollLoop(ctx context.Context, conn *net.UDPConn) {
 	// Prime quickly at startup.
 	ports = fillRunningPorts(p.mgr, ports)
 	for _, port := range ports {
-		dst := serverUDPAddr(p.serverIP, port)
-		if _, err := conn.WriteToUDP(req, dst); err != nil && errors.Is(err, net.ErrClosed) {
+		if _, err := conn.WriteToUDP(req, &net.UDPAddr{IP: p.serverIP, Port: port}); err != nil && errors.Is(err, net.ErrClosed) {
 			return
 		}
 	}
 
 	pollOne := func(port int) bool {
-		dst := serverUDPAddr(p.serverIP, port)
-		if _, err := conn.WriteToUDP(req, dst); err != nil {
+		if _, err := conn.WriteToUDP(req, &net.UDPAddr{IP: p.serverIP, Port: port}); err != nil {
 			return !errors.Is(err, net.ErrClosed)
 		}
 		return true
@@ -430,8 +352,8 @@ func (p *serverInfoPoller) pollLoop(ctx context.Context, conn *net.UDPConn) {
 	ticker := time.NewTicker(serverInfoPollStep)
 	defer ticker.Stop()
 
-	p.mgr.debugf("Server info poller: polling %d targets every %s (round-robin step %s)",
-		len(ports), time.Duration(len(ports))*serverInfoPollStep, serverInfoPollStep)
+	slog.Debug(fmt.Sprintf("Server info poller: polling %d targets every %s (round-robin step %s)",
+		len(ports), time.Duration(len(ports))*serverInfoPollStep, serverInfoPollStep))
 
 	rrNext := 0
 	for {
@@ -474,8 +396,7 @@ func (p *serverInfoPoller) readLoop(ctx context.Context, conn *net.UDPConn) {
 			continue
 		}
 
-		srcPort, ok := serverSourcePortFromAddr(src)
-		if !ok {
+		if src.Port < 1 || src.Port > 65535 {
 			continue
 		}
 
@@ -484,6 +405,6 @@ func (p *serverInfoPoller) readLoop(ctx context.Context, conn *net.UDPConn) {
 			continue
 		}
 
-		p.mgr.updateGameState(srcPort, hostname, mapName, players, maxPlayers)
+		p.mgr.updateGameState(src.Port, hostname, mapName, players, maxPlayers)
 	}
 }

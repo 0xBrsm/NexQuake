@@ -130,10 +130,6 @@ func (m *ServerManager) registerServerSeed(rec *instance) error {
 		return nil
 	}
 
-	candidatePort := recordListenPort(rec)
-	if candidatePort < 1 || candidatePort > 65535 {
-		candidatePort = 0
-	}
 	configuredPort, hasConfiguredPort := launchConfiguredPort(rec.Launch)
 	autoscales := hasConfiguredPort && configuredPort == 0 && max(1, m.serverMaxInstances) > 1
 
@@ -142,10 +138,9 @@ func (m *ServerManager) registerServerSeed(rec *instance) error {
 		Line:           rec.Launch.Line,
 		TemplateLaunch: cloneServerLaunch(rec.Launch),
 		Autoscales:     autoscales,
-		CandidatePort:  candidatePort,
 		InstanceIDs:    []int{rec.id},
 		instanceStates: map[int]*instanceState{
-			rec.id: newInstanceState(instanceLifecycleWarming),
+			rec.id: &instanceState{Lifecycle: instanceLifecycleWarming},
 		},
 	}
 	if !rec.LastSeen.IsZero() {
@@ -153,9 +148,6 @@ func (m *ServerManager) registerServerSeed(rec *instance) error {
 	}
 	m.nextServerID++
 	m.serversByID[s.ServerID] = s
-	if s.CandidatePort > 0 {
-		m.serverByCandidatePort[s.CandidatePort] = s
-	}
 	m.serverByInstanceID[rec.id] = s
 	m.refreshServerSnapshotLocked(s)
 

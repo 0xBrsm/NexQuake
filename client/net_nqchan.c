@@ -25,6 +25,11 @@
 #define NQ_IDENTITY_MAGIC        "NQIP"
 #define NQ_IDENTITY_MAGIC_LEN    4
 #define NQ_IDENTITY_PAYLOAD_SIZE (NQ_IDENTITY_MAGIC_LEN + 4)
+// Must match admin.ClientCommandPayload: nexus pushes a server→client console
+// command on port 0 framed as NQ_RCON_MAGIC + UTF-8 cmd + 0x00. The client
+// strips the prefix and feeds the command into Cbuf as if the user typed it.
+#define NQ_RCON_MAGIC            "RCON"
+#define NQ_RCON_MAGIC_LEN        4
 #define NQ_SERVER_IP_OCTET_0     13
 #define NQ_SERVER_IP_OCTET_1     37
 
@@ -232,6 +237,22 @@ void WASM_OnPacket (const byte *frame, int length)
 		if (is_control)
 		{
 			NqRing_Enqueue (&nq_ctl, frame, (unsigned int)length);
+		}
+		else if (payload_len >= NQ_RCON_MAGIC_LEN &&
+		         memcmp (payload, NQ_RCON_MAGIC, NQ_RCON_MAGIC_LEN) == 0)
+		{
+			const char *cmd = (const char *)payload + NQ_RCON_MAGIC_LEN;
+			int cmd_len = payload_len - NQ_RCON_MAGIC_LEN;
+			if (cmd_len > 0 && cmd[cmd_len - 1] == '\0') cmd_len--;
+			if (cmd_len > 0)
+			{
+				char buf[WASM_MAX_FRAME_SIZE];
+				if (cmd_len > (int)sizeof(buf) - 2) cmd_len = (int)sizeof(buf) - 2;
+				memcpy (buf, cmd, (size_t)cmd_len);
+				buf[cmd_len] = '\n';
+				buf[cmd_len + 1] = '\0';
+				Cbuf_AddText (buf);
+			}
 		}
 		else if (payload_len > 0)
 		{
