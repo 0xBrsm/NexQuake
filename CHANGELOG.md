@@ -4,6 +4,25 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.10.0
+
+### Added
+- `rcon login` (WASM): opens an OIDC popup against `GET /rcon`; Nexus pushes
+  `rcon: authenticated.` over the trunk control channel on completion. Sidesteps
+  COOP-same-origin restrictions for proxy-gated deployments.
+- `error.data.hint` on `401` responses: operator-facing auth hint built from configured methods.
+- `trunk` public API additions: `Session.SendControl/End`, `SessionByVirtualIP`,
+  `SessionInfo.ActiveServerPort`, control-channel handler hooks.
+
+### Changed
+- Admin RPC: `session.*` → `client.*`; `client.ban` now disconnects the WASM engine via
+  `Cbuf_AddText` and returns `disconnected` count and `source_ips[]`.
+- `server.instance.command` uses random `__NQX_*` sentinels instead of a time-window
+  heuristic — long replies no longer truncate; adjacent commands can't interleave.
+- Nexus top-level split by concern (`connect.go`, `log.go`, `env.go`, `ws.go`, `version.go`);
+  `access` split into `auth.go`, `gate.go`, `identity.go`; console-bound text lowercased.
+- Docs: `ADMIN.md`, `nexus/README.md`, `client/README.md` aligned to current shape.
+
 ## 1.9.1
 
 ### Changed

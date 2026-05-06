@@ -31,16 +31,18 @@ Rules:
 
 - `trunk` and `internal/orch` do not import `internal/admin`.
 - `trunk` has no imports from `internal/*` and no app policy logic.
-- Cross-subsystem construction is done in package `main` (`main.go`, `connect.go`, and `control.go`).
+- Cross-subsystem construction is done in package `main` (`main.go`, `connect.go`).
 
 ## Entry Files
 
 | File | Purpose |
 |------|---------|
 | `main.go` | Process lifecycle only: init, runtime wiring, HTTP server start, signal handling, graceful shutdown, and CLI subcommands (`--version`, `--healthcheck`). |
-| `connect.go` | HTTP mux and connection boundary: route registration (`/health`, `/connect`, `POST /rcon` JSON-RPC, `GET /rcon` OIDC-popup landing page, `/start`, `/nq/`, `/`), top-level access gate wrapping, shared transport session setup, and `/rcon` JSON-RPC handler. |
-| `control.go` | Conn control wiring: builds `trunk.FrameDispatch`, routes control frames to `slist`, and composes `admin.Env` from orchestration/session dependencies. |
-| `util.go` | Shared runtime utilities: leveled logging (stderr + file + ring buffer), version/build metadata, env helpers, and HTTP response helpers. |
+| `connect.go` | HTTP mux and connection boundary: route registration (`/health`, `/connect`, `POST /rcon` JSON-RPC, `GET /rcon` OIDC-popup landing page, `/start`, `/nq/`, `/`), top-level access gate wrapping, and `/rcon` JSON-RPC handler. |
+| `env.go` | Startup config (`runtimeConfig`): reads cross-cutting env vars once and exposes `PATH`/env helpers. |
+| `log.go` | Logging setup (`LOG_LEVEL`, `CONSOLE_TIMESTAMPS`), nexus.log file sink, and operator console ring buffer. |
+| `version.go` | Build metadata (`--version`, `/health`), version ldflags, and CLI sub-command handler. |
+| `ws.go` | WebSocket transport setup: mounts `/connect` and upgrades connections to trunk sessions. |
 
 ## trunk/
 
@@ -48,12 +50,11 @@ Per-client browser↔UDP tunnel. See [trunk/README.md](./trunk/README.md) for ve
 
 | File | Purpose |
 |------|---------|
-| `relay.go` | Manages one `Conn` per client: tunnel read/write loops, UDP socket ownership, lifecycle, and control-frame dispatch. |
-| `protocol.go` | Defines the 2-byte-port + payload binary frame format and builds/parses identity frames. |
-| `options.go` | Functional options (`WithDispatch`, `WithLogger`) consumed by `NewConn`. |
-| `ws.go` | WebSocket `Transport` adapter and `Upgrader`; the only file importing `gorilla/websocket`. |
-| `udp.go` | UDP socket I/O: reads datagrams from the backend, writes outbound frames to it. |
-| `vip.go` | Allocates unique `127.x.x.x` VirtualIPs from source keys. |
+| `trunk.go` | `Trunk` type, functional options, `SessionInfo`, and session registry (`NewSession`, `SessionByVirtualIP`). |
+| `session.go` | `Session` type, `Transport` interface, `ControlHandler`/`PortFilter` callbacks, `SendControl`, `End`, and per-client I/O lifecycle. |
+| `relay.go` | Frame encoding (2-byte big-endian port prefix), tunnel read/write loops, and UDP read/write loops. |
+| `vip.go` | Deterministic `127.x.x.x` VirtualIP allocation from source keys. |
+| `websocket/websocket.go` | `Transport` adapter and `Upgrader` for `gorilla/websocket`; the only file importing it. |
 
 ## internal/access/
 
@@ -71,11 +72,12 @@ Manages dedicated server processes and their scaled instances. Parses `.bat`-sty
 
 | File | Purpose |
 |------|---------|
-| `launcher.go` | `servers.ini` parser (with `@macro` + `%arg` expansion), launch plan builder, and process start/stop wiring under PTY. |
+| `autoscale.go` | Server-level instance selection (least-loaded, round-robin tie-break), slist-poll demand accounting, headroom calculation, autoscale scale-up/drain/despawn decisions, and reconcile loops (event-driven + heartbeat). |
+| `launch_plan.go` | `servers.ini` parser (`@macro` + `%arg` expansion) and launch plan builder. |
+| `launcher.go` | Process start/stop wiring under PTY. |
 | `manager.go` | `ServerManager` construction, shared logging hooks, and operator console relay formatting. |
 | `registry.go` | Server/instance registry model, instance lifecycle state (`warming/active/draining/terminating`), and aggregate server snapshot refresh. |
 | `state.go` | In-memory instance state updates (resolved port/search-path + observed server-info), startup-online transitions, and per-update reconcile trigger. |
-| `server.go` | Server-level instance selection (least-loaded, round-robin tie-break), slist-poll demand accounting, headroom calculation, autoscale scale-up/drain/despawn decisions, and reconcile loops (event-driven + heartbeat). |
 | `ops.go` | High-level lifecycle operations (start/stop/restart/remove/launch by 1-based server index). Resolves targets and coordinates instance transitions. |
 | `console.go` | PTY-based server console I/O. Captures output lines, detects listen port from console, supports filtered reads for rcon command capture. |
 | `rcon.go` | Instance command dispatch (`DispatchInstanceCmd`): brackets the user command with random `__NQX_*` sentinels via `echo`, writes the framed line to the instance PTY, and returns exactly the lines the server emits between BEGIN and END. A safety timeout bounds hung-server cases; there is no idle-wait heuristic. |
@@ -104,11 +106,15 @@ Tracks live client presence by joining access identity metadata recorded at `/co
 
 | File | Purpose |
 |------|---------|
-| `vfs.go` | **Manifest builder.** Scans `${GAME_DIR}/<mod>/common` + `${GAME_DIR}/<mod>/client` and builds JSON manifests with Quake precedence (loose > PAK, higher PAK number wins). |
-| `cd.go` | **CD index.** Scans `${CD_DIR}` for `.ogg`/`.mp3` BGM tracks. |
-| `pak.go` | **PAK parser.** Indexes PAK headers and exposes file offsets/sizes for stream extraction. |
-| `manifest.go` | **Runtime gateway.** Serves quickstart metadata and hash-addressed asset reads. |
-| `game.go` | **Quickstart + installers.** Seeds `servers.ini` and installs missing mod layers from `CFG_DIR/game.json` based on `QUICKSTART` and `servers.ini -game` entries. |
+| `clientfs.go` | VFS manifest builder: scans `${GAME_DIR}/<mod>/{common,client}` and builds JSON manifests (Quake precedence: loose > PAK, higher PAK wins); also builds CD index from `${CD_DIR}`. |
+| `clientfs_pak.go` | PAK parser: indexes PAK headers and exposes file offsets/sizes for stream extraction. |
+| `serverfs.go` | Runtime overlay basedir: creates an ephemeral directory of symlinks into `${GAME_DIR}` for the dedicated server's VFS, reconciled per fsnotify event. |
+| `gamedir.go` | Lists valid mod directories under `${GAME_DIR}`. |
+| `manifest.go` | Runtime asset gateway: serves `/start` quickstart metadata and `/nq/<hash>` hash-addressed asset reads. |
+| `manifest_asset.go` | Hashed asset construction and content-type resolution for hash-addressed responses. |
+| `quickstart.go` | Quickstart orchestration: seeds `servers.ini` and plans mod installs from `CFG_DIR/game.json` based on `QUICKSTART` and `servers.ini -game` entries. |
+| `quickstart_extract.go` | Archive and PAK extraction for quickstart mod layer installs. |
+| `quickstart_install.go` | Mod layer install coordinator: fetches, extracts, and writes mod layers to `${GAME_DIR}`. |
 
 ## quake106/
 
