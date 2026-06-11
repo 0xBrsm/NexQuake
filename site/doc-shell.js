@@ -79,7 +79,7 @@
 
     const response = await fetch(url.pathname, { credentials: 'same-origin' });
     if (!response.ok) {
-      window.location.assign(url.pathname + url.hash);
+      window.location.assign(url.href);
       return;
     }
 
@@ -106,11 +106,17 @@
     }
 
     event.preventDefault();
-    void navigateTo(url, true);
+    // A failed soft navigation (network error, response without the doc
+    // shell) must not eat the click — fall back to a full page load.
+    navigateTo(url, true).catch(() => {
+      window.location.assign(url.href);
+    });
   });
 
   window.addEventListener('popstate', () => {
-    void navigateTo(new URL(window.location.href), false);
+    navigateTo(new URL(window.location.href), false).catch(() => {
+      window.location.reload();
+    });
   });
 
   if (window.location.hash) {

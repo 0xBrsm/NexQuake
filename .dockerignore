@@ -1,0 +1,6 @@
+# Keep local build scratch out of the image context: it cache-busts every
+# COPY build/ layer and makes the in-container prepare-upstream reuse a
+# leaked host snapshot instead of fetching. The canonical WinQuake checkout
+# is exempt — server-builder-ci expects CI to prefetch it into the context.
+build/tmp
+!build/tmp/WinQuake

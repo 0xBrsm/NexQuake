@@ -80,7 +80,9 @@ void NET_SlistParseAggregatedList(int ldriver)
 		if (MSG_ReadByte() != NET_PROTOCOL_VERSION)
 		{
 			Q_strcpy(hostcache[slot].cname, hostcache[slot].name);
-			hostcache[slot].cname[sizeof(hostcache[slot].cname) - 1] = 0;
+			// Cap so "*" + cname + NUL fits name[] — a full-length name from
+			// the network would otherwise overflow by one into map[].
+			hostcache[slot].cname[sizeof(hostcache[slot].name) - 2] = 0;
 			Q_strcpy(hostcache[slot].name, "*");
 			Q_strcat(hostcache[slot].name, hostcache[slot].cname);
 		}

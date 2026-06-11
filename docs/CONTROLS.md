@@ -81,7 +81,7 @@ bind touch_tap2 +jump
 | `touch_invertpitch` | `0` | If `1`, inverts vertical look direction for swipe. |
 | `touch_flip` | `0` | If `1`, mirrors the touch layout horizontally (left-handed mode). |
 | `touch_tap_ms` | `220` | Maximum contact duration in milliseconds for a look-zone touch to register as a tap (`touch_tap1`/`touch_tap2`) rather than a swipe. |
-| `touch_tap_px` | `40` | Maximum finger movement in pixels for a look-zone touch to register as a tap rather than a swipe. |
+| `touch_tap_px` | `20` | Maximum finger movement in pixels for a look-zone touch to register as a tap rather than a swipe. |
 
 ## Gamepad Input
 
@@ -177,5 +177,8 @@ FOV scales automatically when switching modes. `fov` is interpreted as the user'
 | `analog_speed` | `400` | no | Analog shared |
 | `vid_mode` | `0` | yes | Video |
 | `fov_adapt` | `0.5` | no | Video |
+| `net_diag` | `0` | no | Network diagnostics |
 
 Archived cvars are written to `config.cfg` automatically and restored on next load. Non-archived cvars reset to their defaults on each startup unless set explicitly in `autoexec.cfg`.
+
+`net_diag 1` echoes transport diagnostics events (stalls, loss, reordering) to the browser console as they happen. The companion `netdiag` console command prints the active transport plus receive-health counters and a recent-event log on demand; `netdiag reset` clears them.

@@ -22,12 +22,13 @@ The client patches and overlays are a mix of required and additive features. The
 
 ### 2. NexQuake Networking
 
-**Required.** Browsers cannot open UDP sockets. This feature replaces Quake's UDP networking with a tunneled web transport (WebSocket today; the substrate is pluggable so additional transports such as WebTransport can be added without reworking the channel layer), routing all traffic through the Nexus relay. Players connect by port number (e.g. `connect 26000`); the relay maps ports to game servers. All overlay files, no patches to upstream.
+**Required.** Browsers cannot open UDP sockets. This feature replaces Quake's UDP networking with a tunneled web transport: WebSocket is the universal baseline, with WebTransport (QUIC datagrams) warmed in the background and adopted between connections once its handshake has proven the path (see DEC-018 in `agents/DECISIONS.md`). All traffic routes through the Nexus relay. Players connect by port number (e.g. `connect 26000`); the relay maps ports to game servers. All overlay files, no patches to upstream.
 
 | File | Purpose |
 |------|---------|
 | `net_wasm.c/h` | Browser transport manager. Owns the ordered transport registry, shared lifecycle, handshake waits, fallback, logging hooks, and raw byte send/receive dispatch. |
-| `net_nqchan.c/h` | NexQuake channel/protocol adapter: port-header framing, CTL/DATA demux, ring buffers, virtual 127.x.y.z addressing, and route/server-id tracking. |
+| `net_nqchan.c/h` | NexQuake channel/protocol adapter: port-header framing, CTL/DATA demux, ring buffers, virtual 127.x.y.z addressing, route/server-id tracking, and transport diagnostics (`netdiag` command, `net_diag` cvar). |
+| `net_wt.c` | WebTransport substrate: warm background QUIC session, cert-hash pinning from `/start`, oversized-datagram drop semantics. |
 | `net_ws.c` | WebSocket substrate. Owns the Emscripten WebSocket lifecycle; pushes received bytes into `WASM_OnPacket`. |
 | `net_bsd.c` | Driver table registering only the NexQuake landriver. |
 
@@ -145,7 +146,7 @@ Quake's CD audio system originally played music tracks from a physical CD-ROM dr
 
 **Error Handling** — `60-onerror.js`
 
-Global exception handler that hides the loader and displays a status message on uncaught errors.
+Global exception handler: during boot it keeps the loader visible with a status message on uncaught errors; after startup it just logs.
 
 **Shell CSS** — `shell-nq.css`, `shell-loader.css`, `shell-ui.css`, `shell-touch.css`
 

@@ -145,6 +145,10 @@
       ctx.editor.classList.contains('open');
     Module.nqOverlayBlockingModalOpen = blocking;
     Module.nqOverlayModalOpen = blocking || !!Module.nqTextEntryOpen;
+    // Touch HUD reacts to modal state immediately instead of waiting for
+    // its 200ms visibility poll (hook exported by 21-touch-controls.js).
+    if (typeof Module.nqTouchSyncVisibility === 'function')
+      Module.nqTouchSyncVisibility();
   };
   ctx.syncModalOpen();
   Module.nqOverlayCtx = ctx;

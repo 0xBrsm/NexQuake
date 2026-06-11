@@ -968,7 +968,7 @@
     <a class="doc-card" href="/nexus-service/" data-page="nexus-service">
       <span class="doc-type">Component</span>
       <div class="doc-name">Nexus Service</div>
-      <div class="doc-summary">HTTP and WebSocket relay orchestration, boundaries, and runtime wiring.</div>
+      <div class="doc-summary">HTTP and tunnel relay orchestration (WebSocket/WebTransport), boundaries, and runtime wiring.</div>
       <div class="doc-cta">Open Document</div>
     </a>
   
@@ -1000,7 +1000,7 @@
     <a class="doc-card" href="/relay-package/" data-page="relay-package">
       <span class="doc-type">Package</span>
       <div class="doc-name">Relay Package</div>
-      <div class="doc-summary">Standalone WebSocket-to-UDP relay package and integration notes.</div>
+      <div class="doc-summary">Standalone tunnel-to-UDP relay package (WebSocket/WebTransport) and integration notes.</div>
       <div class="doc-cta">Open Document</div>
     </a>
   
@@ -1253,7 +1253,7 @@ const PAGE_LIST = [
     navLabel: 'Nexus Service',
     path: 'nexus/README.md',
     kind: 'Component',
-    summary: 'HTTP and WebSocket relay orchestration, boundaries, and runtime wiring.'
+    summary: 'HTTP and tunnel relay orchestration (WebSocket/WebTransport), boundaries, and runtime wiring.'
   },
   {
     id: 'relay-package',
@@ -1261,7 +1261,7 @@ const PAGE_LIST = [
     navLabel: 'Relay Package',
     path: 'nexus/trunk/README.md',
     kind: 'Package',
-    summary: 'Standalone WebSocket-to-UDP relay package and integration notes.'
+    summary: 'Standalone tunnel-to-UDP relay package (WebSocket/WebTransport) and integration notes.'
   },
   {
     id: 'shareware-extractor',
@@ -1675,6 +1675,7 @@ const HOME_DESCRIPTION = 'Play authentic multiplayer Quake in the browser with a
 let homeFeaturesPromise = null;
 let currentPage = null;
 let currentAnchor = '';
+let navSeq = 0;
 
 async function loadHomeFeatures() {
   if (!homeFeaturesPromise) {
@@ -1739,10 +1740,15 @@ async function navigate(page, anchor, options) {
   const wrap = document.getElementById('content-wrap');
   currentPage = targetPage;
   currentAnchor = targetAnchor;
+  // Discard slow responses from a superseded navigation: without this, two
+  // rapid navigations could land out of order, showing page A's content
+  // under page B's title, nav highlight, and URL.
+  const seq = ++navSeq;
 
   if (targetPage === 'home') {
     content.innerHTML = '<p class="loading-msg">loading...</p>';
     const homeFeatures = await loadHomeFeatures();
+    if (seq !== navSeq) return;
     content.innerHTML = buildHomeMarkup(homeFeatures);
     bindDocumentLinks(content, '');
     setPageMetadata(HOME_TITLE, HOME_DESCRIPTION);
@@ -1771,6 +1777,7 @@ async function navigate(page, anchor, options) {
     }
 
     const html = await res.text();
+    if (seq !== navSeq) return;
     const parsed = new DOMParser().parseFromString(html, 'text/html');
     const docContent = parsed.querySelector('.md');
     if (!docContent) {
@@ -1785,6 +1792,7 @@ async function navigate(page, anchor, options) {
       requestAnimationFrame(() => scrollToAnchor(targetAnchor));
     }
   } catch (e) {
+    if (seq !== navSeq) return;
     content.innerHTML = '<p style="color:#f66;font-family:var(--mono-font);padding:20px 0">Failed to load ' + doc.path + ': ' + e.message + '</p>';
   }
 }

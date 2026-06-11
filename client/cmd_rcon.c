@@ -28,11 +28,20 @@ EM_ASYNC_JS(void, js_rcon_exec,
 	(const char *password, const char *args_line, int connected_port,
 	 char *out_buf, int out_len),
 {
-	var reply = await Module.nqRcon(
-		UTF8ToString(password),
-		UTF8ToString(args_line),
-		connected_port
-	);
+	// Any throw or rejection here would abort the Asyncify resume and hang
+	// the suspended engine frame — catch everything and return text instead.
+	var reply;
+	try {
+		if (typeof Module.nqRcon !== 'function')
+			throw new Error('rcon client unavailable');
+		reply = await Module.nqRcon(
+			UTF8ToString(password),
+			UTF8ToString(args_line),
+			connected_port
+		);
+	} catch (e) {
+		reply = 'rcon error: ' + String(e && e.message || e) + '\n';
+	}
 	stringToUTF8(String(reply || ""), out_buf, out_len);
 });
 

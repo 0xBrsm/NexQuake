@@ -563,11 +563,8 @@
       refreshBoundVisibility();
   }, 200);
 
-  if (moduleRef.nqOverlayCtx) {
-    var baseSyncModalOpen = moduleRef.nqOverlayCtx.syncModalOpen;
-    moduleRef.nqOverlayCtx.syncModalOpen = function() {
-      if (baseSyncModalOpen) baseSyncModalOpen.call(moduleRef.nqOverlayCtx);
-      syncVisibility();
-    };
-  }
+  // 50-ui.js calls this from syncModalOpen so the touch HUD reacts to modal
+  // open/close immediately. (This file runs before 50-ui creates the overlay
+  // ctx, so wrapping ctx.syncModalOpen here was never possible.)
+  moduleRef.nqTouchSyncVisibility = syncVisibility;
 })();

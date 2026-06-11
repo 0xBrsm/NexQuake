@@ -51,7 +51,7 @@ func (c Connection) Disconnect(payload []byte) bool {
 		return false
 	}
 	if len(payload) > 0 {
-		_ = sess.SendControl(payload)
+		_ = sess.TrySendControl(payload)
 	}
 	sess.End()
 	return true
@@ -66,7 +66,7 @@ func (c Connection) PushControl(payload []byte) bool {
 	if sess == nil {
 		return false
 	}
-	return sess.SendControl(payload) == nil
+	return sess.TrySendControl(payload)
 }
 
 // liveSession resolves this connection's currently-active trunk session by

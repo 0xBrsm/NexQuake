@@ -137,6 +137,11 @@ func main() {
 	mux := app.newMux()
 	setupWebSocket(app, mux)
 
+	wtServer, err := setupWebTransport(app, runCtx)
+	if err != nil {
+		fatalf("WebTransport setup: %v", err)
+	}
+
 	server := &http.Server{
 		Addr:              ":" + cfg.httpPort,
 		Handler:           accessGate.HTTPGate(mux),
@@ -144,13 +149,25 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	slog.Info(fmt.Sprintf("Nexus listening on port %s", cfg.httpPort))
+	if wtServer != nil {
+		slog.Info(fmt.Sprintf("Nexus listening on port %s (%s, %s)", cfg.httpPort, trunk.TransportWebSocket, trunk.TransportWebTransport))
+	} else {
+		slog.Info(fmt.Sprintf("Nexus listening on port %s (%s)", cfg.httpPort, trunk.TransportWebSocket))
+	}
 
 	go func() {
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			fatalf("Server error: %v", err)
 		}
 	}()
+	if wtServer != nil {
+		go func() {
+			if err := wtServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				slog.Error(fmt.Sprintf("%s server error: %v", trunk.TransportWebTransport, err))
+			}
+		}()
+	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	<-sigChan
@@ -164,6 +181,9 @@ func main() {
 
 	if err := server.Shutdown(ctx); err != nil {
 		fatalf("Server shutdown failed: %v", err)
+	}
+	if wtServer != nil {
+		_ = wtServer.Close()
 	}
 
 	_ = serverMgr.StopAll(ctx, 2*time.Second)

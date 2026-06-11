@@ -29,8 +29,8 @@ Throughout this document, **NQIP** refers to a client's NexQuake IP: the determi
 | **server restart** | `rcon nexus server restart <idx\|all> [secs]` | Restart a specific server or all servers. Equivalent to `stop` followed by `start`. |
 | **server remove** | `rcon nexus server remove <idx>` | Remove a **stopped** server from the runtime registry. Useful for cleaning up temporary `server launch` instances. |
 | **server launch** | `rcon nexus server launch <binary> [args...]` | Launch and register a new server dynamically. Example: `rcon nexus server launch nqserver -dedicated -game ctf +map ctf2m3`. |
-| **client list** | `rcon nexus client list` | List all connected clients with NQIP, source IP, and user identity when available. |
-| **client info** | `rcon nexus client info <nqip>` | Show details for one active client by NQIP. |
+| **client list** | `rcon nexus client list` | List all connected clients with NQIP, source IP tagged with the tunnel transport (`(wt)`/`(ws)`), and user identity when available. |
+| **client info** | `rcon nexus client info <nqip>` | Show details for one active client by NQIP, including the tunnel transport. |
 | **client ban** | `rcon nexus client ban <nqip>` | Ban one client's source IP until Nexus restart and disconnect it immediately. |
 
 ## Privileged Gameplay Commands (`please`)
@@ -189,7 +189,7 @@ Detail for one active client.
 Disconnect one active client matching an NQIP and block its source IP until Nexus restart. Nexus sends the client a console message, then closes the connection.
 
 - Params: `{"nqip": "<127.x.x.x>"}`.
-- Result: `{"nqip": "<nqip>", "source_ips": ["<ip>"], "disconnected": 1, "server_kicks": 0}`.
+- Result: `{"nqip": "<nqip>", "source_ips": ["<ip>"], "disconnected": 1}`.
 - Errors: `-32001 NotFound` if the NQIP has no active client.
 
 ### Example Flows

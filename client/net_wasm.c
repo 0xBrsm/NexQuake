@@ -36,9 +36,40 @@ EM_JS (void, WASM_FireOpenHook, (), {
 	catch (e) { if (console.warn) console.warn('onWasmTransportOpen failed:', e); }
 });
 
+// Connection-level messages (DEC-018): the player sees one story about the
+// connection, not two competing per-transport streams — "Connection by X"
+// when a carrier comes up fresh, "Connection upgraded to WebTransport" as a
+// single line covering both halves of a promotion, "Connection closed ..."
+// with the carrier in parens. Lines print via Cbuf so they execute on the
+// main loop, never from inside a JS event callback — transport callbacks can
+// fire while a C frame is Asyncify-suspended, and re-entering the renderer
+// from there corrupts the suspended state.
+static void GameConsoleEcho (const char *line)
+{
+	char cmd[192];
+	// Quoted so the console tokenizer treats the line as one argument —
+	// unquoted parentheses are split into their own tokens and re-joined
+	// with stray spaces.
+	snprintf (cmd, sizeof(cmd), "echo \"%s\"\n", line);
+	Cbuf_AddText (cmd);
+}
+
+// Set when an adoption already told the story, so the transport's own
+// ready-edge / close event doesn't repeat or contradict it.
+static const char *announced_open = NULL;
+static const char *suppress_close = NULL;
+
 void WASM_OnOpen (const char *transport)
 {
-	WASM_Log (WASM_LOG_INFO, "%s: connected", transport);
+	char line[96];
+
+	if (announced_open && Q_strcmp ((char *)announced_open, (char *)transport) == 0)
+		announced_open = NULL;
+	else
+	{
+		snprintf (line, sizeof(line), "Connection by %s", transport);
+		GameConsoleEcho (line);
+	}
 	WASM_FireOpenHook ();
 }
 
@@ -52,76 +83,210 @@ void WASM_OnError (const char *transport, const char *reason)
 
 void WASM_OnClose (const char *transport, qboolean expected)
 {
-	WASM_Log (expected ? WASM_LOG_INFO : WASM_LOG_WARN, "%s: %s", transport,
-		expected ? "disconnected at user request" : "disconnected unexpectedly");
+	char line[96];
+
+	if (suppress_close && Q_strcmp ((char *)suppress_close, (char *)transport) == 0)
+		suppress_close = NULL; // teardown half of an upgrade, already reported
+	else
+	{
+		snprintf (line, sizeof(line), "Connection closed %s (%s)",
+			expected ? "by client" : "unexpectedly", transport);
+		GameConsoleEcho (line);
+		// Unexpected closes also log synchronously: the echo only prints if
+		// the main loop keeps draining Cbuf, and a disconnect coinciding
+		// with a wedged engine is exactly when the evidence matters.
+		if (!expected)
+			WASM_Log (WASM_LOG_WARN, "%s", line);
+	}
 	NET_InvalidateHostCache ();
 }
 
 //----------------------------------------------------------------------------
 // Transport registry. Ordered by preference.
 
+extern const wasm_transport_t wasm_wt_transport;
 extern const wasm_transport_t wasm_ws_transport;
 
 static const wasm_transport_t * const transports[] = {
+	&wasm_wt_transport,
 	&wasm_ws_transport,
 };
 
 static const int transport_count = sizeof(transports) / sizeof(transports[0]);
 
 //----------------------------------------------------------------------------
-// Transport selection. The ordered registry defines transport preference; this
-// layer only walks that list. On disconnect+reconnect, keep the previously-
-// selected transport when it still starts cleanly. Handshake waits live in
-// WASM_SendPacket so Asyncify unwinds during emscripten_sleep never race with
-// emscripten_set_main_loop.
+// Transport selection. The ordered registry defines preference; the last
+// entry is the baseline (the always-works substrate the send path may wait
+// on). Non-baseline transports are warm-kept: their sessions start in the
+// background at init and dead ones restart on a timer, but a session is only
+// ever *adopted* once is_ready() says its handshake already landed — nothing
+// waits on an unproven endpoint (the manifest can advertise WebTransport,
+// but UDP-blocking networks, CDN hostnames, or a pending permission prompt
+// can make it unreachable for this client). While a game socket is open the
+// choice is frozen; between connections it is re-evaluated, so a warm
+// transport that lands late is picked up by the next connection. Handshake
+// waits live in WASM_SendPacket so Asyncify unwinds during emscripten_sleep
+// never race with emscripten_set_main_loop.
 
 static const wasm_transport_t *active = NULL;
 static int active_index = -1;
 static qboolean started = false;
 
-static qboolean start_transport_from (int first)
+#define WASM_WARM_RETRY_SEC 20.0
+
+static qboolean warm_started[sizeof(transports) / sizeof(transports[0])];
+static double   warm_retry_at[sizeof(transports) / sizeof(transports[0])];
+
+// Keep non-baseline transports' sessions alive in the background. Warm
+// transports are never ticked here — their frames stay queued JS-side until
+// adoption, so a parallel session can't leak identity frames into the
+// active one. The active transport's lifecycle belongs to selection below.
+static void KeepWarmTransports (void)
+{
+	double now = -1.0; // fetched lazily — this runs per poll, the clock is a JS crossing
+	int i;
+
+	for (i = 0; i < transport_count - 1; i++)
+	{
+		const wasm_transport_t *t = transports[i];
+
+		if ((t == active && started) || !t->is_available ()) continue;
+		if (warm_started[i] && !t->is_closed ()) continue; // pending or ready
+		if (now < 0) now = Sys_FloatTime ();
+		if (now < warm_retry_at[i]) continue;
+		if (warm_started[i]) t->close (); // reap the dead session first
+		warm_started[i] = (t->start () == 0);
+		warm_retry_at[i] = now + WASM_WARM_RETRY_SEC;
+	}
+}
+
+static void AdoptTransport (int idx)
+{
+	const wasm_transport_t *t = transports[idx];
+	char line[96];
+
+	// A stale latch naming the transport being (re)adopted can no longer be
+	// consumed by its intended event — the old socket instance is gone once a
+	// new one starts — and would otherwise eat the NEW session's first
+	// open/close announcement.
+	if (suppress_close && Q_strcmp ((char *)suppress_close, (char *)t->name) == 0)
+		suppress_close = NULL;
+	if (announced_open && Q_strcmp ((char *)announced_open, (char *)t->name) == 0)
+		announced_open = NULL;
+
+	if (active && started && active != t)
+	{
+		// Promotion: announce one connection-level line; the old carrier's
+		// close and the new one's ready-edge are both halves of this same
+		// event. Close the old transport so its substrate releases the
+		// connection, then drop frames it buffered — they belong to the
+		// session it was carrying.
+		suppress_close = active->name;
+		announced_open = t->name;
+		snprintf (line, sizeof(line), "Connection upgraded to %s", t->name);
+		GameConsoleEcho (line);
+		active->close ();
+		WASM_OnTransportReset ();
+	}
+	else if (t->is_ready ())
+	{
+		// Fresh adoption of an already-proven transport (warm WebTransport):
+		// announce now; its ready-edge fires after adoption and stays quiet.
+		announced_open = t->name;
+		snprintf (line, sizeof(line), "Connection by %s", t->name);
+		GameConsoleEcho (line);
+	}
+	active = t;
+	active_index = idx;
+	started = true;
+}
+
+void WASM_EnsureTransportOpen (void)
 {
 	int i;
 
-	for (i = first; i < transport_count; i++)
+	KeepWarmTransports ();
+
+	if (active && active->tick) active->tick ();
+
+	// Active transport died: release it and re-select. Close it explicitly so
+	// the substrate tears down its half (WebTransport in particular lingers as
+	// a ghost session answering server keepalives otherwise), drop its
+	// buffered frames, and put its warm slot on backoff so selection doesn't
+	// instantly re-adopt the corpse.
+	if (started && active->is_closed ())
 	{
-		const wasm_transport_t *transport = transports[i];
-		if (!transport->is_available ()) continue;
-		active = transport;
-		active_index = i;
-		if (active->start () == 0) { started = true; return true; }
+		active->close ();
+		WASM_OnTransportReset ();
+		started = false;
+		if (active_index < transport_count - 1)
+		{
+			warm_started[active_index] = false;
+			warm_retry_at[active_index] = Sys_FloatTime () + WASM_WARM_RETRY_SEC;
+		}
 	}
-	return false;
+
+	// Between connections, adopt the highest-priority transport that is ready
+	// right now (a warm session that landed since the last pick). Never tear
+	// down a mid-handshake active to do it — closing a still-connecting
+	// WebSocket trips browser warnings and races the Asyncify-suspended send
+	// path; a non-ready active either finishes (upgrade next poll) or dies
+	// (death path above).
+	if (!started || (WASM_TransportIdle () && active_index > 0 && active->is_ready ()))
+	{
+		for (i = 0; i < (started ? active_index : transport_count); i++)
+		{
+			if (transports[i]->is_available () && transports[i]->is_ready ())
+			{
+				AdoptTransport (i);
+				break;
+			}
+		}
+	}
+
+	// No transport is started here on purpose: polls (ring reads, init)
+	// don't need one. The baseline starts lazily in the send path, so a warm
+	// WebTransport that lands within the first seconds is adopted directly
+	// and the WebSocket never has to connect at all.
 }
 
-qboolean WASM_EnsureTransportOpen (void)
+// EnsureSendableTransport — the send path needs a live transport *now*.
+// WASM_EnsureTransportOpen (called just before, with no Asyncify yield in
+// between) already adopted any ready transport, so the only remaining move
+// is starting the baseline (same-origin, reliable) without waiting on
+// anything else. Failure here is a hard misconfiguration — log it loudly,
+// since the poll path can no longer surface it.
+static qboolean EnsureSendableTransport (void)
 {
-	if (active && active->tick) active->tick ();
-	if (active && active->is_ready ()) return true;
+	int i;
 
-	if (!started)
+	if (started) return true;
+
+	i = transport_count - 1;
+	if (!transports[i]->is_available () || transports[i]->start () != 0)
 	{
-		return start_transport_from (active_index < 0 ? 0 : active_index);
+		WASM_Log (WASM_LOG_ERROR, "no transport could start: %s",
+			transports[i]->last_error ());
+		return false;
 	}
-
-	// Started but current transport died. Fall forward through the registry; if
-	// there is no later transport, retry the current one once.
-	if (active->is_closed ())
-	{
-		started = false;
-		if (start_transport_from (active_index + 1)) return true;
-		return start_transport_from (active_index);
-	}
-
-	// Started, handshaking — caller's Send path will wait for ready.
+	AdoptTransport (i);
 	return true;
 }
 
 void WASM_CloseTransport (void)
 {
-	if (active) active->close ();
+	int i;
+
+	// Shutdown closes everything, including warm background sessions. Each
+	// transport's close() is a no-op when it isn't running.
+	for (i = 0; i < transport_count; i++)
+	{
+		transports[i]->close ();
+		warm_started[i] = false;
+		warm_retry_at[i] = 0;
+	}
 	started = false;
-	// Keep `active` — reopen uses the same transport.
+	// Keep `active` — reopen re-evaluates from the registry as usual.
 }
 
 int WASM_SendPacket (const byte *packet, int len)
@@ -135,7 +300,8 @@ int WASM_SendPacket (const byte *packet, int len)
 	attempts = transport_count > 0 ? transport_count : 1;
 	for (attempt = 0; attempt < attempts; attempt++)
 	{
-		if (!WASM_EnsureTransportOpen ()) return -1;
+		WASM_EnsureTransportOpen ();
+		if (!EnsureSendableTransport ()) return -1;
 		if (active->is_ready ()) return active->send_raw (packet, len);
 
 		for (waited = 0;
@@ -152,4 +318,9 @@ int WASM_SendPacket (const byte *packet, int len)
 const char *WASM_LastSendError (void)
 {
 	return active ? active->last_error () : "no transport";
+}
+
+const char *WASM_ActiveTransportName (void)
+{
+	return (active && started) ? active->name : NULL;
 }

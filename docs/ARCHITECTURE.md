@@ -67,7 +67,7 @@ Touch registers three native callbacks (`touchstart`, `touchmove`, `touchend`) o
 - **Left zone** — virtual joystick. A `touch_move` slot records the drag origin and current position; displacement is clamped to `TOUCH_MOVE_RADIUS` (60 px) and normalized to `[-1, 1]` axis values that drive `cmd->forwardmove`/`sidemove` via `analog_speed`.
 - **Right zone** — swipe-look accumulator. Raw pixel deltas accumulate into `touch_look_x`/`touch_look_y` and are applied in `IN_Move()` the same way mouse deltas are, scaled by `touch_sensitivity`.
 
-Tap detection fires `touch_tap1` or `touch_tap2` key events for touches that end within `touch_tap_ms` (default 220 ms) and `touch_tap_px` (default 20 px) of their start point. Eight bindable button slots (`touch1`–`touch8`) are tracked by DOM element identity, passed from JavaScript when a finger lands on a button; the C layer calls `Key_Event()` on `touchstart`/`touchend` for each slot.
+Tap detection fires `touch_tap1` or `touch_tap2` key events for touches that end within `touch_tap_ms` (default 220 ms) and `touch_tap_px` (default 20 px) of their start point. Nine bindable button slots (`touch1`–`touch9`) are tracked by DOM element identity, passed from JavaScript when a finger lands on a button; the C layer calls `Key_Event()` on `touchstart`/`touchend` for each slot.
 
 The joystick ring visual and overlay hide timer are driven by `EM_JS` calls into the shell JavaScript layer (`js_joy_show`, `js_joy_move`, `js_joy_hide`, `js_set_touch_active`), keeping visual state out of C.
 
@@ -133,13 +133,13 @@ new_fov = atan(tan(old_fov / 2) × (new_aspect / old_aspect)) × 2
 
 This keeps the vertical play area constant — switching to a widescreen viewport widens the horizontal view without compressing the vertical. The canvas CSS `--nq-ar` property is updated via `js_update_canvas_ar()` so the browser letterboxes or pillarboxes the canvas when the render aspect does not match the display.
 
-## Stateless WebSocket Tunnel
+## Stateless Tunnel
 
 Game proxies typically parse packets, maintain session state, and layer their own protocol on top. NexQuake takes a simpler approach: the tunnel forwards raw datagrams without inspecting them.
 
 ### Frame Format
 
-Every WebSocket binary frame contains:
+Every tunnel frame (WebSocket binary message or WebTransport datagram) contains:
 
 ```
 [udp_port : u16 big-endian] [raw NetQuake datagram]
@@ -208,7 +208,7 @@ Standard NetQuake server browsing (`slist`) sends a UDP broadcast `CCREQ_SERVER_
 
 NexQuake routes exclusively by UDP port:
 
-- Browser frames carry destination port in the 2-byte WS header
+- Browser frames carry destination port in the 2-byte tunnel header
 - Nexus forwards to `127.0.0.1:<port>`
 - Server addresses are stored in the client hostcache as port-only
 - Players connect by hostname or port
@@ -221,7 +221,7 @@ Quake's networking code passes `qsockaddr` structures through every address API 
 Built from listen port number and unique client connection port number. The IP portion is generated from the 16 bytes of the server's listen port by assigning each of the two bytes to the last two octets of an IP address; so a server listening on port `26000` would be assigned IP `13.37.101.144` on the client. This ensures that even after a client has connected to a game server and been redirected by that server to a unique port, the client can continue to "know" which server in its hostcache it's connected to, enabling features like rcon and join codes. However, only the port field matters for routing and when Quake asks for an address string (e.g. for the server list or the `connect` status line), the driver returns just the port number.
 
 #### Local client addresses:
-To keep stock Quake server behavior, Nexus assigns each WebSocket client a stable virtual loopback "NQIP" and binds that client's UDP relay socket to it. NQIPs are deterministic `127.A.B.C` addresses allocated from a normalized client source key (for example trusted header IP or remote address), so reconnects from the same source key keep a stable identity while still avoiding collisions. This way, the server sees each client as a (practically) unique IP address, so features like per-IP bans, per-IP rate limiting, and the status command's address display all work unmodified. On WebSocket open, Nexus sends a small control frame so the browser client can set its local NQIP for the NQ landriver. The NQ landriver stores this and returns it when Quake calls `GetSocketAddr` on the local socket. This gives each browser client a stable identity that the server sees as a unique IP. Routing still remains port-only on the tunnel itself.
+To keep stock Quake server behavior, Nexus assigns each tunnel client a stable virtual loopback "NQIP" and binds that client's UDP relay socket to it. NQIPs are deterministic `127.A.B.C` addresses allocated from a normalized client source key (for example trusted header IP or remote address), so reconnects from the same source key keep a stable identity while still avoiding collisions. This way, the server sees each client as a (practically) unique IP address, so features like per-IP bans, per-IP rate limiting, and the status command's address display all work unmodified. On session open, Nexus sends a small control frame so the browser client can set its local NQIP for the NQ landriver. The NQ landriver stores this and returns it when Quake calls `GetSocketAddr` on the local socket. This gives each browser client a stable identity that the server sees as a unique IP. Routing still remains port-only on the tunnel itself.
 
 #### Address comparison:
 `AddrCompare` compares the full synthesized `qsockaddr`, which lets the engine distinguish between different servers (by port) and different clients (by NQIP). This keeps all address handling inside the NQ landriver. The rest of the Quake networking stack, the datagram layer, the connection logic, the server browser, sees well-formed `qsockaddr` values and never knows it's running over a browser transport (WebSocket or WebTransport).
@@ -300,8 +300,9 @@ Without prefetch, connecting to a server triggers sequential downloads of every 
 ## What's Next
 
 - **FTEQW client support**: The [FTEQW project](https://github.com/fte-team/fteqw) is a fantastic example of community driven development. FTEQW already has a WASM version of their client. Connecting it to Nexus to allow a more modern play experience for those who want it should be very doable.
-- **WebTransport**: WebTransport provides unreliable QUIC datagrams in the browser, the closest thing to native UDP available in a web context. Quake's netcode was designed for UDP: fire-and-forget datagrams, no head-of-line blocking, no retransmission of stale game state. WebSocket forces TCP semantics onto that model (ordered, reliable delivery), which adds overhead and unintended statefulness. WebTransport would let the tunnel behave the way Quake expects, and the tunnel architecture makes this a transport swap with only upside gameplay changes. The main impediment is wider support for WebTransport (Hello, Apple!).
-- **AudioWorklet**: PostProcessorNode is deprecated, so at some point an AudioWorklet refactor will be required. But hopefully not soon.
+- **AudioWorklet**: ScriptProcessorNode is deprecated, so at some point an AudioWorklet refactor will be required. But hopefully not soon.
+
+(WebTransport, previously listed here, shipped: the tunnel now carries unreliable QUIC datagrams when `WT_HOST` is configured — UDP-equivalent semantics with no head-of-line blocking — and falls back to WebSocket everywhere else. See the WebTransport section in [ENVIRONMENT.md](ENVIRONMENT.md).)
 
 ## Contributing
 

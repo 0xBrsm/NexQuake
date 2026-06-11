@@ -204,14 +204,12 @@
     var servers = (result && result.servers) || [];
     if (servers.length === 0) return '\nno quake servers found.\n\n';
     var out = '\n' +
-      pad('#', 3) + ' ' + pad('server', 15) + ' ' + pad('candidate', 9) + ' ' +
-      pad('game', 15) + ' ' + pad('users', 12) + ' ' + 'state\n' +
+      pad('#', 3) + ' ' + pad('Server', 15) + ' ' + pad('Candidate', 9) + ' ' +
+      pad('Game', 15) + ' ' + pad('Users', 12) + ' ' + 'State\n' +
       '--- --------------- --------- --------------- ------------ --------\n';
     for (var i = 0; i < servers.length; i++) {
       var s = servers[i];
-      var users = s.max_players > 0
-        ? (s.players + '/' + s.max_players + (s.instances > 0 ? ' (' + s.instances + ')' : ''))
-        : '--/--';
+      var users = formatServerUsers(s);
       out += pad(String(i + 1), 3) + ' ' + pad(s.hostname || 'unnamed', 15) + ' ' +
              pad(String(s.candidate_port || ''), 9) + ' ' +
              pad(s.game_dir || '?', 15) + ' ' + pad(users, 12) + ' ' + (s.state || '') + '\n';
@@ -244,7 +242,7 @@
         continue;
       }
       any = true;
-      out += '    #  port  map             users   state\n' +
+      out += '    #  Port  Map             Users   State\n' +
              '    -- ----- --------------- ------- --------\n';
       for (var j = 0; j < s.instances.length; j++) {
         var inst = s.instances[j];
@@ -257,17 +255,28 @@
     return out + '== end list ==\n\n';
   }
 
+  // Transport tag shown in parens after the source IP, mirroring the nexus
+  // console's "<id> connected (WebTransport)" style. The list table uses the
+  // short form to stay inside the 78-column budget; unknown transports fall
+  // back to the full name.
+  function transportTag(t) {
+    if (!t) return '';
+    if (t === 'WebTransport') return ' (wt)';
+    if (t === 'WebSocket') return ' (ws)';
+    return ' (' + t.toLowerCase() + ')';
+  }
+
   function formatClientList(result) {
     var clients = (result && result.clients) || [];
     if (clients.length === 0) return '\nno active clients.\n\n';
     var out = '\n' +
-      pad('nqip', 15) + ' ' + pad('source', 15) + ' ' + pad('identity', 24) + ' ' +
-      pad('server', 15) + ' ' + 'port\n' +
-      '--------------- --------------- ------------------------ --------------- -----\n';
+      pad('NQIP', 15) + ' ' + pad('Source', 20) + ' ' + pad('Identity', 19) + ' ' +
+      pad('Server', 15) + ' ' + 'Port\n' +
+      '--------------- -------------------- ------------------- --------------- -----\n';
     for (var i = 0; i < clients.length; i++) {
       var s = clients[i];
-      out += pad(s.nqip, 15) + ' ' + pad(s.source_ip || '-', 15) + ' ' +
-             pad(s.identity || '(anonymous)', 24) + ' ' +
+      out += pad(s.nqip, 15) + ' ' + pad((s.source_ip || '-') + transportTag(s.transport), 20) + ' ' +
+             pad(s.identity || '(anonymous)', 19) + ' ' +
              pad(s.server_host || '-', 15) + ' ' +
              (s.server_port > 0 ? String(s.server_port) : '-') + '\n';
     }
@@ -278,7 +287,8 @@
     if (!result || !result.client) return 'client not found\n';
     var s = result.client;
     var out = '\nclient ' + s.nqip + '\n' +
-      '  source ip: ' + (s.source_ip || 'unknown') + '\n' +
+      '  source ip: ' + (s.source_ip || 'unknown') +
+        (s.transport ? ' (' + s.transport.toLowerCase() + ')' : '') + '\n' +
       '  identity:  ' + (s.identity || '(anonymous)') + '\n' +
       '  server:    ' + (s.server_host || '-') +
         (s.server_port > 0 ? ' (:' + s.server_port + ')' : '') + '\n';
@@ -293,9 +303,9 @@
   }
 
   function formatClientBan(result) {
+    if (!result || !result.nqip) return 'ban failed: empty reply\n';
     var out = '\nbanned ' + result.nqip + '\n' +
-      '  disconnected: ' + result.disconnected + ' client(s)\n' +
-      '  server kicks: ' + result.server_kicks + '\n';
+      '  disconnected: ' + result.disconnected + ' client(s)\n';
     if (result.source_ips && result.source_ips.length > 0) {
       out += '  source ip(s): ' + result.source_ips.join(', ') + '\n';
     }
@@ -406,14 +416,21 @@
   // Exported entry point — called from cmd_rcon.c via EM_ASYNC_JS.
   // connectedPort is the currently-connected server's listen port (0 if none).
   Module.nqRcon = async function (password, argsLine, connectedPort) {
-    var tokens = tokenize(String(argsLine || ''));
-    var plan = planCall(tokens, connectedPort | 0);
-    if (plan.error) return plan.error;
-    if (plan.clientCmd === 'login') return runClientLogin();
+    // Never throw: the caller is a suspended Asyncify frame in the engine
+    // (cmd_rcon.c), and an escaped exception would hang it. Formatters can
+    // trip on unexpected reply shapes — surface that as text.
+    try {
+      var tokens = tokenize(String(argsLine || ''));
+      var plan = planCall(tokens, connectedPort | 0);
+      if (plan.error) return plan.error;
+      if (plan.clientCmd === 'login') return runClientLogin();
 
-    var r = await postRPC(plan.method, plan.params, String(password || ''));
-    if (r.needsLogin) return 'rcon: not authenticated. run: rcon login.\n';
-    if (r.error) return r.error;
-    return formatResult(plan.method, r.result);
+      var r = await postRPC(plan.method, plan.params, String(password || ''));
+      if (r.needsLogin) return 'rcon: not authenticated. run: rcon login.\n';
+      if (r.error) return r.error;
+      return formatResult(plan.method, r.result);
+    } catch (e) {
+      return 'rcon error: ' + String(e && e.message || e) + '\n';
+    }
   };
 })();

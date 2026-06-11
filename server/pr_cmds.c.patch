@@ -1,6 +1,6 @@
 --- pr_cmds.c
 +++ pr_cmds.c
-@@ -1630,7 +1646,94 @@
+@@ -1630,6 +1630,94 @@
  		(&pr_global_struct->parm1)[i] = client->spawn_parms[i];
  }
  
@@ -54,7 +54,7 @@
 +		data = COM_Parse (data);
 +		if (!data || !com_token[0])
 +			break;
- 
++
 +		if (!Q_strcasecmp(com_token, "localinfo") || !Q_strcasecmp(com_token, "serverinfo"))
 +			continue;
 +
@@ -95,11 +95,10 @@
  /*
  ==============
  PF_changelevel
-@@ -1660,6 +1835,17 @@
+@@ -1660,6 +1748,17 @@
  	svs.changelevel_issued = true;
  	
  	s = G_STRING(OFS_PARM0);
--	Cbuf_AddText (va("changelevel %s\n",s));
 +	{
 +		char rotated[MAX_QPATH];
 +		char *rotation;
@@ -111,6 +110,6 @@
 +			return;
 +		}
 +	}
-+	Cbuf_AddText (va("changelevel %s\n",s));
+ 	Cbuf_AddText (va("changelevel %s\n",s));
  #endif
  }

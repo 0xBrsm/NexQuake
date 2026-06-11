@@ -48,6 +48,7 @@ net_main.c \
 net_slist.c \
 net_vcr.c \
 net_ws.c \
+net_wt.c \
 net_wasm.c \
 net_nqchan.c \
 cmd_rcon.c \

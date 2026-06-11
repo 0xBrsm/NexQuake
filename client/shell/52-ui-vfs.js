@@ -169,7 +169,10 @@
           }
         }
       }
-      ctx.safeUnlink(fsPath);
+      // Direct unlink, not ctx.safeUnlink: that helper swallows errors, which
+      // made this catch unreachable — a failed delete showed no feedback and
+      // the file silently reappeared on refresh.
+      FS.unlink(fsPath);
       syncAndRefresh();
     } catch (e) {
       ctx.showErrorMessage('Delete failed', 3000);

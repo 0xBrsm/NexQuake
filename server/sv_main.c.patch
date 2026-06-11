@@ -26,7 +26,7 @@
 @@ -1176,3 +1176,15 @@
 -	ED_LoadFromFile (sv.worldmodel->entities);
 +	{
-+		char entpath[MAX_QPATH];
++		char entpath[MAX_QPATH + 9];
 +		byte *entdata;
 +		sprintf(entpath, "maps/%s.ent", sv.name);
 +		entdata = COM_LoadHunkFile(entpath);

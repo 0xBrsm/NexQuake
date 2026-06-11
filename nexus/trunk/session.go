@@ -21,6 +21,14 @@ const (
 	sessionDrainDeadline = 1 * time.Second
 )
 
+// Transport family names returned by [Transport.Name] and used in connection
+// logs and SessionInfo.Transport (and thus rcon client.list). These are the
+// canonical display strings — NOT the lowercase /start JSON keys.
+const (
+	TransportWebSocket    = "WebSocket"
+	TransportWebTransport = "WebTransport"
+)
+
 // Transport is a bidirectional binary-frame tunnel between trunk and a
 // single client. Adapters wrap the concrete connection type; the [Session]'s
 // read/write loops are transport-agnostic.
@@ -171,6 +179,23 @@ func (s *Session) SendControl(payload []byte) error {
 		return s.ctx.Err()
 	case s.tx <- frame:
 		return nil
+	}
+}
+
+// TrySendControl is the non-blocking SendControl: when the tx queue is full
+// (a stalled client) the frame is dropped and false is returned. Use it for
+// push-style frames issued from HTTP handlers or the session's own read
+// loop, where blocking until the client drains — up to the write/keepalive
+// timeout — would park the caller.
+func (s *Session) TrySendControl(payload []byte) bool {
+	if s.ctx.Err() != nil {
+		return false
+	}
+	select {
+	case s.tx <- buildFrame(controlPort, payload):
+		return true
+	default:
+		return false
 	}
 }
 

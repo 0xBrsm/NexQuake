@@ -137,7 +137,7 @@ In the browser UI, CD buttons are mapped to native Quake `cd` commands (`cd on/o
 
 ## Client Game Data
 
-The browser client includes a lightweight, minimal local data management UI accessed by the gear icon in the upper right of the browser window. Players can manage their local data here including upload/download of supported game files (`.cfg`, `.dem`, `.pak`, `.pcx`) and audio files (`.ogg`, `.mp3`). See the [UI Guide](UI.md) for controls and workflows.
+The browser client includes a lightweight, minimal local data management UI accessed by the gear icon in the upper right of the browser window. Players can manage their local data here including upload/download of supported game files (`.cfg`, `.dem`, `.pak`, `.pcx`, `.sav`) and audio files (`.ogg`, `.mp3`). See the [UI Guide](UI.md) for controls and workflows.
 
 If the same file exists in both server-provided game data and user-local browser data, the local user file takes precedence.
 

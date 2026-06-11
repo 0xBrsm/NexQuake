@@ -140,7 +140,7 @@ static void draw_mode_grid(int start, int count, int base_y)
 			M_PrintWhite(col, row, desc);
 		else
 			M_Print(col, row, desc);
-			col += 13 * 8;
+		col += 13 * 8;
 		if ((i % VID_ROW_SIZE) == (VID_ROW_SIZE - 1)) {
 			col = 16;
 			row += 8;

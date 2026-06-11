@@ -3,7 +3,7 @@
 Per-client browser↔UDP tunnel library. One `Trunk` manages the runtime
 state — VirtualIP pool and active session registry — and produces per-client
 `Session` instances via `Trunk.NewSession`. A pluggable `Transport`
-(e.g. WebSocket) carries binary frames with a 2-byte
+(e.g. WebSocket, WebTransport) carries binary frames with a 2-byte
 big-endian port header, which the session demultiplexes to UDP datagrams
 aimed at a localhost backend. Each client is assigned a deterministic
 127.x.x.x VirtualIP so the backend sees distinct source addresses.
@@ -27,7 +27,8 @@ Adapter sub-packages implement `Transport` for specific protocols:
 
 | Package | Transport |
 |---|---|
-| `trunk/websocket` | WebSocket via `gorilla/websocket` |
+| `trunk/websocket` | WebSocket via `gorilla/websocket` (inbound messages capped at 64 KiB) |
+| `trunk/webtransport` | WebTransport (QUIC datagrams) via `quic-go/webtransport-go`; oversized datagrams are dropped like UDP loss, not session failures |
 
 ## Vendoring checklist
 

@@ -49,12 +49,29 @@ typedef struct {
 	const char *name;
 } wasm_transport_t;
 
-qboolean    WASM_EnsureTransportOpen (void);
+// Maintenance poll: keeps warm sessions alive, reaps a dead active
+// transport, and adopts a ready upgrade between connections. Never starts
+// the baseline and never fails — sendability is the send path's concern.
+void        WASM_EnsureTransportOpen (void);
 void        WASM_CloseTransport (void);
 int         WASM_SendPacket (const byte *packet, int len);
 const char *WASM_LastSendError (void);
+const char *WASM_ActiveTransportName (void); // NULL when no transport is up
 
 // Provided by the protocol adapter; substrates call this on receive.
 void WASM_OnPacket (const byte *packet, int length);
+
+// Provided by the protocol adapter; called by the transport shell whenever
+// it switches substrates (idle upgrade or fall-forward). The adapter should
+// drop transient per-transport state (e.g. buffered receive frames) but
+// preserve durable routing state used by the *next* connection — a live
+// game connection does not survive a switch (the replacement session gets a
+// fresh VirtualIP), which is why the shell prefers switching while idle.
+void WASM_OnTransportReset (void);
+
+// Provided by the protocol adapter; true when no game socket is open — the
+// window where the transport shell may switch substrates (e.g. adopt a warm
+// WebTransport session that landed) without severing a live connection.
+qboolean WASM_TransportIdle (void);
 
 #endif

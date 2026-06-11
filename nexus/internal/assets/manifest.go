@@ -14,6 +14,12 @@ import (
 
 const defaultManifestTTL = 37 * time.Minute
 
+// maxLiveManifests bounds outstanding per-session manifests. IssueManifest is
+// unauthenticated, so without a cap a spammer accumulates one asset map per
+// request for the full TTL. When the cap is hit the oldest session is
+// evicted; legitimate concurrent page loads stay far below it.
+const maxLiveManifests = 256
+
 // StartManifestEntry is one entry in an issued asset manifest. The Path field
 // is the logical asset path (e.g. "foo.txt"); the matching content-addressed
 // hash is registered internally and served from /nq/<hash>.
@@ -79,6 +85,11 @@ func (g *HashedAssetServer) IssueManifest() (game map[string][]StartManifestEntr
 	now := time.Now()
 	g.mu.Lock()
 	g.pruneExpiredLocked(now)
+	// The cap is enforced on every insert, so the map can be at most one
+	// entry over after this single eviction.
+	if len(g.manifests) >= maxLiveManifests {
+		g.evictOldestLocked()
+	}
 	g.manifests[ref] = &issuedManifest{
 		createdAt: now,
 		assets:    assets,
@@ -148,14 +159,37 @@ func (g *HashedAssetServer) lookupAsset(hash string) (hashedAsset, bool) {
 
 func (g *HashedAssetServer) pruneExpiredLocked(now time.Time) {
 	for ref, session := range g.manifests {
-		if now.Sub(session.createdAt) <= g.manifestTTL {
-			continue
+		if now.Sub(session.createdAt) > g.manifestTTL {
+			g.removeManifestLocked(ref)
 		}
-		for hash := range session.assets {
-			delete(g.assetsByHash, hash)
-		}
-		delete(g.manifests, ref)
 	}
+}
+
+// evictOldestLocked removes the oldest live session to enforce
+// maxLiveManifests. Callers hold g.mu.
+func (g *HashedAssetServer) evictOldestLocked() {
+	var oldestRef string
+	var oldestAt time.Time
+	for ref, session := range g.manifests {
+		if oldestRef == "" || session.createdAt.Before(oldestAt) {
+			oldestRef = ref
+			oldestAt = session.createdAt
+		}
+	}
+	g.removeManifestLocked(oldestRef)
+}
+
+// removeManifestLocked drops a session and its asset hashes together —
+// manifests and assetsByHash must stay in sync on every removal path.
+func (g *HashedAssetServer) removeManifestLocked(ref string) {
+	session, ok := g.manifests[ref]
+	if !ok {
+		return
+	}
+	for hash := range session.assets {
+		delete(g.assetsByHash, hash)
+	}
+	delete(g.manifests, ref)
 }
 
 func (g *HashedAssetServer) buildSnapshot(ref string) (game map[string][]StartManifestEntry, cd []StartManifestEntry, assets map[string]hashedAsset, err error) {

@@ -15,7 +15,7 @@ func setupWebSocket(app *nexusApp, mux *http.ServeMux) {
 }
 
 func (app *nexusApp) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	app.trunkSession(w, r, "WebSocket", func() (trunk.Transport, error) {
+	app.trunkSession(w, r, trunk.TransportWebSocket, func() (trunk.Transport, error) {
 		c, err := websocket.Upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return nil, err

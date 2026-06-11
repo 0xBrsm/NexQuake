@@ -131,7 +131,7 @@ func (app *nexusApp) trunkSession(
 
 	transport, err := upgrade()
 	if err != nil {
-		slog.Warn(fmt.Sprintf("WebSocket upgrade failed: %v", err))
+		slog.Warn(fmt.Sprintf("%s upgrade failed: %v", transportName, err))
 		return
 	}
 
@@ -141,8 +141,6 @@ func (app *nexusApp) trunkSession(
 	} else if _, port, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		displayAddr = net.JoinHostPort(displayAddr, port)
 	}
-
-	slog.Info(fmt.Sprintf("Client connected (ws): %s (%s)", displayAddr, client.ID))
 
 	tc, err := app.trunk.NewSession(transport, client.SourceIP)
 	if err != nil {
@@ -157,12 +155,17 @@ func (app *nexusApp) trunkSession(
 	vip := tc.VirtualIP()
 	_ = tc.SendControl(append([]byte("NQIP"), vip[:]...))
 
+	vipStr := net.IP(vip[:]).String()
+	slog.Info(fmt.Sprintf("%s connected (%s)", client.ID, transportName),
+		"addr", displayAddr, "vip", vipStr)
+
 	detachClient := app.clients.Attach(tc, client)
 	defer detachClient()
 
 	tc.Run()
 
-	slog.Info(fmt.Sprintf("Client disconnected (ws): %s", displayAddr))
+	slog.Info(fmt.Sprintf("%s disconnected (%s)", client.ID, transportName),
+		"addr", displayAddr, "vip", vipStr)
 }
 
 // handleControlFrame wires the trunk's port-0 control channel: slist
@@ -170,7 +173,10 @@ func (app *nexusApp) trunkSession(
 // is served separately by POST /rcon.
 func (app *nexusApp) handleControlFrame(s *trunk.Session, payload []byte) {
 	if orch.IsSlistRequest(payload) {
-		_ = s.SendControl(app.serverMgr.BuildSlistResponse())
+		// Non-blocking: this runs on the session's read loop, and a full tx
+		// queue means a stalled client — dropping the reply mirrors UDP, and
+		// the engine re-sends slist requests anyway.
+		_ = s.TrySendControl(app.serverMgr.BuildSlistResponse())
 	}
 }
 

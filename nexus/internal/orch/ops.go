@@ -199,12 +199,17 @@ func (m *ServerManager) StopServer(ctx context.Context, target int, killAfter ti
 		m.mu.RUnlock()
 		return err
 	}
-	records := m.serverInstancesLocked(s)
+	// Capture rec.Running while still under the lock — the autoscale poller
+	// writes it concurrently, so a post-unlock read is a data race.
+	var records []runningServerEntry
+	for _, rec := range m.serverInstancesLocked(s) {
+		records = append(records, runningServerEntry{rec: rec, srv: rec.Running})
+	}
 	m.mu.RUnlock()
 
 	stopped := false
-	for _, rec := range records {
-		s := rec.Running
+	for _, entry := range records {
+		rec, s := entry.rec, entry.srv
 		if s == nil || s.Cmd == nil || s.Cmd.Process == nil || !isProcessAlive(s.Cmd.Process) {
 			m.mu.Lock()
 			m.removeServerRecordLocked(rec.id)

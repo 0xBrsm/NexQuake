@@ -1,12 +1,12 @@
 # Nexus Service
 
-Go orchestration service that serves the WASM client, serves game data, tunnels multiplayer traffic over WebSocket, and manages dedicated server processes.
+Go orchestration service that serves the WASM client, serves game data, tunnels multiplayer traffic over WebSocket or WebTransport, and manages dedicated server processes.
 
 ## Package Layout
 
 | Dir | Purpose |
 |-----|---------|
-| `trunk/` | **Networking relay.** Standalone WebSocket↔UDP relay with deterministic VirtualIP (`127.x.x.x`) allocation and control-frame callback hooks. No HTTP/auth/application imports. |
+| `trunk/` | **Networking relay.** Standalone tunnel↔UDP relay (WebSocket and WebTransport adapters) with deterministic VirtualIP (`127.x.x.x`) allocation and control-frame callback hooks. No HTTP/auth/application imports. |
 | `internal/orch/` | **Orchestration.** Dedicated server launch/lifecycle, instance autoscaling/reconcile, server console capture, and `slist` polling/aggregation. No `trunk` or `admin` imports. |
 | `internal/access/` | **HTTP access policy.** Caller identity, OIDC JWT verification, RCON/admin authorization rules, and source-IP blocklist. |
 | `internal/clients/` | **Client presence.** Joined runtime view of access identities and active trunk sessions, keyed by VirtualIP for client list/info/ban consumers. |
@@ -17,7 +17,7 @@ Go orchestration service that serves the WASM client, serves game data, tunnels 
 ## Dependency Boundaries
 
 ```text
-trunk          (leaf: stdlib + gorilla/websocket)
+trunk          (leaf: stdlib; adapters add gorilla/websocket and quic-go/webtransport-go)
 internal/orch  (leaf: stdlib + internal/assets)
 internal/access (leaf: stdlib + go-oidc)
 internal/clients -> internal/access + trunk
@@ -31,7 +31,7 @@ Rules:
 
 - `trunk` and `internal/orch` do not import `internal/admin`.
 - `trunk` has no imports from `internal/*` and no app policy logic.
-- Cross-subsystem construction is done in package `main` (`main.go`, `connect.go`).
+- Cross-subsystem construction is done in package `main` (`main.go`, `connect.go`, `ws.go`, `wt.go`).
 
 ## Entry Files
 
@@ -43,6 +43,8 @@ Rules:
 | `log.go` | Logging setup (`LOG_LEVEL`, `CONSOLE_TIMESTAMPS`), nexus.log file sink, and operator console ring buffer. |
 | `version.go` | Build metadata (`--version`, `/health`), version ldflags, and CLI sub-command handler. |
 | `ws.go` | WebSocket transport setup: mounts `/connect` and upgrades connections to trunk sessions. |
+| `wt.go` | WebTransport transport setup (when `WT_HOST` is set): HTTP/3 listener on UDP/`HTTP_PORT`, `/connect` Extended CONNECT route, manifest fields. |
+| `cert.go` | Self-signed WebTransport certificate manager: generation, rotation, and the hash pinned to clients via `/start`. |
 
 ## trunk/
 
@@ -51,10 +53,11 @@ Per-client browser↔UDP tunnel. See [trunk/README.md](./trunk/README.md) for ve
 | File | Purpose |
 |------|---------|
 | `trunk.go` | `Trunk` type, functional options, `SessionInfo`, and session registry (`NewSession`, `SessionByVirtualIP`). |
-| `session.go` | `Session` type, `Transport` interface, `ControlHandler`/`PortFilter` callbacks, `SendControl`, `End`, and per-client I/O lifecycle. |
+| `session.go` | `Session` type, `Transport` interface, `ControlHandler`/`PortFilter` callbacks, `SendControl`/`TrySendControl`, `End`, and per-client I/O lifecycle. |
 | `relay.go` | Frame encoding (2-byte big-endian port prefix), tunnel read/write loops, and UDP read/write loops. |
 | `vip.go` | Deterministic `127.x.x.x` VirtualIP allocation from source keys. |
-| `websocket/websocket.go` | `Transport` adapter and `Upgrader` for `gorilla/websocket`; the only file importing it. |
+| `websocket/websocket.go` | `Transport` adapter and `Upgrader` for `gorilla/websocket` (64 KiB inbound read limit); the only file importing it. |
+| `webtransport/webtransport.go` | `Transport` adapter for `quic-go/webtransport-go` QUIC datagrams; drops oversized datagrams like UDP loss instead of failing the session. |
 
 ## internal/access/
 
@@ -142,6 +145,7 @@ CGO_ENABLED=0 go build -o nexus .
 Go 1.24+. Primary dependencies:
 
 - `github.com/gorilla/websocket` (WebSocket tunnel)
+- `github.com/quic-go/webtransport-go` + `github.com/quic-go/quic-go` (WebTransport tunnel: QUIC datagrams, HTTP/3 listener)
 - `github.com/coreos/go-oidc/v3` (OIDC JWT verification)
 - `github.com/creack/pty` (server console PTY)
 - `github.com/google/shlex` (command argument splitting)

@@ -37,7 +37,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 FROM scratch AS nexus-artifact
 COPY --from=nexus-builder /out/nexus /nexus
 
-FROM cgr.dev/chainguard/wolfi-base:latest AS server-builder
+FROM ${WOLFI_BASE_IMAGE} AS server-builder
 WORKDIR /src
 
 RUN apk add --no-cache gcc make glibc-dev git patch ca-certificates bash
@@ -57,7 +57,7 @@ COPY --from=server-builder /out/nqserver /nqserver
 # CI-optimized server artifact build:
 # expects src/build/tmp/WinQuake to be pre-fetched in build context, so git is not
 # required inside the container.
-FROM cgr.dev/chainguard/wolfi-base:latest AS server-builder-ci
+FROM ${WOLFI_BASE_IMAGE} AS server-builder-ci
 WORKDIR /src
 
 RUN apk add --no-cache gcc make glibc-dev patch ca-certificates bash
@@ -83,7 +83,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends git make patch 
 COPY build/ build/
 COPY bugfix/ bugfix/
 COPY client/ client/
-COPY etc/ etc/
+# Only the client seed cfgs feed the WASM build; copying all of etc/ would
+# invalidate this expensive layer on server-side cfg/catalog edits.
+COPY etc/client/ etc/client/
 ARG NQ_VERSION=dev
 
 RUN set -eu; \

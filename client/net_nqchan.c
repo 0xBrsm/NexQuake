@@ -9,6 +9,7 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -105,6 +106,159 @@ static int NqRing_Dequeue (NqRing *q, byte *buf, int len, int *src_port)
 }
 
 //----------------------------------------------------------------------------
+// Net diagnostics. WASM_OnPacket peeks at the engine's own NET header (flags
+// + sequence) on data-ring frames to spot loss, reordering, and arrival
+// stalls at the transport boundary — before net_dgrm.c's sequence checks
+// silently discard the evidence. `netdiag` prints counters and the recent
+// event log; `netdiag reset` clears them; the net_diag cvar echoes events to
+// the browser console as they happen. Events are timestamped so a perceived
+// skip can be matched against what the transport saw at that moment.
+
+#define NQ_DIAG_EVENTS       32
+#define NQ_DIAG_STALL_SEC    0.25  // arrival gap worth recording
+#define NQ_DIAG_IDLE_SEC     30.0  // gaps past this are idle, not stalls
+
+typedef struct {
+	double when;
+	char   text[80];
+} NqDiagEvent;
+
+static struct {
+	unsigned int rx_unreliable, rx_reliable, rx_control;
+	unsigned int loss_events, lost_datagrams, stale, stalls, malformed;
+	unsigned int resets;
+	double       max_gap;       // worst arrival gap below the idle cutoff
+	double       last_arrival;  // last data-ring frame arrival, 0 = idle
+	unsigned int expect_seq;    // next expected unreliable sequence
+	int          seq_route;     // src_port the sequence tracking belongs to
+	qboolean     seq_valid;
+	NqDiagEvent  events[NQ_DIAG_EVENTS];
+	unsigned int event_count;
+} nq_diag;
+
+static cvar_t net_diag = {"net_diag", "0"};
+
+static void NqDiag_Event (double now, const char *fmt, ...)
+{
+	NqDiagEvent *ev = &nq_diag.events[nq_diag.event_count % NQ_DIAG_EVENTS];
+	va_list args;
+
+	ev->when = now;
+	va_start (args, fmt);
+	vsnprintf (ev->text, sizeof(ev->text), fmt, args);
+	va_end (args);
+	nq_diag.event_count++;
+
+	if (net_diag.value)
+		WASM_Log (WASM_LOG_WARN, "netdiag: %s", ev->text);
+}
+
+static void NqDiag_OnDataFrame (int src_port, const byte *payload, int payload_len)
+{
+	double now;
+	unsigned int header, flags, sequence;
+
+	if (payload_len < (int)NET_HEADERSIZE) return;
+	memcpy (&header, payload, 4);
+	header = BigLong (header);
+	flags = header & ~NETFLAG_LENGTH_MASK;
+	if (flags & NETFLAG_CTL) { nq_diag.rx_control++; return; }
+	if (!(flags & NETFLAG_UNRELIABLE)) { nq_diag.rx_reliable++; return; }
+
+	memcpy (&sequence, payload + 4, 4);
+	sequence = BigLong (sequence);
+	nq_diag.rx_unreliable++;
+
+	// Arrival pacing is measured on the unreliable stream only: in-game it
+	// flows at server tick rate, so a gap is a real stall. Control/reliable
+	// traffic is sporadic by nature and would fake stalls from menu idling.
+	now = Sys_FloatTime ();
+	if (nq_diag.last_arrival > 0)
+	{
+		double gap = now - nq_diag.last_arrival;
+		if (gap < NQ_DIAG_IDLE_SEC)
+		{
+			if (gap > nq_diag.max_gap) nq_diag.max_gap = gap;
+			if (gap > NQ_DIAG_STALL_SEC)
+			{
+				nq_diag.stalls++;
+				NqDiag_Event (now, "rx stall %dms", (int)(gap * 1000.0));
+			}
+		}
+	}
+	nq_diag.last_arrival = now;
+
+	if (!nq_diag.seq_valid || src_port != nq_diag.seq_route)
+	{
+		nq_diag.seq_valid = true;
+		nq_diag.seq_route = src_port;
+	}
+	else if (sequence < nq_diag.expect_seq)
+	{
+		nq_diag.stale++;
+		NqDiag_Event (now, "stale/reordered seq %u (expected %u)", sequence, nq_diag.expect_seq);
+		return; // engine will drop it; keep expect_seq
+	}
+	else if (sequence != nq_diag.expect_seq)
+	{
+		nq_diag.loss_events++;
+		nq_diag.lost_datagrams += sequence - nq_diag.expect_seq;
+		NqDiag_Event (now, "lost %u datagram(s) (seq %u->%u)",
+			sequence - nq_diag.expect_seq, nq_diag.expect_seq, sequence);
+	}
+	nq_diag.expect_seq = sequence + 1;
+}
+
+// Session went away (disconnect or transport switch): arrival gaps and
+// sequence continuity across the boundary are meaningless, but keep the
+// counters and event log so the user can inspect them after the fact.
+static void NqDiag_InvalidateSession (void)
+{
+	nq_diag.last_arrival = 0;
+	nq_diag.seq_valid = false;
+}
+
+static void NetDiag_f (void)
+{
+	double now = Sys_FloatTime ();
+	unsigned int shown, i;
+
+	if (Cmd_Argc () > 1 && Q_strcmp (Cmd_Argv (1), "reset") == 0)
+	{
+		Q_memset (&nq_diag, 0, sizeof(nq_diag));
+		Con_Printf ("netdiag counters reset\n");
+		return;
+	}
+
+	{
+		const char *transport = WASM_ActiveTransportName ();
+		Con_Printf ("transport: %s\n", transport ? transport : "none");
+	}
+	Con_Printf ("transport receive health:\n");
+	Con_Printf ("  unreliable rx : %u\n", nq_diag.rx_unreliable);
+	Con_Printf ("  reliable rx   : %u   control: %u\n", nq_diag.rx_reliable, nq_diag.rx_control);
+	Con_Printf ("  lost          : %u datagram(s) over %u event(s)\n", nq_diag.lost_datagrams, nq_diag.loss_events);
+	Con_Printf ("  stale/reorder : %u\n", nq_diag.stale);
+	Con_Printf ("  stalls >%dms : %u (worst gap %d ms)\n",
+		(int)(NQ_DIAG_STALL_SEC * 1000.0), nq_diag.stalls, (int)(nq_diag.max_gap * 1000.0));
+	Con_Printf ("  ring overflow : data %u, ctl %u\n", nq_data.overflow, nq_ctl.overflow);
+	Con_Printf ("  malformed rx  : %u   transport resets: %u\n", nq_diag.malformed, nq_diag.resets);
+
+	if (!nq_diag.event_count)
+	{
+		Con_Printf ("no events recorded\n");
+		return;
+	}
+	shown = nq_diag.event_count < NQ_DIAG_EVENTS ? nq_diag.event_count : NQ_DIAG_EVENTS;
+	Con_Printf ("last %u event(s):\n", shown);
+	for (i = nq_diag.event_count - shown; i < nq_diag.event_count; i++)
+	{
+		NqDiagEvent *ev = &nq_diag.events[i % NQ_DIAG_EVENTS];
+		Con_Printf ("  t-%.1fs  %s\n", now - ev->when, ev->text);
+	}
+}
+
+//----------------------------------------------------------------------------
 // Module state.
 
 static int       nq_control_socket_handle;
@@ -125,6 +279,33 @@ static void NQ_ResetState (void)
 	nq_client_ip_set = false;
 	Q_memset (nq_client_ip, 0, sizeof(nq_client_ip));
 	Q_memset (nq_server_id_by_route, 0, sizeof(nq_server_id_by_route));
+	NqDiag_InvalidateSession ();
+}
+
+// WASM_OnTransportReset — fired by net_wasm.c when it switches substrates
+// (idle upgrade or fall-forward from a dead transport). Only the buffered
+// receive frames are dropped: they belong to the session the old transport
+// was carrying and would otherwise leak into the replacement. Durable
+// routing state (client IP, route→server-id map) is left intact for the
+// *next* connection: the new trunk session re-announces NQIP, and the
+// route→server-id map outlives sessions. Note a live game connection does
+// NOT survive a mid-game switch — the new session gets a fresh VirtualIP,
+// so the dedicated server drops its packets until reconnect; switches are
+// therefore made between connections whenever possible.
+void WASM_OnTransportReset (void)
+{
+	nq_ctl.r  = nq_ctl.w  = nq_ctl.overflow  = 0;
+	nq_data.r = nq_data.w = nq_data.overflow = 0;
+	nq_diag.resets++;
+	NqDiag_Event (Sys_FloatTime (), "transport switch");
+	NqDiag_InvalidateSession ();
+}
+
+// True when no game qsocket is open — the window where the transport shell
+// may switch substrates without severing a live connection.
+qboolean WASM_TransportIdle (void)
+{
+	return nq_game_socket_refs == 0;
 }
 
 //----------------------------------------------------------------------------
@@ -208,7 +389,12 @@ void WASM_OnPacket (const byte *frame, int length)
 	const byte *payload;
 	qboolean is_control = false;
 
-	if (length < NQ_PORT_HEADER_SIZE || length > WASM_MAX_FRAME_SIZE) return;
+	if (length < NQ_PORT_HEADER_SIZE || length > WASM_MAX_FRAME_SIZE)
+	{
+		nq_diag.malformed++;
+		NqDiag_Event (Sys_FloatTime (), "dropped malformed frame (%d bytes)", length);
+		return;
+	}
 
 	src_port = ReadPortBE (frame);
 	payload = frame + NQ_PORT_HEADER_SIZE;
@@ -262,6 +448,7 @@ void WASM_OnPacket (const byte *frame, int length)
 		return;
 	}
 
+	NqDiag_OnDataFrame (src_port, payload, payload_len);
 	NqRing_Enqueue (&nq_data, frame, (unsigned int)length);
 }
 
@@ -282,15 +469,7 @@ static int SendFramed (int dst_port, const byte *buf, int len)
 	return len;
 }
 
-static qboolean EnsureOpen (void)
-{
-	if (WASM_EnsureTransportOpen ())
-	{
-		UpdateMyTCPIPAddress ();
-		return true;
-	}
-	return false;
-}
+
 
 //----------------------------------------------------------------------------
 // Quake net_landriver_t.
@@ -304,7 +483,10 @@ int NQChan_Init (void)
 		Sys_Error ("NQChan_Init: Unable to open control socket\n");
 
 	tcpipAvailable = true;
+	UpdateMyTCPIPAddress ();
 	Rcon_RegisterCommands ();
+	Cvar_RegisterVariable (&net_diag);
+	Cmd_AddCommand ("netdiag", NetDiag_f);
 	return nq_control_socket_handle;
 }
 
@@ -319,7 +501,7 @@ void NQChan_Listen (qboolean state) { (void)state; }
 int NQChan_OpenSocket (int port)
 {
 	(void)port;
-	if (!EnsureOpen ()) return -1;
+	WASM_EnsureTransportOpen ();
 
 	if (!nq_control_socket_open)
 	{
@@ -340,7 +522,14 @@ int NQChan_CloseSocket (int socket)
 	if (socket == NQ_CONTROL_SOCKET)
 		nq_control_socket_open = false;
 	else if (socket == NQ_GAME_SOCKET && nq_game_socket_refs > 0)
+	{
 		nq_game_socket_refs--;
+		// Game connection ended: arrival gaps and sequence continuity don't
+		// carry across connections, so stop the diag trackers here — the
+		// full NQ_ResetState below only runs at engine shutdown.
+		if (nq_game_socket_refs == 0)
+			NqDiag_InvalidateSession ();
+	}
 
 	if (!nq_control_socket_open && nq_game_socket_refs == 0)
 	{
@@ -353,7 +542,8 @@ int NQChan_CloseSocket (int socket)
 int NQChan_Connect (int socket, struct qsockaddr *addr)
 {
 	(void)addr; (void)socket;
-	return EnsureOpen () ? 0 : -1;
+	WASM_EnsureTransportOpen ();
+	return 0;
 }
 
 int NQChan_CheckNewConnections (void) { return -1; }
@@ -363,7 +553,7 @@ int NQChan_Read (int socket, byte *buf, int len, struct qsockaddr *addr)
 	int src_port = 0;
 	int ret;
 
-	if (!EnsureOpen ()) return -1;
+	WASM_EnsureTransportOpen ();
 
 	if (socket == NQ_CONTROL_SOCKET && nq_control_socket_open)
 	{
@@ -389,7 +579,8 @@ int NQChan_Write (int socket, byte *buf, int len, struct qsockaddr *addr)
 {
 	int dst_port;
 	(void)socket;
-	if (!EnsureOpen () || !addr) return -1;
+	if (!addr) return -1;
+	WASM_EnsureTransportOpen ();
 
 	dst_port = ReadPortBE ((byte *)addr->sa_data);
 	if (dst_port <= 0 || dst_port > 65535) return -1;
@@ -400,7 +591,7 @@ int NQChan_Write (int socket, byte *buf, int len, struct qsockaddr *addr)
 int NQChan_Broadcast (int socket, byte *buf, int len)
 {
 	(void)socket;
-	if (!EnsureOpen ()) return -1;
+	WASM_EnsureTransportOpen ();
 	return SendFramed (0, buf, len);
 }
 

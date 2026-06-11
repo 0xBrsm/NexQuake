@@ -283,11 +283,26 @@ Module = Object.assign(Module || {}, {
   postRun: Array.isArray(Module && Module.postRun) ? Module.postRun : [],
   print: (function() {
     outputElement.value = ''; // clear browser cache
+    var OUTPUT_CAP = 64 * 1024; // unbounded growth re-copies the whole string per line
+    var pending = [];
+    var flushTimer = 0;
+    // Batch DOM writes: boot and level loads print hundreds of lines in
+    // bursts, and a per-line value+scrollHeight round trip costs a string
+    // copy plus a forced layout each. setTimeout (not rAF) so the flush
+    // still runs in backgrounded tabs.
+    function flush() {
+      flushTimer = 0;
+      var next = outputElement.value + pending.join("\n") + "\n";
+      pending.length = 0;
+      if (next.length > OUTPUT_CAP) next = next.slice(next.length - OUTPUT_CAP);
+      outputElement.value = next;
+      outputElement.scrollTop = outputElement.scrollHeight; // focus on bottom
+    }
     return function(text) {
       if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
       console.log(text);
-      outputElement.value += text + "\n";
-      outputElement.scrollTop = outputElement.scrollHeight; // focus on bottom
+      pending.push(text);
+      if (!flushTimer) flushTimer = setTimeout(flush, 50);
     };
   })(),
   canvas: canvasElement,

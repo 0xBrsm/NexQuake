@@ -60,7 +60,6 @@ type ClientBanResult struct {
 	VirtualAddr  string   `json:"nqip"`
 	SourceIPs    []string `json:"source_ips,omitempty"`
 	Disconnected int      `json:"disconnected"`
-	ServerKicks  int      `json:"server_kicks"`
 }
 
 func clientBanHandler(a *Admin, _ access.Client, params any) (any, error) {

@@ -68,6 +68,8 @@ static EM_BOOL WS_OnClose (int eventType, const EmscriptenWebSocketCloseEvent *e
 	ws_connected = false;
 	ws_last_error = "";
 	WASM_OnClose (ws_name, expected);
+	// The dead handle is deleted lazily in WS_Start, never here: deleting a
+	// socket from inside its own callback races the dispatcher's bookkeeping.
 	return EM_TRUE;
 }
 
@@ -106,6 +108,15 @@ static int WS_Start (void)
 	attrs.url = url;
 	attrs.protocols = NULL;
 	attrs.createOnMainThread = EM_TRUE;
+
+	// Release the previous (dead) socket's JS object and callback
+	// registrations before creating its replacement — they otherwise
+	// accumulate per reconnect cycle.
+	if (ws)
+	{
+		emscripten_websocket_delete (ws);
+		ws = 0;
+	}
 
 	if ((ws = emscripten_websocket_new (&attrs)) <= 0)
 	{

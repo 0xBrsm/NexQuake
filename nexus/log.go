@@ -29,7 +29,13 @@ const (
 )
 
 var (
+	// currentLogLevel gates the operator console and the in-memory rcon tail.
 	currentLogLevel logLevel = logInfo
+
+	// fileLogLevel gates the on-disk nexus.log. It is held at logDebug so the
+	// file is a full-fidelity record for postmortems regardless of how quiet
+	// the operator console is set via LOG_LEVEL.
+	fileLogLevel logLevel = logDebug
 
 	operatorConsoleTimestamp atomic.Bool
 	operatorConsoleMu        sync.Mutex
@@ -192,15 +198,45 @@ func writeNexusLogFile(text string) {
 // logf formats and emits a log message at the given level. Messages are written
 // to the in-memory tail buffer, the log file, and the operator console.
 // Suppressed when level exceeds currentLogLevel.
+// maxLogVerbosity returns the most-verbose level any sink wants, so callers can
+// skip formatting a record only when every sink would drop it.
+func maxLogVerbosity() logLevel {
+	if currentLogLevel > fileLogLevel {
+		return currentLogLevel
+	}
+	return fileLogLevel
+}
+
 func logf(level logLevel, format string, args ...any) {
-	if level > currentLogLevel {
+	if level > maxLogVerbosity() {
 		return
 	}
 	msg := fmt.Sprintf(format, args...)
-	timestamped := formatTimestampedLogText(msg, time.Now())
-	recordNexusLogLine(timestamped)
-	writeNexusLogFile(timestamped)
-	writeOperatorConsoleText(timestamped, msg)
+	logfSplit(level, msg, msg)
+}
+
+// logfSplit emits a structured log line with two routing axes. By detail:
+// the operator console receives only consoleMsg (the bare slog message) while
+// the file and tail buffer receive fullMsg (message + key=value attributes) —
+// plain logf passes the same text for both. By level: the file captures down
+// to fileLogLevel (full fidelity for postmortems) while the console and tail
+// honor currentLogLevel (LOG_LEVEL), so the live console can stay quiet without
+// losing detail on disk.
+func logfSplit(level logLevel, consoleMsg, fullMsg string) {
+	toFile := level <= fileLogLevel
+	toConsole := level <= currentLogLevel
+	if !toFile && !toConsole {
+		return
+	}
+	now := time.Now()
+	fullTimestamped := formatTimestampedLogText(fullMsg, now)
+	if toFile {
+		writeNexusLogFile(fullTimestamped)
+	}
+	if toConsole {
+		recordNexusLogLine(fullTimestamped)
+		writeOperatorConsoleText(formatTimestampedLogText(consoleMsg, now), consoleMsg)
+	}
 }
 
 // logfNoTail is like logf but skips the tail buffer and file — used for
@@ -219,11 +255,19 @@ func logfNoTail(level logLevel, format string, args ...any) {
 // level is active. Use for security-sensitive events (bans, promotions, etc.).
 func auditf(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
-	timestamped := formatTimestampedLogText(msg, time.Now())
-	recordNexusLogLine(timestamped)
-	writeNexusLogFile(timestamped)
+	auditfSplit(msg, msg)
+}
+
+// auditfSplit is logfSplit's always-recorded sibling for the audit logger: the
+// full line (message + attrs) is recorded to the tail buffer and file
+// regardless of level; the bare consoleMsg reaches the console only at debug.
+func auditfSplit(consoleMsg, fullMsg string) {
+	now := time.Now()
+	fullTimestamped := formatTimestampedLogText(fullMsg, now)
+	recordNexusLogLine(fullTimestamped)
+	writeNexusLogFile(fullTimestamped)
 	if currentLogLevel >= logDebug {
-		writeOperatorConsoleText(timestamped, msg)
+		writeOperatorConsoleText(formatTimestampedLogText(consoleMsg, now), consoleMsg)
 	}
 }
 func infofNoTail(format string, args ...any) {
@@ -280,15 +324,15 @@ func tailNexusLogLines(n int) []string {
 // rather than the level-gated logf used by the default logger.
 func initSlog() *slog.Logger {
 	slog.SetDefault(slog.New(&forwardHandler{
-		emit: func(level slog.Level, line string) {
-			logf(slogToLogLevel(level), "%s", line)
+		emit: func(level slog.Level, consoleMsg, fullMsg string) {
+			logfSplit(slogToLogLevel(level), consoleMsg, fullMsg)
 		},
 		enabled: func(level slog.Level) bool {
-			return slogToLogLevel(level) <= currentLogLevel
+			return slogToLogLevel(level) <= maxLogVerbosity()
 		},
 	}))
 	return slog.New(&forwardHandler{
-		emit:    func(_ slog.Level, line string) { auditf("%s", line) },
+		emit:    func(_ slog.Level, consoleMsg, fullMsg string) { auditfSplit(consoleMsg, fullMsg) },
 		enabled: func(_ slog.Level) bool { return true },
 	})
 }
@@ -298,7 +342,7 @@ func initSlog() *slog.Logger {
 // function. Existing logf/auditf machinery owns timestamping, file write,
 // tail buffer, and operator console — this handler just shapes the line.
 type forwardHandler struct {
-	emit    func(level slog.Level, line string)
+	emit    func(level slog.Level, consoleMsg, fullMsg string)
 	enabled func(level slog.Level) bool
 	attrs   []slog.Attr
 	groups  []string
@@ -319,7 +363,7 @@ func (h *forwardHandler) Handle(_ context.Context, r slog.Record) error {
 		appendAttr(&b, prefix, a)
 		return true
 	})
-	h.emit(r.Level, b.String())
+	h.emit(r.Level, r.Message, b.String())
 	return nil
 }
 

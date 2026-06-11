@@ -108,9 +108,14 @@
       node.nqErrorCount = 0;
       node.nqRetryAfterMs = 0;
       node.nqLastLoadError = '';
+      // Track fetch state explicitly. We cannot key "already fetched" off
+      // node.contents truthiness: emscripten >=5.0.3 (MEMFS PR #26398) inits a
+      // new file node's contents to a truthy empty Uint8Array(0) instead of
+      // null, which would make ensureLoaded() skip the fetch and serve 0 bytes.
+      node.nqLoaded = false;
 
       function ensureLoaded() {
-        if (node.contents) return;
+        if (node.nqLoaded) return;
         if (node.nqRetryAfterMs && Date.now() < node.nqRetryAfterMs)
           throw new FS.ErrnoError(44); // ENOENT
 
@@ -120,20 +125,27 @@
         // refresh (which may update node.url in place) and retry once before
         // giving up; this lets mid-session hash rotations recover transparently.
         var lastErr = null;
+        var lastStatus = 0;
         for (var attempt = 0; attempt < 2; attempt++) {
-          if (attempt > 0 && !refreshAndRetry()) break;
+          // Refresh-and-retry only helps when the hash rotated (404); on
+          // timeouts/5xx/network failures it just adds two more blocking
+          // XHRs to every access before the ENOENT backoff engages.
+          if (attempt > 0 && (lastStatus !== 404 || !refreshAndRetry())) break;
           try {
             var xhr = new XMLHttpRequest();
             xhr.open('GET', node.url, false);
             try { xhr.overrideMimeType('text/plain; charset=x-user-defined'); } catch (e) {}
             xhr.send(null);
-            if (xhr.status !== 200 && xhr.status !== 0)
+            if (xhr.status !== 200 && xhr.status !== 0) {
+              lastStatus = xhr.status;
               throw new Error('remote file fetch failed: ' + xhr.status + ' for ' + node.url);
+            }
             var text = xhr.responseText || '';
             var bytes = new Uint8Array(text.length);
             for (var i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i) & 0xFF;
             node.contents = bytes;
             node.usedBytes = bytes.length;
+            node.nqLoaded = true;
             node.nqErrorCount = 0;
             node.nqRetryAfterMs = 0;
             node.nqLastLoadError = '';
@@ -229,12 +241,13 @@
       var node = Module.nexquakeRemoteFiles && Module.nexquakeRemoteFiles[outPath];
       if (!node && activeGame !== baseGame)
         node = Module.nexquakeRemoteFiles && Module.nexquakeRemoteFiles[REMOTE_ROOT + '/' + baseGame + '/' + lowerRel];
-      if (!node || node.contents) return;
+      if (!node || node.nqLoaded) return;
       var resp = await fetch(node.url, { cache: 'no-store' });
       if (!resp.ok) throw new Error('prefetch failed: ' + resp.status + ' for ' + node.url);
       var buf = await resp.arrayBuffer();
       node.contents = new Uint8Array(buf);
       node.usedBytes = node.contents.length;
+      node.nqLoaded = true;
     }
 
     async function prefetchMany(paths, concurrency) {
@@ -291,15 +304,20 @@
     }
 
     function startPrefetch() {
-      var list;
-      if (Module.nexquakePrefetchBusy) return;
-      list = (Module.nexquakePrefetchQueue || []).slice();
+      var list = (Module.nexquakePrefetchQueue || []).slice();
       Module.nexquakePrefetchQueue = [];
       if (!list.length) return;
-      Module.nexquakePrefetchBusy = 1;
-      Module.nexquakePrefetchFailures = Object.create(null);
+      // Batches run in parallel; busy is a counter, so the C side's wait
+      // covers every outstanding batch. (The old early-return dropped a
+      // batch queued mid-flight; chaining serialized it behind the previous
+      // batch's tail — both made the engine wait on the wrong work.)
+      if (!(Module.nexquakePrefetchBusy | 0))
+        Module.nexquakePrefetchFailures = Object.create(null);
+      Module.nexquakePrefetchBusy = (Module.nexquakePrefetchBusy | 0) + 1;
       prefetchMany(list, Module.nexquakePrefetchConcurrency)
-        .finally(function() { Module.nexquakePrefetchBusy = 0; });
+        .finally(function() {
+          Module.nexquakePrefetchBusy = (Module.nexquakePrefetchBusy | 0) - 1;
+        });
     }
 
     Module.nexquakePrefetchReset = resetPrefetch;
@@ -440,12 +458,40 @@
       Module.nexquakeApplyClientConfig(config);
     }
 
+    function applyTransportConfig(config) {
+      config = config && typeof config === 'object' ? config : {};
+      var rawTransports = config.transports && typeof config.transports === 'object'
+        ? config.transports
+        : {};
+      var transports = Object.create(null);
+      Object.keys(rawTransports).forEach(function(name) {
+        var raw = rawTransports[name];
+        if (!raw || typeof raw !== 'object')
+          return;
+        var transport = Object.create(null);
+        if (typeof raw.url === 'string' && raw.url)
+          transport.url = raw.url;
+        var hex = typeof raw.certSha256Hex === 'string' ? raw.certSha256Hex : '';
+        if (/^[0-9a-f]+$/i.test(hex) && hex.length % 2 === 0) {
+          var bytes = new Uint8Array(hex.length / 2);
+          for (var i = 0; i < bytes.length; i++)
+            bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+          transport.serverCertificateHashes = [
+            { algorithm: 'sha-256', value: bytes }
+          ];
+        }
+        transports[name] = transport;
+      });
+      Module.nqTransportConfig = transports;
+    }
+
     function normalizeRawBundle(rawBundle) {
       var rawGame = (rawBundle && rawBundle.game && typeof rawBundle.game === 'object') ? rawBundle.game : {};
       var rawCd = (rawBundle && Array.isArray(rawBundle.cd)) ? rawBundle.cd : [];
       var game = Object.create(null);
 
       applyClientConfig(rawBundle && rawBundle.client);
+      applyTransportConfig(rawBundle && rawBundle.client);
       Object.keys(rawGame).forEach(function(rawMod) {
         var mod = normalizeGameName(rawMod);
         if (mod)

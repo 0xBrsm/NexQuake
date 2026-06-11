@@ -156,8 +156,3 @@ func (g *Gate) Block(sourceIP string) {
 		g.blocklist.Block(sourceIP)
 	}
 }
-
-// IsBlockedSource reports whether sourceIP is currently barred.
-func (g *Gate) IsBlockedSource(sourceIP string) bool {
-	return g != nil && g.blocklist.IsBlocked(sourceIP)
-}
