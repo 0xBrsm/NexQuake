@@ -4,6 +4,30 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.11.0
+
+### Added
+- WebTransport (QUIC/HTTP3) transport for the browser client (`net_wt.c`, nexus
+  `wt.go`, `trunk/webtransport/`). The client tests for a landed WT handshake and
+  adopts it over the existing WebSocket path; falls forward to WebSocket automatically
+  when WT is absent or fails.
+- Active transport shown in the in-game console and `netdiag` output; `rcon` appends
+  the source transport in parens after the client IP.
+
+### Changed
+- emsdk toolchain pinned to 5.0.0 in local and headless builds to match production;
+  prevents the lazy-VFS guard regression introduced by emsdk 5.0.3.
+
+### Fixed
+- Oversized WT datagrams are now dropped silently (like UDP loss) instead of killing
+  the session.
+- Dead WT transport is closed on WebSocket fall-forward so the server correctly reaps
+  the orphaned session.
+- Asyncify re-entry: JS transport callbacks no longer call back into the WASM engine
+  or delete sockets during the boot path.
+- emsdk 5.0.3 lazy-VFS guard: replaced `node.contents` check with the size field to
+  avoid false-positive boot failures ("Corrupted data file").
+
 ## 1.10.0
 
 ### Added
