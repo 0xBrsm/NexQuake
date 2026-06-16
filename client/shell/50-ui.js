@@ -142,7 +142,8 @@
   Module.nqMessageTextEntryOpen = false;
   ctx.syncModalOpen = function() {
     var blocking = ctx.panel.classList.contains('open') ||
-      ctx.editor.classList.contains('open');
+      ctx.editor.classList.contains('open') ||
+      (ctx.confirm && ctx.confirm.classList.contains('open'));
     Module.nqOverlayBlockingModalOpen = blocking;
     Module.nqOverlayModalOpen = blocking || !!Module.nqTextEntryOpen;
     // Touch HUD reacts to modal state immediately instead of waiting for
@@ -306,33 +307,52 @@
   function showErrorMessage(msg, ms, sticky, opts) { showStatusMessage('error', msg, ms, sticky, opts); }
 
   var pendingConfirmResolve = null;
+  var pendingNoticeOnOk = null;
 
   function closeConfirmModal(result) {
     var resolve = pendingConfirmResolve;
     if (!resolve)
       return false;
     pendingConfirmResolve = null;
+    pendingNoticeOnOk = null;
+    if (ctx.confirmCancel) ctx.confirmCancel.style.display = '';
     ctx.confirm.classList.remove('open');
     ctx.confirm.setAttribute('aria-hidden', 'true');
+    ctx.syncModalOpen();
     resolve(!!result);
     return true;
   }
 
-  function confirmAsync(message, okText) {
+  // openConfirmModal backs both confirmAsync (OK + Cancel) and noticeAsync
+  // (single OK). It reuses the confirm modal, which is top-level so it shows
+  // regardless of overlay-panel state. onOk, when given, runs SYNCHRONOUSLY in
+  // the OK click so callers keep the user gesture (e.g. re-enter fullscreen).
+  // syncModalOpen() keeps the blocking-modal flags + touch HUD in step so the
+  // buttons stay tappable in landscape. Resolves true on OK, false on dismiss.
+  function openConfirmModal(message, okText, showCancel, onOk) {
     var text = String(message || '').trim();
-    if (!text)
-      return Promise.resolve(false);
-    if (!ctx.confirm || !ctx.confirmText || !ctx.confirmOk || !ctx.confirmCancel)
+    if (!text || !ctx.confirm || !ctx.confirmText || !ctx.confirmOk || !ctx.confirmCancel)
       return Promise.resolve(false);
     closeConfirmModal(false);
     clearStatusMessage(STATUS_TOAST);
+    pendingNoticeOnOk = (typeof onOk === 'function') ? onOk : null;
     ctx.confirmText.textContent = text;
-    ctx.confirmOk.textContent = String(okText || 'confirm').trim() || 'confirm';
+    ctx.confirmOk.textContent = okText;
+    ctx.confirmCancel.style.display = showCancel ? '' : 'none';
     ctx.confirm.classList.add('open');
     ctx.confirm.setAttribute('aria-hidden', 'false');
+    ctx.syncModalOpen();
     return new Promise(function(resolve) {
       pendingConfirmResolve = resolve;
     });
+  }
+
+  function confirmAsync(message, okText) {
+    return openConfirmModal(message, String(okText || 'confirm').trim() || 'confirm', true, null);
+  }
+
+  function noticeAsync(message, okText, onOk) {
+    return openConfirmModal(message, String(okText || 'OK').trim() || 'OK', false, onOk);
   }
 
   if (ctx.confirm) {
@@ -352,6 +372,11 @@
   if (ctx.confirmOk) {
     ctx.confirmOk.onclick = function(ev) {
       ev.preventDefault();
+      // Run any notice onOk synchronously, inside this click handler, so it
+      // still counts as a user gesture (e.g. re-entering fullscreen).
+      var onOk = pendingNoticeOnOk;
+      pendingNoticeOnOk = null;
+      if (onOk) { try { onOk(); } catch (e) {} }
       closeConfirmModal(true);
     };
   }
@@ -474,6 +499,7 @@
     showWarningMessage,
     showErrorMessage,
     confirmAsync,
+    noticeAsync,
     closeConfirmModal,
     clearStatusMessage,
     setUploadBusyState,

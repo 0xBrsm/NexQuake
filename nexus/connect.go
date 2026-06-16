@@ -10,8 +10,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
+	"time"
 
+	"github.com/0xBrsm/NexQuake/nexus/internal/access"
 	"github.com/0xBrsm/NexQuake/nexus/internal/admin"
 	"github.com/0xBrsm/NexQuake/nexus/internal/assets"
 	"github.com/0xBrsm/NexQuake/nexus/internal/orch"
@@ -33,17 +36,38 @@ func init() {
 	_ = mime.AddExtensionType(".pak", "application/octet-stream")
 }
 
-// rconLoginLandingHTML is served at GET /rcon. The in-game rcon shell opens
-// it as a popup when fetch can't survive a CF-Access-style cross-origin
-// redirect; reaching this handler proves the edge gate let the request
-// through. The page just closes itself — the shell discovers success by
-// polling POST /rcon, not by listening for a signal from the popup. That
-// avoids fighting COOP-same-origin (set on the WASM page for
-// SharedArrayBuffer), which severs cross-window messaging the moment the
-// popup navigates to the IdP.
+// rconLoginLandingHTML is served at GET /rcon. It backs two popup login flows,
+// distinguished by whether the URL carries an OAuth `code`/`error`:
+//
+//   - Edge-gated (no query): a fronting access gate (e.g. Cloudflare Access on
+//     the /rcon path) ran its IdP flow and landed the popup back here with its
+//     cookie set. The page just closes; the shell discovers success by polling
+//     POST /rcon.
+//   - Client-side PKCE (code present): Nexus is exposed directly with OIDC
+//     configured, so the shell itself drove the Authorization Code flow and the
+//     IdP redirected the popup back here. The page relays the code+state to the
+//     opener through localStorage, then closes.
+//
+// Both hand off through storage rather than postMessage because the WASM page
+// sets COOP-same-origin (for SharedArrayBuffer), which severs window.opener the
+// moment the popup navigates to the IdP. localStorage is shared per-origin and
+// fires a `storage` event in the opener, so it survives that severance.
 const rconLoginLandingHTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>rcon</title></head>
-<body><script>window.close()</script>
+<body><script>
+(function(){
+  try {
+    var p = new URLSearchParams(location.search);
+    var code = p.get('code'), state = p.get('state'), error = p.get('error');
+    if (code || error) {
+      localStorage.setItem('nq_rcon_oidc_cb', JSON.stringify({
+        code: code || '', state: state || '', error: error || ''
+      }));
+    }
+  } catch (e) {}
+  window.close();
+})();
+</script>
 <p>Authenticated. You can close this window.</p>
 </body></html>
 `
@@ -63,9 +87,10 @@ type startManifestBundle struct {
 
 // AddBootstrapClientFields registers a callback that contributes fields to the
 // "client" object in /start responses. Called per request so transport-specific
-// live values propagate within one fetch. Transports use this to add their
-// routing info without the asset server knowing about HTTP layering.
-func (app *nexusApp) AddBootstrapClientFields(fn func() map[string]any) {
+// live values (and request-derived ones like the authority in r.Host)
+// propagate within one fetch. Transports use this to add their routing info
+// without the asset server knowing about HTTP layering.
+func (app *nexusApp) AddBootstrapClientFields(fn func(r *http.Request) map[string]any) {
 	app.bootstrapClientFields = append(app.bootstrapClientFields, fn)
 }
 
@@ -98,7 +123,7 @@ func (app *nexusApp) handleStart(w http.ResponseWriter, r *http.Request) {
 		client["sendArgs"] = app.cfg.clientSendArgs
 	}
 	for _, p := range app.bootstrapClientFields {
-		for k, v := range p() {
+		for k, v := range p(r) {
 			client[k] = v
 		}
 	}
@@ -131,7 +156,10 @@ func (app *nexusApp) trunkSession(
 
 	transport, err := upgrade()
 	if err != nil {
-		slog.Warn(fmt.Sprintf("%s upgrade failed: %v", transportName, err))
+		// Client-driven, per-connection noise: scanners and stray probes hit
+		// the upgrade endpoint constantly and fail it. Debug, like the TLS
+		// handshake noise from the same scanners (see newServerErrorLog).
+		slog.Debug(fmt.Sprintf("%s upgrade failed: %v", transportName, err))
 		return
 	}
 
@@ -182,36 +210,130 @@ func (app *nexusApp) handleControlFrame(s *trunk.Session, payload []byte) {
 
 // notifyRconLoginComplete pushes a console echo down the trunk control
 // channel to every active session sharing r's source IP, so admins see
-// "rcon: authenticated" in their game console the moment GET /rcon fires
-// (i.e. the moment an edge OIDC gate lets them through).
+// "rcon: authenticated" in their game console the moment a GET /rcon hit
+// carries admin-grade credentials (e.g. a front-injected JWT after its IdP
+// login flow lands the popup back on /rcon).
 //
 // Gated behind AuthorizeAdmin so an unauthenticated GET /rcon hit can't be
 // used as an amplification primitive to spam echoes at a chosen IP — only
-// requests Nexus would actually authorize as admin trigger the push. In
-// the typical CF Access deployment this means "Nexus validated the JWT
-// the edge forwarded"; absent any admin auth, the popup signal is silent.
+// requests Nexus would actually authorize as admin trigger the push;
+// absent any admin auth, the popup signal is silent.
 //
 // Source-IP keying is intentionally loose: multiple tabs from one IP all
 // see the echo (harmless), and behind a NAT it could reach a sibling
 // session (also harmless — the echo is a UI signal only).
 func (app *nexusApp) notifyRconLoginComplete(r *http.Request) {
-	if app.clients == nil {
-		return
-	}
 	req := app.access.Request(r)
 	if !app.access.AuthorizeAdmin(req, r) {
 		return
 	}
-	sourceIP := req.Client.SourceIP
-	if sourceIP == "" {
+	app.pushRconConsole(req.Client.SourceIP, `echo "rcon: authenticated."`)
+}
+
+// pushRconConsole runs a console command on any trunk client at sourceIP via
+// the control channel. It's how login outcomes reach the in-game console
+// asynchronously — the engine isn't suspended waiting for them (login is
+// detached from the rcon Asyncify frame, see src/client/shell/55-rcon.js), so
+// the transport stays live to receive the push.
+func (app *nexusApp) pushRconConsole(sourceIP, command string) {
+	if app.clients == nil || sourceIP == "" {
 		return
 	}
-	payload := admin.ClientCommandPayload(`echo "rcon: authenticated."`)
+	payload := admin.ClientCommandPayload(command)
 	for _, conn := range app.clients.List() {
 		if conn.SourceIP == sourceIP {
 			conn.PushControl(payload)
 		}
 	}
+}
+
+// logUnauthorizedClaimKeys logs (at debug) the claim keys a verified-but-not-
+// admin token carried, so an operator can target AUTH_ADMIN_ID against what the
+// IdP actually emits (keys vary: `groups` vs Entra GUIDs vs Auth0 namespaced,
+// and some IdPs omit `email`). No-op for an empty claim set.
+func logUnauthorizedClaimKeys(reason string, claims map[string]any) {
+	if len(claims) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(claims))
+	for k := range claims {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	slog.Debug(fmt.Sprintf("rcon: %s; claims present: %v", reason, keys))
+}
+
+// rconSessionMaxBody caps the POST /rcon/session body — a small JSON of the
+// authorization code plus PKCE verifier.
+const rconSessionMaxBody = 8 << 10
+
+// handleRconSession is the server-side half of the browser's client-side PKCE
+// login (hybrid BFF). The browser drives the authorize redirect + popup, then
+// POSTs the resulting code and PKCE verifier here; Nexus exchanges them at the
+// IdP token endpoint server-to-server (sidestepping the IdP's missing CORS),
+// verifies the id_token, and hands it back as an httpOnly nq_session cookie so
+// the token never enters page JavaScript. The login outcome is echoed to the
+// player's console over the trunk control channel.
+func (app *nexusApp) handleRconSession(w http.ResponseWriter, r *http.Request) {
+	if !app.access.PKCEEnabled() {
+		http.NotFound(w, r)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, rconSessionMaxBody))
+	if err != nil {
+		http.Error(w, "request body too large", http.StatusBadRequest)
+		return
+	}
+	var in struct {
+		Code     string `json:"code"`
+		Verifier string `json:"code_verifier"`
+	}
+	if err := json.Unmarshal(body, &in); err != nil || in.Code == "" || in.Verifier == "" {
+		http.Error(w, "code and code_verifier are required", http.StatusBadRequest)
+		return
+	}
+
+	// Derive redirect_uri from the request authority so it matches what the
+	// browser sent to the authorize endpoint (origin + /rcon) without trusting a
+	// client-supplied value. EXTERNAL_URL being set means we're served over TLS.
+	redirectURI := "https://" + r.Host + "/rcon"
+	idToken, claims, expiry, err := app.access.ExchangeCode(r.Context(), in.Code, in.Verifier, redirectURI)
+	if err != nil {
+		slog.Debug(fmt.Sprintf("rcon: PKCE token exchange failed: %v", err))
+		http.Error(w, "token exchange failed", http.StatusBadGateway)
+		return
+	}
+	if len(idToken) > access.SessionCookieMaxLen {
+		http.Error(w, "id_token too large for cookie session", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	maxAge := 0
+	if !expiry.IsZero() {
+		if secs := int(time.Until(expiry).Seconds()); secs > 0 {
+			maxAge = secs
+		}
+	}
+	// Set the cookie even if the account isn't an admin: the token is valid, and
+	// admin authorization is re-evaluated per request at POST /rcon. The client
+	// uses the {authorized} reply only to choose which toast to show.
+	http.SetCookie(w, &http.Cookie{
+		Name:     access.SessionCookieName,
+		Value:    idToken,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+	})
+
+	authorized := app.access.AuthorizeClaims(claims)
+	if !authorized {
+		logUnauthorizedClaimKeys("PKCE login verified but not an admin", claims)
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]any{"authorized": authorized})
 }
 
 // handleRcon is the POST /rcon JSON-RPC handler. It reads the envelope,
@@ -237,6 +359,11 @@ func (app *nexusApp) handleRcon(w http.ResponseWriter, r *http.Request) {
 
 	if !app.access.AuthorizeAdmin(reqCtx, r) {
 		app.admin.AuditUnauthorized(client, req.Method)
+		// A verified JWT that still fails authorization means the admin rules
+		// matched no claim. Surface the claim keys the token carried so an
+		// operator can see exactly what AUTH_ADMIN_ID has to work with (e.g.
+		// whether the IdP emitted `groups` at all, and under what key).
+		logUnauthorizedClaimKeys("login verified but no admin rule matched", reqCtx.Claims)
 		writeResponse(w, &admin.Response{
 			Jsonrpc: "2.0",
 			Error: &admin.RPCError{
@@ -274,8 +401,9 @@ func writeResponse(w http.ResponseWriter, resp *admin.Response) {
 //
 // Routes mounted here:
 //   - GET /health           — liveness probe, returns version headers
-//   - GET /rcon             — auto-closing landing page for OIDC popup login
+//   - GET /rcon             — auto-closing landing page for popup login flows
 //   - POST /rcon            — admin JSON-RPC endpoint
+//   - POST /rcon/session    — server-side PKCE token exchange → httpOnly cookie
 //   - /start                — client bootstrap manifest
 //   - /nq/                  — hashed game assets (pak files, etc.)
 //   - /                     — WASM client static files
@@ -290,13 +418,14 @@ func (app *nexusApp) newMux() *http.ServeMux {
 		_, _ = w.Write([]byte("OK"))
 	})
 
-	// GET /rcon exists so the in-game rcon shell can drive an OIDC login flow
-	// via a top-level popup when fetch hits a CF Access (or similar) cross-
-	// origin redirect. Reaching this handler proves auth succeeded. The body
-	// auto-closes the popup, and the server pushes a console echo to any
-	// trunk session at the request's source IP so the admin sees
-	// "rcon: authenticated" appear in their game console without needing
-	// the popup-tracking machinery COOP-same-origin breaks.
+	// GET /rcon is the in-game rcon shell's login popup target, for both the
+	// edge-gated flow (a fronting access gate round-trips its IdP and lands
+	// back here with its cookie set) and the client-side PKCE callback (the
+	// IdP redirects back here with a `code`). See rconLoginLandingHTML for how
+	// the page distinguishes them. For the edge flow the server also pushes a
+	// "rcon: authenticated" console echo to any trunk session at the request's
+	// source IP, so the admin sees it without the popup-tracking machinery
+	// COOP-same-origin breaks; the PKCE flow prints its own result instead.
 	mux.HandleFunc("GET /rcon", func(w http.ResponseWriter, r *http.Request) {
 		app.notifyRconLoginComplete(r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -305,6 +434,10 @@ func (app *nexusApp) newMux() *http.ServeMux {
 	})
 
 	mux.HandleFunc("POST /rcon", app.handleRcon)
+
+	// POST /rcon/session: server-side token exchange for the client-side PKCE
+	// login. 404s when PKCE isn't offered (see handleRconSession).
+	mux.HandleFunc("POST /rcon/session", app.handleRconSession)
 
 	mux.Handle("/start", addIsolationHeaders(http.HandlerFunc(app.handleStart)))
 	mux.Handle("/nq/", addIsolationHeaders(app.assetServer.AssetHandler()))

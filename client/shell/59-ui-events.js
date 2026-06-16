@@ -127,6 +127,10 @@
     }
 
     function openGameOptionsMenu() {
+      // Pre-boot the engine has no menu to open, and a queued menu_options
+      // would pop the options menu over whatever runs at startup.
+      if (!Module || !Module.ccall || !Module.calledRun)
+        return;
       nqWasmExecCommand('menu_options');
     }
 

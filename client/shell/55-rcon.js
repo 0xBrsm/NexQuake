@@ -37,7 +37,10 @@
 //   client ban <nqip>                — client.ban
 //
 // Client-only commands (handled here, never sent to Nexus):
-//   login                            — drive an OIDC popup for edge-gated /rcon
+//   login                            — OIDC login: client-side Authorization
+//                                      Code + PKCE when Nexus advertises OIDC
+//                                      config (direct exposure), else an
+//                                      edge-gated popup (fronting access gate).
 
 (function () {
   'use strict';
@@ -361,6 +364,11 @@
   async function postRPC(method, params, password) {
     var headers = { 'Content-Type': 'application/json' };
     var rpcURL = resolveRPCURL();
+    // The PKCE login stores its verified id_token in an httpOnly nq_session
+    // cookie that rides this same-origin request automatically (see credentials
+    // below) and carries per-admin identity for the audit log. The rcon
+    // password, when set, is sent as an explicit fallback header for
+    // deployments without OIDC.
     if (password) headers['Authorization'] = 'Rcon ' + password;
 
     var controller = new AbortController();
@@ -399,11 +407,206 @@
     }
   }
 
-  // Open the OIDC login pop-up. If the user is already authenticated the
-  // popup just flashes through the auto-close landing page and Nexus
-  // pushes "rcon: authenticated." back via the trunk control channel —
-  // same flow either way, no client-side state checks.
-  function runClientLogin() {
+  // --- OIDC client-side login (Authorization Code + PKCE) ---
+  //
+  // Used when Nexus is exposed directly with OIDC configured (Module.nexquakeOIDC
+  // present): the shell runs the whole flow itself and holds the resulting
+  // id_token, sent as Bearer on POST /rcon. When OIDC config is absent we fall
+  // back to runEdgeLogin (a fronting access gate does the IdP round-trip).
+  //
+  // COOP-same-origin on the WASM page severs window.opener, so the popup can't
+  // message us back. Instead the GET /rcon callback page writes the code+state
+  // to localStorage and we pick it up here via a storage event (with a poll as
+  // a belt-and-braces fallback). We then exchange the code for tokens directly
+  // against the IdP — a public-client, no-secret flow IdPs enable CORS for.
+
+  var OIDC_CALLBACK_KEY = 'nq_rcon_oidc_cb';  // popup -> opener handoff (code/state)
+
+  // base64url-encode a byte array (no padding), per RFC 7636.
+  function b64url(bytes) {
+    var s = '';
+    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  // A fresh high-entropy URL-safe string, used for both the PKCE verifier and
+  // the CSRF state parameter.
+  function randomToken() {
+    var a = new Uint8Array(32);
+    crypto.getRandomValues(a);
+    return b64url(a);
+  }
+
+  async function pkceChallenge(verifier) {
+    var digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+    return b64url(new Uint8Array(digest));
+  }
+
+  async function discoverOidc(issuer) {
+    var url = issuer.replace(/\/+$/, '') + '/.well-known/openid-configuration';
+    var resp = await fetch(url, { credentials: 'omit' });
+    if (!resp.ok) throw new Error('OIDC discovery failed (' + resp.status + ')');
+    var meta = await resp.json();
+    if (!meta || !meta.authorization_endpoint || !meta.token_endpoint) {
+      throw new Error('OIDC discovery missing endpoints');
+    }
+    return meta;
+  }
+
+  // Resolve once the callback page hands back {code} for our state, or reject on
+  // IdP error / state mismatch / timeout. Listens for the storage event and also
+  // polls, since the event only fires in *other* documents and timing varies.
+  function waitForOidcCallback(expectedState) {
+    return new Promise(function (resolve, reject) {
+      var settled = false, poll, timer;
+      function settle(fn, arg) {
+        if (settled) return;
+        settled = true;
+        window.removeEventListener('storage', onStorage);
+        clearInterval(poll);
+        clearTimeout(timer);
+        fn(arg);
+      }
+      function tryRead() {
+        var raw;
+        try { raw = localStorage.getItem(OIDC_CALLBACK_KEY); } catch (e) { return; }
+        if (!raw) return;
+        try { localStorage.removeItem(OIDC_CALLBACK_KEY); } catch (e) { /* ignore */ }
+        var o;
+        try { o = JSON.parse(raw); } catch (e) { return; }
+        if (!o) return;
+        if (o.error) return settle(reject, new Error(o.error));
+        if (o.state !== expectedState) return settle(reject, new Error('login state mismatch'));
+        if (!o.code) return settle(reject, new Error('login returned no code'));
+        settle(resolve, o.code);
+      }
+      function onStorage(e) { if (e.key === OIDC_CALLBACK_KEY) tryRead(); }
+      window.addEventListener('storage', onStorage);
+      poll = setInterval(tryRead, 300);
+      timer = setTimeout(function () { settle(reject, new Error('login timed out')); }, 180000);
+      tryRead(); // a fast popup may have written before we attached the listener
+    });
+  }
+
+  async function runPkceLogin(oidc) {
+    if (!(window.crypto && crypto.subtle)) {
+      showAdminToast('rcon: this browser lacks WebCrypto; cannot run OIDC login.');
+      return '';
+    }
+    var meta;
+    try {
+      meta = await discoverOidc(oidc.issuer);
+    } catch (e) {
+      showAdminToast('rcon: ' + (e && e.message ? e.message : String(e)));
+      return '';
+    }
+
+    var verifier = randomToken();
+    var state = randomToken();
+    var challenge = await pkceChallenge(verifier);
+    var redirectUri = new URL('/rcon', location.href).toString();
+    var scope = oidc.scopes || 'openid profile email';
+
+    var authURL = new URL(meta.authorization_endpoint);
+    authURL.searchParams.set('response_type', 'code');
+    authURL.searchParams.set('client_id', oidc.clientId);
+    authURL.searchParams.set('redirect_uri', redirectUri);
+    authURL.searchParams.set('scope', scope);
+    authURL.searchParams.set('state', state);
+    authURL.searchParams.set('code_challenge', challenge);
+    authURL.searchParams.set('code_challenge_method', 'S256');
+
+    try { localStorage.removeItem(OIDC_CALLBACK_KEY); } catch (e) { /* ignore stale */ }
+
+    var pending = waitForOidcCallback(state);
+    setRconLoginActive(true);
+    var popup = window.open(authURL.toString(), 'nq_rcon_login', 'width=500,height=650');
+    if (!popup) {
+      setRconLoginActive(false);
+      showAdminToast('rcon: pop-up blocked. allow pop-ups for this site, then run rcon login.');
+      return '';
+    }
+
+    // Detach the long, interactive tail — waiting for the popup's callback, then
+    // the server-side token exchange — from the caller. `rcon login` runs inside
+    // a suspended Asyncify engine frame (cmd_rcon.c); awaiting the full flow here
+    // would freeze the engine for the entire login and idle out the game
+    // transport. The outcome is shown by the admin toast (whose OK click restores
+    // fullscreen), not the console — async JS can't print to the engine console.
+    completePkceLogin(pending, verifier);
+    return '';
+  }
+
+  // nqRconLoginActive marks an in-flight login so the shell suppresses its
+  // "tab regained focus -> open the overlay" reaction (see 21-touch-controls.js):
+  // the IdP popup backgrounds the tab, and on return we want the admin toast, not
+  // the overlay. Cleared once the toast is dismissed.
+  function setRconLoginActive(active) {
+    try {
+      if (typeof Module !== 'undefined' && Module)
+        Module.nqRconLoginActive = !!active;
+    } catch (e) { /* ignore */ }
+  }
+
+  // showAdminToast surfaces the login outcome via the overlay's single-OK notice
+  // (DOM, so it renders even when unfullscreened — the engine console can't be
+  // printed to asynchronously). The OK click is the user gesture that re-enters
+  // fullscreen; the engine state was never touched, so the user lands back
+  // exactly where they launched `rcon login`. Resolves when dismissed.
+  function showAdminToast(message) {
+    var ctx = (typeof Module !== 'undefined' && Module && Module.nqOverlayCtx) || null;
+    if (!ctx || typeof ctx.noticeAsync !== 'function')
+      return Promise.resolve(false);
+    return ctx.noticeAsync(message, 'OK', function () {
+      try {
+        if (typeof Module.nqRequestFullscreen === 'function')
+          Module.nqRequestFullscreen();
+      } catch (e) { /* ignore */ }
+    });
+  }
+
+  // completePkceLogin runs the detached tail of runPkceLogin: await the code the
+  // callback page relays, POST it with the PKCE verifier to Nexus's same-origin
+  // /rcon/session (which exchanges it server-side — the IdP token endpoint isn't
+  // browser-CORS-reachable — and sets the httpOnly nq_session cookie so the
+  // id_token never enters JS), then show the admin toast with the outcome. Never
+  // throws; it owns the nqRconLoginActive flag for the flow's lifetime.
+  async function completePkceLogin(pending, verifier) {
+    var message;
+    try {
+      var code = await pending;
+      var resp = await fetch(new URL('/rcon/session', location.href).toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ code: code, code_verifier: verifier }),
+      });
+      if (resp.ok) {
+        var data = {};
+        try { data = await resp.json(); } catch (e) { /* tolerate empty body */ }
+        message = (data && data.authorized)
+          ? 'rcon: authenticated.'
+          : 'rcon: signed in, but not an admin.';
+      } else {
+        message = 'rcon: login failed (HTTP ' + resp.status + ').';
+      }
+    } catch (e) {
+      message = 'rcon: login failed: ' + (e && e.message ? e.message : String(e));
+    }
+    try {
+      await showAdminToast(message);
+    } finally {
+      setRconLoginActive(false);
+    }
+  }
+
+  // Edge-gated login: open /rcon as a top-level popup so a fronting access gate
+  // (e.g. Cloudflare Access) runs its IdP flow and sets its cookie. If already
+  // authenticated the popup just flashes through the auto-close landing page;
+  // either way Nexus pushes "rcon: authenticated." down the trunk control
+  // channel once a GET /rcon hit carries admin-grade credentials. The shell
+  // discovers success by polling POST /rcon — no client-side state checks.
+  function runEdgeLogin() {
     var loginURL = resolveRPCURL();
     var popup = window.open(loginURL, 'nq_rcon_login', 'width=500,height=600');
     if (!popup) {
@@ -411,6 +614,17 @@
              '      log in to continue.\n';
     }
     return '';
+  }
+
+  // Route `rcon login` to the client-side PKCE flow when Nexus advertises OIDC
+  // config, otherwise to the edge-gated popup. Returns a string or a Promise of
+  // one; the caller awaits either.
+  function runClientLogin() {
+    var oidc = (typeof Module !== 'undefined' && Module && Module.nexquakeOIDC) || null;
+    if (oidc && oidc.issuer && oidc.clientId) {
+      return runPkceLogin(oidc);
+    }
+    return runEdgeLogin();
   }
 
   // Exported entry point — called from cmd_rcon.c via EM_ASYNC_JS.
@@ -423,7 +637,7 @@
       var tokens = tokenize(String(argsLine || ''));
       var plan = planCall(tokens, connectedPort | 0);
       if (plan.error) return plan.error;
-      if (plan.clientCmd === 'login') return runClientLogin();
+      if (plan.clientCmd === 'login') return await runClientLogin();
 
       var r = await postRPC(plan.method, plan.params, String(password || ''));
       if (r.needsLogin) return 'rcon: not authenticated. run: rcon login.\n';

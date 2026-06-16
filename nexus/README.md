@@ -8,7 +8,7 @@ Go orchestration service that serves the WASM client, serves game data, tunnels 
 |-----|---------|
 | `trunk/` | **Networking relay.** Standalone tunnel↔UDP relay (WebSocket and WebTransport adapters) with deterministic VirtualIP (`127.x.x.x`) allocation and control-frame callback hooks. No HTTP/auth/application imports. |
 | `internal/orch/` | **Orchestration.** Dedicated server launch/lifecycle, instance autoscaling/reconcile, server console capture, and `slist` polling/aggregation. No `trunk` or `admin` imports. |
-| `internal/access/` | **HTTP access policy.** Caller identity, OIDC JWT verification, RCON/admin authorization rules, and source-IP blocklist. |
+| `internal/access/` | **HTTP access policy.** Caller identity, OIDC login flow + JWT verification, RCON/admin authorization rules, and source-IP blocklist. |
 | `internal/clients/` | **Client presence.** Joined runtime view of access identities and active trunk sessions, keyed by VirtualIP for client list/info/ban consumers. |
 | `internal/admin/` | **Admin control plane.** `/rcon` JSON-RPC 2.0 dispatch and client/server commands over narrow consumer-side interfaces. |
 | `internal/assets/` | **Game data gateway.** Quickstart manifests, VFS manifest construction, PAK indexing/streaming, CD index, and hash-addressed asset serving (`/start`, `/nq/<hash>`). |
@@ -19,7 +19,7 @@ Go orchestration service that serves the WASM client, serves game data, tunnels 
 ```text
 trunk          (leaf: stdlib; adapters add gorilla/websocket and quic-go/webtransport-go)
 internal/orch  (leaf: stdlib + internal/assets)
-internal/access (leaf: stdlib + go-oidc)
+internal/access (leaf: stdlib + go-oidc + x/oauth2)
 internal/clients -> internal/access + trunk
 internal/admin  -> internal/clients + internal/orch (consumer-side interfaces)
 
@@ -38,13 +38,13 @@ Rules:
 | File | Purpose |
 |------|---------|
 | `main.go` | Process lifecycle only: init, runtime wiring, HTTP server start, signal handling, graceful shutdown, and CLI subcommands (`--version`, `--healthcheck`). |
-| `connect.go` | HTTP mux and connection boundary: route registration (`/health`, `/connect`, `POST /rcon` JSON-RPC, `GET /rcon` OIDC-popup landing page, `/start`, `/nq/`, `/`), top-level access gate wrapping, and `/rcon` JSON-RPC handler. |
+| `connect.go` | HTTP mux and connection boundary: route registration (`/health`, `/connect`, `POST /rcon` JSON-RPC, `GET /rcon` login landing page, `/start`, `/nq/`, `/`), top-level access gate wrapping, and `/rcon` JSON-RPC handler. |
 | `env.go` | Startup config (`runtimeConfig`): reads cross-cutting env vars once and exposes `PATH`/env helpers. |
 | `log.go` | Logging setup (`LOG_LEVEL`, `CONSOLE_TIMESTAMPS`), nexus.log file sink, and operator console ring buffer. |
 | `version.go` | Build metadata (`--version`, `/health`), version ldflags, and CLI sub-command handler. |
 | `ws.go` | WebSocket transport setup: mounts `/connect` and upgrades connections to trunk sessions. |
-| `wt.go` | WebTransport transport setup (when `WT_HOST` is set): HTTP/3 listener on UDP/`HTTP_PORT`, `/connect` Extended CONNECT route, manifest fields. |
-| `cert.go` | Self-signed WebTransport certificate manager: generation, rotation, and the hash pinned to clients via `/start`. |
+| `wt.go` | WebTransport transport setup: HTTP/3 listener on UDP/`HTTP_PORT`, `/connect` Extended CONNECT route, request-derived URL authority in the `/start` manifest. |
+| `cert.go` | Run-path resolution (`EXTERNAL_URL`): shared cert source for the HTTPS and WebTransport listeners — a BYO `cert.pem`+`key.pem` under `CERT_DIR`, else ACME/Let's Encrypt via `autocert`. |
 
 ## trunk/
 
@@ -65,9 +65,9 @@ Resolves HTTP callers and centralizes access policy before route-specific code r
 
 | File | Purpose |
 |------|---------|
-| `auth.go` | OIDC JWT verification (`AUTH_ISSUER`, `AUTH_AUDIENCE`, `AUTH_JWT_HEADER`), `Authorization` scheme parsing, optional matcher allowlist (`AUTH_ADMIN_ID`), and `AUTH_RCON_PASSWORD` policy for admin capability. |
+| `auth.go` | OIDC JWT verification (`Authorization: Bearer` or the `AUTH_JWT_HEADER` front-injected header), `Authorization` scheme parsing, optional matcher allowlist (`AUTH_ADMIN_ID`), and `AUTH_RCON_PASSWORD` policy for admin capability. |
 | `gate.go` | Request-level access facade, resolved `access.Client`, top-level HTTP gate, source-IP blocklist, and admin authorization. |
-| `identity.go` | Client source IP and identity-key resolution (`AUTH_CLIENT_IP_HEADER`) for proxied deployments. |
+| `identity.go` | Client source IP and identity-key resolution: direct connection address by default, trusted header (`AUTH_CLIENT_IP_HEADER`) behind a front. |
 
 ## internal/orch/
 
@@ -147,5 +147,6 @@ Go 1.24+. Primary dependencies:
 - `github.com/gorilla/websocket` (WebSocket tunnel)
 - `github.com/quic-go/webtransport-go` + `github.com/quic-go/quic-go` (WebTransport tunnel: QUIC datagrams, HTTP/3 listener)
 - `github.com/coreos/go-oidc/v3` (OIDC JWT verification)
+- `golang.org/x/crypto/acme/autocert` (Let's Encrypt certificates when `EXTERNAL_URL` is set)
 - `github.com/creack/pty` (server console PTY)
 - `github.com/google/shlex` (command argument splitting)

@@ -50,6 +50,40 @@ canvas.emscripten {
   }
 }
 
+/* Active transport indicator — lower-right counterpart to the settings gear,
+   same edge insets and overlay font. Purely informational, so it ignores
+   pointer events and hides on touch and while the settings panel is open. */
+#nq-transport {
+  position: fixed;
+  right: var(--nq-overlay-toggle-right);
+  bottom: calc(var(--nq-overlay-toggle-edge) + var(--nq-safe-bottom));
+  z-index: 10000;
+  /* Receives the double-click toggle. During play the canvas holds pointer
+     lock, so these events only land when the player isn't locked in. */
+  pointer-events: auto;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  /* Stable hit-zone so the collapsed (text-hidden) state stays double-clickable. */
+  min-width: 116px;
+  min-height: 34px;
+  text-align: right;
+  color: #ccc;
+  font-family: Arial,Helvetica,sans-serif;
+  line-height: 1.2;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85);
+}
+#nq-transport[hidden] { display: none; }
+#nq-transport .nq-transport-label { font-size: 12px; opacity: 0.7; }
+#nq-transport .nq-transport-name { font-family: var(--nq-font-ui); font-size: 14px; font-weight: bold; }
+/* Collapsed: hide the readout but keep the corner as an invisible toggle target. */
+#nq-transport.nq-transport-collapsed .nq-transport-label,
+#nq-transport.nq-transport-collapsed .nq-transport-name { display: none; }
+@media (hover: none) and (pointer: coarse) {
+  #nq-transport { display: none; }
+}
+body.nq-overlay-panel-open #nq-transport { display: none; }
+
 /* NexQuake Settings Overlay */
 #nq-overlay-toggle {
   position: fixed;
@@ -445,9 +479,9 @@ body.nq-touch-input #nq-overlay-panel .nq-tabs-wrap {
   z-index: 1;
 }
 #nq-confirm {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  z-index: 5;
+  z-index: 10002;
   display: none;
   align-items: center;
   justify-content: center;

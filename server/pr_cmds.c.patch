@@ -1,5 +1,14 @@
 --- pr_cmds.c
 +++ pr_cmds.c
+@@ -89,8 +89,6 @@
+ 	ed = PROG_TO_EDICT(pr_global_struct->self);
+ 	ED_Print (ed);
+ 	ED_Free (ed);
+-	
+-	Host_Error ("Program error");
+ }
+ 
+ 
 @@ -1630,6 +1630,94 @@
  		(&pr_global_struct->parm1)[i] = client->spawn_parms[i];
  }

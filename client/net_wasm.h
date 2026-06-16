@@ -56,7 +56,6 @@ void        WASM_EnsureTransportOpen (void);
 void        WASM_CloseTransport (void);
 int         WASM_SendPacket (const byte *packet, int len);
 const char *WASM_LastSendError (void);
-const char *WASM_ActiveTransportName (void); // NULL when no transport is up
 
 // Provided by the protocol adapter; substrates call this on receive.
 void WASM_OnPacket (const byte *packet, int length);

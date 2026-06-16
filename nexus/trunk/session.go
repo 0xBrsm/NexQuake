@@ -3,6 +3,7 @@ package trunk
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -76,6 +77,7 @@ type Session struct {
 	sourceKey      string
 	connectedAt    time.Time
 	lastServerPort atomic.Int32
+	txDropped      atomic.Int64 // outbound frames dropped to a full tx queue (slow client)
 
 	trunk *Trunk // back-reference for shared config + lifecycle teardown
 
@@ -149,6 +151,15 @@ func (s *Session) End() {
 		}
 		s.trunk.allocator.release(s.virtualIP)
 		s.virtualIP = [4]byte{}
+
+		// One summary line per session instead of a warn per dropped frame:
+		// a full tx queue is client-side congestion (UDP-equivalent loss), so
+		// it shouldn't flood the log mid-session, but a session that dropped
+		// anything is worth a single note at teardown. No more drops can land
+		// after cancel() above, so the count is final here.
+		if dropped := s.txDropped.Load(); dropped > 0 {
+			slog.Warn(fmt.Sprintf("session %s dropped %d outbound frame(s): tx queue full (slow client)", s.sourceKey, dropped))
+		}
 	})
 }
 

@@ -8,51 +8,69 @@ NexQuake is designed to be drop-in compatible with any `protocol 15` (NetQuake) 
 
 | Variable | Default | Description |
 |------|---------|-------------|
-| `HTTP_PORT` | `1337` | Main HTTP and WebSocket listener port; also the WebTransport UDP/QUIC port when `WT_HOST` is set (see [WebTransport](#webtransport)). |
+| `HTTP_PORT` | `1337` | Main HTTP(S) and WebSocket listener port; also the WebTransport UDP/QUIC port when WebTransport is enabled (see [WebTransport](#webtransport)). |
 | `QUICKSTART` | `ffa` | Quickstart catalog entries from `CFG_DIR/game.json` (for example `ctf,arena` or `all`). Invalid names are ignored. See [Quickstart Catalog](../etc/README.md). |
 | `LOG_LEVEL` | `info` | Operator console verbosity. Accepts: `error`, `warn`, `info`, `debug`. The on-disk `nexus.log` always records full debug detail regardless. |
 | `CONSOLE_TIMESTAMPS` | `1` | Timestamps on operator console log lines. Accepts: `0`, `1`. |
 | `DEBUG_RELAY` | `0` | Logs UDP relay traffic with source/destination, length, and byte preview. Accepts: `0`, `1`. |
 | `SV_MAX_INSTANCES` | `1` | Per-line `servers.ini` scaling cap for `-port 0` startup entries (minimum `1`). Controls the maximum instances a server may spawn. `1` (the default) disables autoscaling and hides the `slist` instance-count suffix for those entries. Set higher (for example `10`) to enable demand-driven scale-out. |
 
-## WebTransport
+## Run Paths
 
-WebTransport gives the tunnel UDP-like delivery (unreliable QUIC datagrams) instead of WebSocket's TCP semantics, which removes head-of-line blocking during network hiccups. It is optional: when `WT_HOST` is unset, clients use WebSocket only.
+One variable decides the deployment shape: `EXTERNAL_URL` — the server's public identity.
+
+| Setup | Shape | Minimum env beyond defaults | Transports |
+|-------|-------|------------------------------|------------|
+| Default | LAN, dev, or behind any reverse proxy / tunnel | none (behind a front: `AUTH_CLIENT_IP_HEADER`) | HTTP + WebSocket |
+| `EXTERNAL_URL` set | Public server — Nexus owns the endpoint with a real certificate | `EXTERNAL_URL=https://quake.example.com` | HTTPS + WebSocket + WebTransport |
+
+**Default (no `EXTERNAL_URL`)** is plain HTTP and WebSocket only — NexQuake as it worked before 1.11. `docker run -p 1337:1337` and play at `http://localhost:1337` or from the LAN; no certificates anywhere. It is also the shape for running behind a reverse proxy or tunnel that owns public TLS (Cloudflare Tunnel being the canonical case): no public IP, no open inbound ports, and an access gate like Cloudflare Access can require IdP login for *everything* — page, assets, and play — with no Nexus configuration. A second access policy scoped to the `/rcon` path gates admin the same way (see [Authentication](#authentication)). One opt-in variable makes Nexus front-aware: `AUTH_CLIENT_IP_HEADER` (e.g. `CF-Connecting-IP`) so bans and audit logs target players instead of the proxy edge.
+
+**`EXTERNAL_URL` set** is the public server: the hostname becomes the certificate identity (automatic Let's Encrypt), the listener serves HTTPS/WSS, and WebTransport is advertised alongside — nothing separate to configure:
+
+```bash
+docker run -p 443:1337 -p 443:1337/udp \
+  -e EXTERNAL_URL=https://quake.example.com \
+  -v nexquake-cert:/app/cert ...
+```
+
+Requires the hostname to resolve to your public IP and the public port serving the page (`443` here) to reach `HTTP_PORT` over both TCP and UDP. The certificate is obtained over the `TLS-ALPN-01` challenge on the main TLS listener — no plain-HTTP port is needed.
+
+## TLS
 
 | Variable | Default | Description |
 |------|---------|-------------|
-| `WT_HOST` | empty | Externally-reachable WebTransport host, optionally with a port (for example `quake.example.com` or `10.0.0.5:1337`). Used verbatim as the advertised URL authority and pushed to clients via `/start`. Empty disables WebTransport entirely. |
-| `WT_CERT_DIR` | `/app/tls` | Directory for the auto-generated self-signed certificate and key. |
-| `WT_CERT_ROTATE_DAYS` | `9` | Certificate rotation interval in days (range `1`-`12`; browsers cap hash-pinned certificates at 14 days and rotation must land a day before expiry). Out-of-range values warn and fall back to the default. |
+| `EXTERNAL_URL` | empty | The server's public identity (`https://host`, nothing else). Setting it enables HTTPS, WSS, and WebTransport; the hostname is the certificate identity. There is no port to configure — clients are routed by the authority each request arrives on. See [Run Paths](#run-paths). |
+| `CERT_DIR` | `/app/cert` | Certificate directory. If it holds `cert.pem` + `key.pem`, Nexus serves that bring-your-own cert directly. Otherwise it's the ACME account/cert cache (under `acme/`) — persist it across restarts to avoid re-issuing. |
 
-The QUIC listener binds UDP on `HTTP_PORT` — TCP and UDP socket spaces don't collide, so the WebSocket and WebTransport listeners share the port number. Any published UDP port must map to `HTTP_PORT` on the container, even when `WT_HOST` advertises a different external port. A mismatched mapping black-holes silently (the page and `/start` ride TCP and look fine; only QUIC fails). For example, advertising port `4443`:
+## WebTransport
 
-```bash
-docker run -p 1337:1337 -p 4443:1337/udp -e WT_HOST=quake.example.com:4443 ...
-```
+WebTransport gives the tunnel UDP-like delivery (unreliable QUIC datagrams) instead of WebSocket's TCP semantics, which removes head-of-line blocking during network hiccups. It is automatic whenever `EXTERNAL_URL` is set and absent otherwise. There is nothing to configure: each `/start` response advertises the WebTransport URL at the exact authority the request arrived on, so whatever address and port work for the page work for QUIC.
 
-No CA-signed certificate is needed: Nexus generates a short-lived self-signed certificate and pins its hash to clients through the `/start` manifest.
+The QUIC listener binds UDP on `HTTP_PORT` — TCP and UDP socket spaces don't collide, so the WebSocket and WebTransport listeners share the port number. The one deployment rule: whatever public port serves the page must also reach `HTTP_PORT` over UDP (e.g. `443:1337/udp` next to `443:1337`). A mismatched mapping black-holes silently: the page and `/start` ride TCP and look fine; only QUIC fails.
 
-### Deployment Shapes
-
-Reverse proxies and CDNs do not forward WebTransport (HTTP/3 over QUIC), so the UDP path must reach Nexus directly. Pick the shape that matches who owns the public endpoint:
-
-- **Direct or proxy-on-same-host (recommended):** set `WT_HOST` to the same hostname players load the page from, and forward that host's UDP port straight to Nexus while TCP continues through the proxy. Same host means same address space, so browsers connect silently — no permission prompts or warnings.
-- **CDN or tunnel in front:** the proxied hostname cannot carry WebTransport. Point `WT_HOST` at a direct DNS record (or `IP:port`) that bypasses the CDN. Public page to public endpoint also connects silently.
-- **Public page, LAN endpoint:** setting `WT_HOST` to a private address (for example `pi.local`) while the page is served from a public origin triggers the browser's Local Network Access permission prompt. The client handles this gracefully — it plays over WebSocket until the prompt is granted and picks up WebTransport on the next connection — but prefer one of the shapes above when possible.
-
-Clients treat WebTransport as an upgrade, never a requirement: the session warms up in the background at page load, connections use it only once its handshake has already landed, and WebSocket carries play in the meantime. An unreachable `WT_HOST` costs nothing beyond a background retry every 20 seconds.
+Clients treat WebTransport as an upgrade, never a requirement: the session warms up in the background at page load, connections use it only once its handshake has already landed, and WebSocket carries play in the meantime. An unreachable WebTransport endpoint costs nothing beyond a background retry every 20 seconds.
 
 ## Authentication
 
+Admin access (`/rcon`) takes two credentials: a shared-secret **password**, or **SSO** — a verified OIDC login. Nexus is always *verify-only* — it never holds a client secret or runs a server-side login flow. How the browser obtains the SSO token (an OIDC JWT) depends on the deployment:
+
+- **Behind a front:** let the access gate (e.g. Cloudflare Access) handle IdP login. The simple recipe: one access policy for the site, a second admins-only policy scoped to the `/rcon` path, and `AUTH_RCON_PASSWORD` as the Nexus-side credential. The in-game `rcon login` opens `/rcon` as a popup so the front can run its IdP round-trip. For per-admin identity in Nexus's own audit logs, additionally verify the JWT the front injects (e.g. `AUTH_JWT_HEADER=Cf-Access-Jwt-Assertion`).
+- **Direct exposure (`EXTERNAL_URL` set, no front):** set `AUTH_ISSUER` + `AUTH_AUDIENCE` and the in-game `rcon login` runs an Authorization Code + PKCE flow as a **public client** (no secret). The browser drives the authorize redirect and the `/rcon` callback, then hands the code + PKCE verifier to Nexus at `POST /rcon/session`; Nexus does the token exchange server-to-server and returns the verified id_token in an **httpOnly `nq_session` cookie** that the verify-only layer reads on later `/rcon` calls. The token never enters page JavaScript, and the server-side hop sidesteps IdPs whose token endpoint isn't browser-CORS-reachable (e.g. Cloudflare Access). On the IdP side, register the client as **public / SPA** (no client secret, PKCE required) with its redirect URI set to your site origin + `/rcon` (e.g. `https://play.example.com/rcon`).
+
+PKCE engages only in the direct-exposure shape: `EXTERNAL_URL` is set **and** `AUTH_JWT_HEADER` is the default (`Authorization`). Behind a front, `EXTERNAL_URL` is unset, so PKCE stays off and the browser uses the edge-gated popup while Nexus reads the token from the header the front asserts. Both conditions are required because a front may inject the JWT via the standard `Authorization: Bearer` (oauth2-proxy, Pomerium, Envoy), which the header alone can't tell apart from direct exposure — `EXTERNAL_URL` (set only when standing alone) is the disambiguator. The two modes are mutually exclusive and chosen automatically.
+
+The login scopes aren't configured directly — they're derived from `AUTH_ADMIN_ID` so you never have to map a scope name to a claim by hand. `openid profile email` is always requested (spec-defined, accepted everywhere, and the source of audit-log identity); if any admin rule keys on `groups`, the `groups` scope is added too. Group-based gating still requires your IdP to actually emit a `groups` claim (some need it switched on in token config or a login action; the claim key is almost always `groups`, but Entra emits group GUIDs and Auth0 requires a namespaced claim). If a verified token is denied, check the debug log for the claim keys it carried.
+
 | Variable | Default | Description |
 |------|---------|-------------|
-| `AUTH_ISSUER` | empty | OIDC Issuer URL (e.g. `https://accounts.google.com`). |
-| `AUTH_AUDIENCE` | empty | OIDC Audience (Client ID). |
-| `AUTH_JWT_HEADER` | `Authorization` | HTTP header for OIDC JWT token. |
-| `AUTH_ADMIN_ID` | empty | Optional comma-separated list of OIDC claim matchers (e.g. `email:user@example.com`, `group:admins`) required for admin access. If left empty, any successfully verified JWT from `AUTH_ISSUER` + `AUTH_AUDIENCE` is treated as admin. Logs identify users by `email`, `preferred_username`, `name`, or `sub`. |
-| `AUTH_CLIENT_IP_HEADER` | empty | HTTP header to trust for client IP resolution (e.g. `CF-Connecting-IP`, `X-Forwarded-For`, `X-Real-IP`). If unset or the header value is invalid, falls back to the direct connection IP. |
-| `AUTH_RCON_PASSWORD` | empty | Shared-secret password for admin access. Clients present it as `Authorization: Rcon <password>` (in-game, driven by the `rcon_password` cvar). |
+| `AUTH_ISSUER` | empty | OIDC Issuer URL (e.g. `https://accounts.google.com`). Both this and `AUTH_AUDIENCE` must be set to enable JWT verification. |
+| `AUTH_AUDIENCE` | empty | OIDC Audience (Client ID) the JWT must be issued for. |
+| `AUTH_CLIENT_ID` | `AUTH_AUDIENCE` | Public client id used by the PKCE login (browser authorize + the server-side `/rcon/session` exchange). Defaults to `AUTH_AUDIENCE` (the common case where the id_token's `aud` is the client id); set it only when your IdP separates the API audience from the client id. Login flow only — does not affect token verification. |
+| `AUTH_JWT_HEADER` | `Authorization` | HTTP header carrying the OIDC JWT. The default verifies a `Bearer <jwt>` from scripted callers and the `nq_session` cookie the PKCE login sets; set a front-injected header (e.g. `Cf-Access-Jwt-Assertion`) to verify the identity your access gate asserts (which also disables PKCE). |
+| `AUTH_CLIENT_IP_HEADER` | empty | Trusted header for real client IPs behind a front (e.g. `CF-Connecting-IP`, `X-Forwarded-For`). Behind-a-front deployments only — without it, source-IP bans would hit the proxy edge and block everyone. Falls back to the direct connection IP when unset or unparseable. |
+| `AUTH_ADMIN_ID` | empty | Admin-grant policy for verified SSO logins. **Empty (default): no login grants admin** (fail-closed). Set a comma-separated list of OIDC claim matchers (e.g. `email:user@example.com`, `groups:admins`) to grant admin to claims matching any one of them. Set to `any` to grant admin to **every** verified login — i.e. delegate authorization entirely to your IdP/edge (who it lets log in). A malformed entry (not `key:value` and not `any`) is a fatal startup error. Matching is case-insensitive; logs identify users by `email`, `preferred_username`, `name`, or `sub`. |
+| `AUTH_RCON_PASSWORD` | empty | Shared-secret password for admin access. Clients present it as `Authorization: Rcon <password>` (in-game, driven by the `rcon_password` cvar). The old-school option — works with or without SSO. |
 
 ## Client-Side Options
 

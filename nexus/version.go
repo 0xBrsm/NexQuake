@@ -1,10 +1,12 @@
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -79,9 +81,30 @@ func handleCLI(args []string) (handled bool, exitCode int) {
 // runHealthcheck performs an HTTP GET against the local /health endpoint.
 // Designed for Docker/compose healthchecks — avoids needing curl or bash.
 func runHealthcheck(httpPort string) error {
-	url := fmt.Sprintf("http://127.0.0.1:%s/health", httpPort)
+	scheme := "http"
+	var transport http.RoundTripper
+	if external := strings.TrimSpace(os.Getenv("EXTERNAL_URL")); external != "" {
+		// The listener serves TLS for EXTERNAL_URL's hostname; this is a local
+		// liveness probe against 127.0.0.1, so certificate identity can't match
+		// and isn't what's being checked — hence InsecureSkipVerify.
+		//
+		// But the ClientHello's SNI still matters: under ACME, autocert's
+		// HostPolicy whitelists only EXTERNAL_URL's host and aborts the
+		// handshake for any other (or missing) server name — which is what a
+		// bare 127.0.0.1 dial sends. That handshake failure made the container
+		// read unhealthy even while it served real traffic fine. Set ServerName
+		// to the whitelisted host so the SNI matches and the cert is served;
+		// verification is still skipped, so the 127.0.0.1 dial target is moot.
+		scheme = "https"
+		tlsCfg := &tls.Config{InsecureSkipVerify: true}
+		if host, err := parseExternalURL(external); err == nil {
+			tlsCfg.ServerName = host
+		}
+		transport = &http.Transport{TLSClientConfig: tlsCfg}
+	}
+	url := fmt.Sprintf("%s://127.0.0.1:%s/health", scheme, httpPort)
 
-	client := http.Client{Timeout: 2 * time.Second}
+	client := http.Client{Timeout: 2 * time.Second, Transport: transport}
 	resp, err := client.Get(url)
 	if err != nil {
 		return err
@@ -90,6 +113,16 @@ func runHealthcheck(httpPort string) error {
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s", resp.Status)
+	}
+
+	// Assert cert health explicitly. A cert that can't be issued at all already
+	// aborts the handshake above, but InsecureSkipVerify accepts an expired one
+	// — so an expiry that slipped past renewal would otherwise read healthy.
+	// Identity is intentionally not checked (the dial targets 127.0.0.1).
+	if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
+		if leaf := resp.TLS.PeerCertificates[0]; time.Now().After(leaf.NotAfter) {
+			return fmt.Errorf("TLS certificate expired %s", leaf.NotAfter.Format(time.RFC3339))
+		}
 	}
 
 	return nil

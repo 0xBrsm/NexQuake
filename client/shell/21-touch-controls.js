@@ -416,7 +416,11 @@
   function syncVisibility() {
     if (resumeOverlayPending && document.visibilityState === 'visible') {
       resumeOverlayPending = false;
-      if (!tryOpenOverlayAfterResume())
+      // An rcon login round-trip backgrounds the tab (the IdP popup); don't pop
+      // the overlay on return — the login flow shows its own toast whose OK
+      // click restores fullscreen, landing the user back where they started
+      // (moduleRef.nqRconLoginActive is set by the rcon shell during login).
+      if (!moduleRef.nqRconLoginActive && !tryOpenOverlayAfterResume())
         resumeOverlayPending = true;
     }
 
@@ -425,8 +429,12 @@
     var overlayCtx = moduleRef && moduleRef.nqOverlayCtx;
     var panelOpen = !!(overlayCtx && overlayCtx.panel && overlayCtx.panel.classList.contains('open'));
     var editorOpen = !!(overlayCtx && overlayCtx.editor && overlayCtx.editor.classList.contains('open'));
+    // The confirm/notice modal is top-level (it can be open with the panel
+    // closed — e.g. the rcon login toast), so it must suppress the touch layer
+    // on its own, otherwise its buttons aren't tappable in landscape.
+    var confirmOpen = !!(overlayCtx && overlayCtx.confirm && overlayCtx.confirm.classList.contains('open'));
     var textEntryOpen = !!(moduleRef && moduleRef.nqTextEntryOpen);
-    var blockingModal = panelOpen || editorOpen;
+    var blockingModal = panelOpen || editorOpen || confirmOpen;
     var menuMode = !!moduleRef.nqTouchMenuMode;
     var menuLayoutMode = !!moduleRef.nqTouchMenuLayoutMode;
     var visible = moduleRef.nexquakeTouchEnabled !== false && canvasShown && landscape;

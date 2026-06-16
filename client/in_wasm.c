@@ -775,6 +775,7 @@ static EM_BOOL on_ptrlock(int t, const EmscriptenPointerlockChangeEvent *e, void
 	pointer_locked = e->isActive;
 	if (!e->isActive)
 	{
+		mouse_x = mouse_y = 0;
 		ptrlock_lost_at = emscripten_get_now();
 		if (!touch_active && key_dest == key_game)
 		{
@@ -1557,7 +1558,6 @@ void IN_Move(usercmd_t *cmd)
 		mx = mouse_x;
 		my = mouse_y;
 	}
-
 	IN_ApplyAnalogLook(cmd, jx, jy, &joy_sensitivity, &joy_lookstrafe, &joy_invertpitch);
 	IN_ApplyAnalogLook(cmd, tx, ty, &touch_sensitivity, &touch_lookstrafe, &touch_invertpitch);
 

@@ -351,16 +351,6 @@ func (m *ServerManager) launchServerReplica(serverID int) {
 		slog.Warn(fmt.Sprintf("Server %d scale-up failed: %v", serverID, err))
 		return
 	}
-	line := -1
-	m.mu.RLock()
-	if s := m.serverByInstanceID[rec.id]; s != nil {
-		line = s.Line
-	}
-	m.mu.RUnlock()
-	if line >= 0 {
-		slog.Info(fmt.Sprintf("Server %d line %d launched replica", serverID, line+1))
-		return
-	}
 	slog.Info(fmt.Sprintf("Server %d launched replica", serverID))
 }
 

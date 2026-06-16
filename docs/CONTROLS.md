@@ -157,7 +157,7 @@ The mode list is split into two sections:
 
 **Fullscreen Modes** — match the current browser viewport aspect ratio, scaled at 25%, 50%, and 100% of the maximum render dimension. Exact resolutions depend on the viewport at startup.
 
-FOV scales automatically when switching modes. `fov` is interpreted as the user's horizontal FOV at 4:3; wider viewports blend between that literal value and pure Hor+ expansion based on `fov_adapt` (default `0.5`). `fov_adapt 0` disables scaling (literal fov_x, stock Quake behavior — vertical shrinks on widescreens). `fov_adapt 1` is pure Hor+ (vertical preserved, horizontal widens aggressively on ultrawide). Values in between trade peripheral vision for edge comfort.
+FOV scales automatically when switching modes. `fov` is interpreted as the user's horizontal FOV at 4:3; wider viewports blend between that literal value and pure Hor+ expansion based on `fov_adapt` (default `1`, matching the QuakeSpasm-family and DarkPlaces behavior). `fov_adapt 0` disables scaling (literal fov_x, stock Quake behavior — vertical shrinks on widescreens). `fov_adapt 1` is pure Hor+ (vertical preserved, horizontal widens on ultrawide). Values in between trade peripheral vision for edge comfort, and the setting is archived so a personal blend persists across sessions.
 
 ## All New Cvars at a Glance
 
@@ -176,9 +176,6 @@ FOV scales automatically when switching modes. `fov` is interpreted as the user'
 | `joy_invertpitch` | `0` | yes | Gamepad look |
 | `analog_speed` | `400` | no | Analog shared |
 | `vid_mode` | `0` | yes | Video |
-| `fov_adapt` | `0.5` | no | Video |
-| `net_diag` | `0` | no | Network diagnostics |
+| `fov_adapt` | `1` | yes | Video |
 
 Archived cvars are written to `config.cfg` automatically and restored on next load. Non-archived cvars reset to their defaults on each startup unless set explicitly in `autoexec.cfg`.
-
-`net_diag 1` echoes transport diagnostics events (stalls, loss, reordering) to the browser console as they happen. The companion `netdiag` console command prints the active transport plus receive-health counters and a recent-event log on demand; `netdiag reset` clears them.

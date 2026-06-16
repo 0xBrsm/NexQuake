@@ -1,14 +1,10 @@
 package main
 
 import (
-	"context"
 	"crypto/tls"
-	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/0xBrsm/NexQuake/nexus/trunk"
@@ -18,67 +14,46 @@ import (
 	qwt "github.com/quic-go/webtransport-go"
 )
 
-// WebTransport. Nexus auto-generates a self-signed ECDSA P-256 cert at
-// WT_CERT_DIR on startup and rotates every WT_CERT_ROTATE_DAYS (browsers
-// cap serverCertificateHashes-validated certs at 14 days). The WT listener
-// binds to UDP/HTTP_PORT — TCP and UDP socket spaces don't collide, so the
-// WS and WT listeners coexist on the same port.
+// WebTransport exists only when EXTERNAL_URL is set, same-origin with the
+// page. The cert comes from the shared TLS runtime (cert.go) — an
+// ACME-issued or BYO cert that chains to a public CA, which clients validate
+// normally. (The e2e suite instead serves a self-signed cert the client pins
+// by serverCertificateHashes; that path lives in the test harness, not here.)
+// The WT listener binds UDP/HTTP_PORT — TCP and UDP socket spaces don't
+// collide, so the WS and WT listeners coexist on the same port.
 //
-// WT_HOST is the externally-reachable WT URL host, optionally with a port —
-// e.g. "pi.local", "10.0.0.5", or "pi.local:1337". It is used verbatim as the
-// advertised URL authority and pushed to the browser via /start so the client
-// targets it. The port (if any) is stripped before the host is added to the
-// cert's SAN list, since a port is not valid in a SAN. Empty disables WT
-// entirely — no listener, no cert, no manifest fields.
+// The advertised WT URL authority is each /start request's own Host header
+// — exactly the public host[:port] the browser already reached over TCP —
+// so the one deployment rule is that whatever public port serves the page
+// also reaches HTTP_PORT over UDP.
 
-// setupWebTransport configures the WebTransport listener when WT_HOST is set.
-// Returns the configured *qwt.Server (caller drives ListenAndServe and Close)
-// or nil when WT is disabled. A cert-rotation goroutine runs against runCtx;
-// the cert hash is registered with the bootstrap manifest so /start carries
-// it for the WASM client.
-func setupWebTransport(app *nexusApp, runCtx context.Context) (*qwt.Server, error) {
-	wtHost := strings.TrimSpace(os.Getenv("WT_HOST"))
-	if wtHost == "" {
+// setupWebTransport configures the WebTransport listener when the TLS
+// runtime supplies a QUIC cert source (EXTERNAL_URL set). Returns the
+// configured *qwt.Server (caller drives ListenAndServe and Close) or nil
+// when WT is disabled.
+func setupWebTransport(app *nexusApp, rt *tlsRuntime) (*qwt.Server, error) {
+	if rt.getWTCert == nil {
 		return nil, nil
 	}
-	certDir := getEnv("WT_CERT_DIR", "/app/tls")
-	// Rotation must land at least the safety buffer before the 14-day browser
-	// cap, so whole days above the max would fail newWTCertManager's check.
-	// Out-of-range values fall back to the default with a warning, matching
-	// getEnvIntMin's handling of values below the minimum.
-	rotateDays := getEnvIntMin("WT_CERT_ROTATE_DAYS", 9, 1)
-	if maxDays := int((wtCertValidity-wtCertRotateBuffer)/(24*time.Hour)) - 1; rotateDays > maxDays {
-		slog.Warn(fmt.Sprintf("Invalid WT_CERT_ROTATE_DAYS=%d (expected integer <= %d); using 9", rotateDays, maxDays))
-		rotateDays = 9
-	}
-	certRotateEvery := time.Duration(rotateDays) * 24 * time.Hour
 
-	// WT_HOST may carry a port for the advertised URL; the cert SAN must be the
-	// bare host (a port is not valid in a SAN), so strip it when present. IPv6
-	// brackets are URL syntax, not part of the address, so they go too —
-	// SplitHostPort only removes them when a port follows.
-	certHost := wtHost
-	if host, _, err := net.SplitHostPort(wtHost); err == nil {
-		certHost = host
-	}
-	certHost = strings.Trim(certHost, "[]")
+	// quic-go logs a one-time "failed to sufficiently increase receive buffer
+	// size" line to stderr (via the stdlib logger) when the kernel UDP receive
+	// buffer is below its 7 MiB target. It's benign for our datagram volume and
+	// only tunable host-side (sysctl net.core.rmem_max), so silence the noisy
+	// startup print and re-surface the same pointer at debug for anyone chasing
+	// UDP throughput. The env var is quic-go's only knob; set it before the QUIC
+	// listener starts (it reads the var when wrapping the conn).
+	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
+	slog.Debug("WebTransport: quic-go UDP receive-buffer warning suppressed; raise host sysctl net.core.rmem_max (target 7 MiB) if QUIC throughput matters. See https://github.com/quic-go/quic-go/wiki/UDP-Buffer-Sizes")
 
-	cert, err := newWTCertManager(certDir, certRotateEvery, []string{certHost})
-	if err != nil {
-		return nil, err
-	}
-	go cert.Run(runCtx)
-
-	// Register WT-specific manifest fields. The provider is invoked per /start
-	// request so the live cert hash propagates within one fetch (rotations
-	// take effect on the next manifest issue). WT_HOST is used verbatim as the
-	// URL authority, so it carries the externally-reachable port when set.
-	app.AddBootstrapClientFields(func() map[string]any {
+	// Register the WT manifest field. The provider is invoked per /start
+	// request so the URL authority is the one the requesting client actually
+	// used to reach the page.
+	app.AddBootstrapClientFields(func(r *http.Request) map[string]any {
 		return map[string]any{
 			"transports": map[string]any{
 				"webtransport": map[string]any{
-					"url":           "https://" + wtHost + "/connect",
-					"certSha256Hex": cert.Hash(),
+					"url": "https://" + r.Host + "/connect",
 				},
 			},
 		}
@@ -87,13 +62,13 @@ func setupWebTransport(app *nexusApp, runCtx context.Context) (*qwt.Server, erro
 	// HTTP/3 needs its own listener (UDP/QUIC); it cannot share Nexus's TCP
 	// HTTP server. Both listeners bind to the same port number — TCP and UDP
 	// socket spaces don't collide. The cert is delivered via GetCertificate
-	// so rotation hot-swaps the active cert at handshake time.
+	// so rotation/renewal hot-swaps the active cert at handshake time.
 	wt := &qwt.Server{
 		H3: &http3.Server{
 			Addr: ":" + app.cfg.httpPort,
 			TLSConfig: &tls.Config{
 				MinVersion:     tls.VersionTLS13,
-				GetCertificate: cert.GetCertificate,
+				GetCertificate: rt.getWTCert,
 			},
 			QUICConfig: &quic.Config{
 				MaxIdleTimeout:  120 * time.Second,

@@ -1,9 +1,17 @@
 --- host.c
 +++ host.c
-@@ -46,1 +46,2 @@
+@@ -44,6 +44,7 @@
+ int			host_framecount;
+ 
  int			host_hunklevel;
 +int			fs_hunklevel;
-@@ -482,2 +483,7 @@
+ 
+ int			minimum_memory;
+ 
+@@ -479,8 +480,13 @@
+ 	Con_DPrintf ("Clearing memory\n");
+ 	D_FlushCaches ();
+ 	Mod_ClearAll ();
 -	if (host_hunklevel)
 -		Hunk_FreeToLowMark (host_hunklevel);
 +	{
@@ -13,3 +21,6 @@
 +		if (lowmark)
 +			Hunk_FreeToLowMark (lowmark);
 +	}
+ 
+ 	cls.signon = 0;
+ 	memset (&sv, 0, sizeof(sv));

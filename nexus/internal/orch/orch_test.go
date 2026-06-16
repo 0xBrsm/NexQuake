@@ -134,7 +134,7 @@ func (m *ServerManager) registerServerSeed(rec *instance) error {
 	autoscales := hasConfiguredPort && configuredPort == 0 && max(1, m.serverMaxInstances) > 1
 
 	s := &server{
-		ServerID:       m.nextServerID,
+		ServerID:       rec.Launch.Line + 1,
 		Line:           rec.Launch.Line,
 		TemplateLaunch: cloneServerLaunch(rec.Launch),
 		Autoscales:     autoscales,
@@ -146,7 +146,6 @@ func (m *ServerManager) registerServerSeed(rec *instance) error {
 	if !rec.LastSeen.IsZero() {
 		s.instanceStates[rec.id].Lifecycle = instanceLifecycleActive
 	}
-	m.nextServerID++
 	m.serversByID[s.ServerID] = s
 	m.serverByInstanceID[rec.id] = s
 	m.refreshServerSnapshotLocked(s)

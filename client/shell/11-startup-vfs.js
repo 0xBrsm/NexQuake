@@ -114,6 +114,8 @@
       // null, which would make ensureLoaded() skip the fetch and serve 0 bytes.
       node.nqLoaded = false;
 
+      // Every load below runs a synchronous XHR on the main thread, freezing
+      // the whole client (engine, rendering, input) until it finishes.
       function ensureLoaded() {
         if (node.nqLoaded) return;
         if (node.nqRetryAfterMs && Date.now() < node.nqRetryAfterMs)
@@ -471,15 +473,6 @@
         var transport = Object.create(null);
         if (typeof raw.url === 'string' && raw.url)
           transport.url = raw.url;
-        var hex = typeof raw.certSha256Hex === 'string' ? raw.certSha256Hex : '';
-        if (/^[0-9a-f]+$/i.test(hex) && hex.length % 2 === 0) {
-          var bytes = new Uint8Array(hex.length / 2);
-          for (var i = 0; i < bytes.length; i++)
-            bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
-          transport.serverCertificateHashes = [
-            { algorithm: 'sha-256', value: bytes }
-          ];
-        }
         transports[name] = transport;
       });
       Module.nqTransportConfig = transports;

@@ -1,7 +1,3 @@
-# Test files
-*_test.go
-testing.go
-
 # Build artifacts
 *.o
 *.tmp

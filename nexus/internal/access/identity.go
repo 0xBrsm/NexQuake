@@ -54,10 +54,13 @@ func identityFromClaims(claims map[string]any) string {
 // request. It is concerned with who / where a client is, independent of
 // whether that client has privileged credentials.
 //
-// When Nexus sits behind a reverse proxy, the proxy is trusted to supply the
-// real client IP via the AUTH_CLIENT_IP_HEADER header (e.g. "CF-Connecting-IP",
-// "X-Forwarded-For"). When unset or unparseable, resolution falls back to the
-// direct TCP remote address.
+// By default the TCP/QUIC remote address is authoritative — Nexus terminates
+// its own connections. In the behind-a-front run path (e.g. a Cloudflare
+// Tunnel fronting a plain-HTTP Nexus), every remote address is the proxy's, so
+// AUTH_CLIENT_IP_HEADER opts in to a trusted header (e.g. "CF-Connecting-IP")
+// for the real client IP; without it, source-IP bans would hit the proxy and
+// block everyone. When unset or unparseable, resolution falls back to the
+// direct remote address.
 type Identity struct {
 	clientIPHeader string
 }

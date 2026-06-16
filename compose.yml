@@ -17,5 +17,18 @@ services:
       retries: 3
       start_period: 40s
 
-# For production: Configure your own reverse proxy to forward to Nexus at `nexus:1337`
-# Examples: Nginx, Traefik, Caddy, HAProxy, or cloud load balancer
+# Production run paths (see src/docs/ENVIRONMENT.md "Run Paths"):
+#
+# Public server (Nexus owns TLS via Let's Encrypt, WebTransport on):
+#   ports:
+#     - "443:1337"        # HTTPS + WebSocket
+#     - "443:1337/udp"    # WebTransport (QUIC) — same external port as TCP
+#   environment:
+#     - EXTERNAL_URL=https://quake.example.com
+#   volumes:
+#     - nexquake-cert:/app/cert   # persist issued certificates
+#
+# Private server (no EXTERNAL_URL; behind a Cloudflare Tunnel or similar
+# front; the front can gate the site — and the /rcon path — behind your IdP):
+#   keep the defaults above (plain HTTP on 1337) and set:
+#     - AUTH_CLIENT_IP_HEADER=CF-Connecting-IP   # bans target players, not the edge

@@ -71,6 +71,50 @@ if (typeof Module === 'undefined' || !Module)
   Module = {};
 Module.nqRequestFullscreen = nqRequestFullscreen;
 
+// Lower-right transport indicator. net_wasm.c calls this with the adopted
+// transport's name on connect/upgrade, and with "" on disconnect. The engine
+// name is the protocol; the (TCP)/(UDP) tag spells out the substrate.
+//
+// Double-clicking the corner collapses/expands the readout (persisted). When
+// collapsed the text is hidden but the element stays as a small transparent
+// hit-zone so a second double-click brings it back. The dblclick only lands
+// when the mouse isn't pointer-locked into the game, so play is never affected.
+var transportElement = document.getElementById('nq-transport');
+var NQ_TRANSPORT_COLLAPSED_KEY = 'nexquake.transport.collapsed.v1';
+function nqTransportCollapsed() {
+  try { return localStorage.getItem(NQ_TRANSPORT_COLLAPSED_KEY) === '1'; } catch (e) { return false; }
+}
+function nqApplyTransportCollapsed() {
+  if (transportElement)
+    transportElement.classList.toggle('nq-transport-collapsed', nqTransportCollapsed());
+}
+if (transportElement) {
+  transportElement.addEventListener('dblclick', function () {
+    var collapsed = !nqTransportCollapsed();
+    try { localStorage.setItem(NQ_TRANSPORT_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch (e) {}
+    nqApplyTransportCollapsed();
+  });
+  nqApplyTransportCollapsed();
+}
+function nqSetTransport(name) {
+  if (!transportElement)
+    return;
+  name = String(name || '').trim();
+  if (!name) {
+    transportElement.hidden = true;
+    return;
+  }
+  var label = name === 'WebSocket' ? 'WebSocket (TCP)'
+    : name === 'WebTransport' ? 'WebTransport (UDP)'
+    : name;
+  var nameEl = transportElement.querySelector('.nq-transport-name');
+  if (nameEl)
+    nameEl.textContent = label;
+  nqApplyTransportCollapsed();
+  transportElement.hidden = false;
+}
+Module.nqSetTransport = nqSetTransport;
+
 function nqNormalizeGameName(name) {
   name = String(name || '').trim();
   return name || NEXQUAKE_GAMENAME;

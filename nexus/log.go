@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -404,4 +406,73 @@ func slogToLogLevel(l slog.Level) logLevel {
 	default:
 		return logDebug
 	}
+}
+
+// newServerErrorLog returns the *log.Logger to plug into http.Server.ErrorLog.
+// It routes the server's internal error output through slog and demotes benign
+// per-connection TLS handshake noise to debug.
+//
+// A public TLS endpoint is probed constantly by scanners that connect without
+// SNI, speak SSLv2, offer no common cipher suite, or reset mid-handshake. Go
+// logs each as "http: TLS handshake error from <ip>: ...". None are actionable,
+// but at the default level they flood the log. Genuine problems stay visible:
+// any non-handshake server error, and any ACME *issuance* failure (including a
+// Let's Encrypt rate-limit), are logged at warn. The two scanner signatures
+// that look ACME-shaped but name a host that is never ours — the SNI-less
+// "missing server name" and the "not configured in HostWhitelist" rejection —
+// are demoted to debug.
+func newServerErrorLog() *log.Logger {
+	return log.New(slogErrorWriter{}, "", 0)
+}
+
+type slogErrorWriter struct{}
+
+func (slogErrorWriter) Write(p []byte) (int, error) {
+	// http.Server logs one message per Write; trim its trailing newline and
+	// classify the whole line — no need to split.
+	line := string(bytes.TrimRight(p, "\n"))
+	if line != "" {
+		if isBenignHandshakeNoise(line) {
+			slog.Debug(line)
+		} else {
+			slog.Warn(line)
+		}
+	}
+	return len(p), nil
+}
+
+// isBenignHandshakeNoise reports whether an http.Server error line is a
+// per-connection TLS handshake failure driven by the client (a scanner, a
+// stray probe, an abrupt disconnect) rather than a server-side problem worth an
+// operator's attention. A real cert-issuance failure — autocert could not serve
+// a cert to a client that did send a valid SNI — is NOT noise and is excluded
+// so it stays at warn.
+func isBenignHandshakeNoise(line string) bool {
+	if !strings.Contains(line, "TLS handshake error") {
+		return false
+	}
+	// The SNI-less probe ("acme/autocert: missing server name") is the most
+	// common scanner signature — benign.
+	if strings.Contains(line, "missing server name") {
+		return true
+	}
+	// A probe that sends an SNI for a host we don't serve trips autocert's
+	// HostWhitelist ("acme/autocert: host %q not configured in HostWhitelist").
+	// Our EXTERNAL_URL host is the only whitelisted name, so this message can
+	// only ever name someone else's host — it's a scanner, not a cert-issuance
+	// problem for us. Benign. (Checked before the acme/autocert: rule below,
+	// which would otherwise promote it to warn and flood the log.)
+	if strings.Contains(line, "not configured in HostWhitelist") {
+		return true
+	}
+	// Any other ACME failure is actionable and must not be demoted. autocert
+	// surfaces these two ways: wrapped ("acme/autocert: ...") and as a raw ACME
+	// protocol error from Let's Encrypt ("...acme:error:..." / "rateLimited"),
+	// e.g. the duplicate-certificate rate limit. Keep both at warn.
+	if strings.Contains(line, "acme/autocert:") ||
+		strings.Contains(line, "acme:error") ||
+		strings.Contains(line, "rateLimited") {
+		return false
+	}
+	return true
 }

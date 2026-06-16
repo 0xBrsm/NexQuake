@@ -39,7 +39,8 @@ func (a *adapter) WriteFrame(data []byte) error {
 // min(peer max_datagram_frame_size, live MTU estimate) and can dip below a
 // max-size game frame mid-session. Drop it like the network would —
 // propagating it would make the write loop tear down the whole session over
-// one fat packet. Logged on the first drop and every 256th thereafter.
+// one fat packet. As UDP-equivalent loss it isn't actionable, so it's logged
+// at debug — on the first drop and every 256th thereafter.
 func classifyWriteError(err error, size int, tooLarge *uint64) error {
 	var oversized *quic.DatagramTooLargeError
 	if err == nil || !errors.As(err, &oversized) {
@@ -47,7 +48,7 @@ func classifyWriteError(err error, size int, tooLarge *uint64) error {
 	}
 	*tooLarge++
 	if *tooLarge == 1 || *tooLarge%256 == 0 {
-		slog.Warn(fmt.Sprintf("webtransport: dropped %dB datagram exceeding QUIC limit (%d dropped total)", size, *tooLarge))
+		slog.Debug(fmt.Sprintf("webtransport: dropped %dB datagram exceeding QUIC limit (%d dropped total)", size, *tooLarge))
 	}
 	return nil
 }

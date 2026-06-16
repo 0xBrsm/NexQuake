@@ -302,7 +302,7 @@ Without prefetch, connecting to a server triggers sequential downloads of every 
 - **FTEQW client support**: The [FTEQW project](https://github.com/fte-team/fteqw) is a fantastic example of community driven development. FTEQW already has a WASM version of their client. Connecting it to Nexus to allow a more modern play experience for those who want it should be very doable.
 - **AudioWorklet**: ScriptProcessorNode is deprecated, so at some point an AudioWorklet refactor will be required. But hopefully not soon.
 
-(WebTransport, previously listed here, shipped: the tunnel now carries unreliable QUIC datagrams when `WT_HOST` is configured — UDP-equivalent semantics with no head-of-line blocking — and falls back to WebSocket everywhere else. See the WebTransport section in [ENVIRONMENT.md](ENVIRONMENT.md).)
+(WebTransport, previously listed here, shipped: with `EXTERNAL_URL` set the tunnel carries unreliable QUIC datagrams — UDP-equivalent semantics with no head-of-line blocking — and falls back to WebSocket everywhere else. See the WebTransport section in [ENVIRONMENT.md](ENVIRONMENT.md).)
 
 ## Contributing
 

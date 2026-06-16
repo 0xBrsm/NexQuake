@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 )
 
 // Request is the access-layer view of one HTTP caller.
@@ -121,6 +122,41 @@ func (g *Gate) AuthorizeAdmin(req Request, r *http.Request) bool {
 	return g != nil && g.auth.Authorize(req.Claims, AuthorizationToken(r, "Rcon"))
 }
 
+// PKCEEnabled reports whether client-side PKCE login is offered — i.e. OIDC is
+// configured with the default Authorization header. When false, POST
+// /rcon/session has nothing to do and 404s.
+func (g *Gate) PKCEEnabled() bool {
+	return g != nil && g.jwt.pkceEnabled()
+}
+
+// ExchangeCode performs the server-side token exchange for a browser PKCE login
+// and returns the verified id_token, its claims, and expiry. See
+// [JWTVerifier.ExchangeCode].
+func (g *Gate) ExchangeCode(ctx context.Context, code, verifier, redirectURI string) (string, map[string]any, time.Time, error) {
+	if g == nil {
+		return "", nil, time.Time{}, fmt.Errorf("OIDC not configured")
+	}
+	return g.jwt.ExchangeCode(ctx, code, verifier, redirectURI)
+}
+
+// AuthorizeClaims reports whether verified JWT claims alone grant admin (no RCON
+// password involved). Used after a PKCE exchange to decide which outcome to echo
+// to the player's console.
+func (g *Gate) AuthorizeClaims(claims map[string]any) bool {
+	return g != nil && g.auth.Authorize(claims, "")
+}
+
+// OIDCBrowserConfig exposes the public OIDC parameters for client-side PKCE
+// login, or nil when OIDC is not configured. The requested scopes are derived
+// from the admin rules so they cover whatever claims gating depends on. See
+// [JWTVerifier.BrowserConfig] and [Auth.LoginScopes].
+func (g *Gate) OIDCBrowserConfig() map[string]any {
+	if g == nil {
+		return nil
+	}
+	return g.jwt.BrowserConfig(g.auth.LoginScopes())
+}
+
 // UnauthorizedHint returns a one-line operator-facing instruction describing
 // how to authenticate against this Nexus, derived from what's actually
 // configured. Empty string if Gate is nil. Suitable for surfacing alongside a
@@ -137,16 +173,18 @@ func (g *Gate) UnauthorizedHint() string {
 
 func buildUnauthorizedHint(auth *Auth, jwt *JWTVerifier) string {
 	password := auth != nil && auth.rconPassword != ""
-	jwtConfigured := jwt != nil
+	// Only suggest login when a JWT can actually grant admin; with AUTH_ADMIN_ID
+	// unset (deny-all) a successful login still authorizes no one.
+	jwtAdmin := jwt != nil && auth.AllowsJWTAdmin()
 	switch {
-	case password && jwtConfigured:
-		return "set rcon_password <secret> or authenticate via OIDC."
+	case password && jwtAdmin:
+		return "set rcon_password <secret> or run rcon login."
 	case password:
 		return "set rcon_password <secret>."
-	case jwtConfigured:
-		return "authenticate via OIDC."
+	case jwtAdmin:
+		return "run rcon login."
 	default:
-		return "admin auth not configured (set AUTH_RCON_PASSWORD or AUTH_ISSUER/AUTH_AUDIENCE)."
+		return "admin auth not configured (set AUTH_RCON_PASSWORD, or AUTH_ISSUER/AUTH_AUDIENCE with AUTH_ADMIN_ID)."
 	}
 }
 

@@ -2,7 +2,7 @@
 
 Nexus implements a system-wide admin protocol using the `rcon` command. You can issue these commands using the in-game console (`~` key) if you are authenticated as an admin.
 
-Authentication is handled either by connection-level OIDC JWT auth or by shared-secret rcon password. For OIDC mode, `AUTH_ADMIN_ID` is optional: if unset, any valid JWT accepted by `AUTH_ISSUER`/`AUTH_AUDIENCE` is treated as admin. For password mode, the client sends `Authorization: Rcon <password>`; in-game this is driven by the `rcon_password` cvar. The rcon password is a non-archived cvar that will not be saved to `config.cfg` when set. Adding it to your `config.cfg` directly isn't recommended, though this will enable automatic elevation on connection.
+Authentication is handled either by **SSO** — a verified OIDC login (Nexus runs no login flow itself; behind a front, its access gate does the IdP login; see [ENVIRONMENT.md](./ENVIRONMENT.md#authentication)) — or by a shared-secret **password**. For SSO, `AUTH_ADMIN_ID` decides which verified logins are admin: unset (the default) grants admin to **none** — set claim matchers like `groups:admins`, or set it to `any` to admit every verified login (delegating authorization to your IdP/edge). For password auth, the client sends `Authorization: Rcon <password>`; in-game this is driven by the `rcon_password` cvar. The rcon password is a non-archived cvar that will not be saved to `config.cfg` when set. Adding it to your `config.cfg` directly isn't recommended, though this will enable automatic elevation on connection.
 
 External tools can reach the same command surface over HTTP by POSTing JSON-RPC 2.0 envelopes to `/rcon` with the same `Authorization` header. See [HTTP API](#http-api) below for the full reference.
 
@@ -15,7 +15,7 @@ Throughout this document, **NQIP** refers to a client's NexQuake IP: the determi
 | `rcon <cmd...>` | If connected to a server, forwards to that server's console. If disconnected, dispatches to Nexus admin. |
 | `rcon nexus <cmd...>` | Forces a Nexus admin dispatch even while connected to a game server. |
 | `rcon <port> <cmd...>` | Forwards a raw console command to the instance listening on that port (1–65535). |
-| `rcon login` | Browser/WASM client only. Opens an OIDC popup for an edge-gated `/rcon`; on success Nexus pushes a `rcon: authenticated.` echo back via the trunk control channel. Has no JSON-RPC equivalent (the API has no popup to open). |
+| `rcon login` | Browser/WASM client only; no JSON-RPC equivalent. **Direct exposure** (`EXTERNAL_URL` set, default `AUTH_JWT_HEADER`): runs an Authorization Code + PKCE login — the popup authorizes at the IdP, Nexus exchanges the code at `POST /rcon/session` and sets the httpOnly `nq_session` cookie, and the result is shown in an in-game toast. **Behind a front:** opens a popup on `GET /rcon` so the access gate (e.g. Cloudflare Access on `/rcon`) runs its IdP login; once admin-grade credentials reach Nexus it echoes `rcon: authenticated.` via the trunk control channel. |
 
 ## Nexus Command Reference
 
@@ -53,15 +53,15 @@ Nexus exposes the same admin command surface over HTTP as JSON-RPC 2.0 at `POST 
 
 ### Endpoint and Authentication
 
-- **Endpoints**: `POST /rcon` (JSON-RPC) and `GET /rcon` (auto-closing landing page used by the WASM shell's `rcon login` popup) on the Nexus HTTP listener (`HTTP_PORT`, default `1337`).
+- **Endpoints** (Nexus HTTP listener, `HTTP_PORT`, default `1337`): `POST /rcon` (JSON-RPC); `GET /rcon` (auto-closing landing page / PKCE callback for the `rcon login` popup); and `POST /rcon/session` (direct-exposure PKCE only — exchanges the authorization code server-side and sets the httpOnly `nq_session` cookie; `404` when PKCE is off).
 - **Content-Type**: `application/json` (POST). `GET /rcon` returns `text/html`.
 - **Body size limit**: 8 KiB (POST).
 - **Authentication** — one of:
   - `Authorization: Rcon <password>` — shared secret from `AUTH_RCON_PASSWORD`.
-  - `Authorization: Bearer <jwt>` — OIDC JWT. See `AUTH_ISSUER`, `AUTH_AUDIENCE`, and `AUTH_JWT_HEADER` in [ENVIRONMENT.md](./ENVIRONMENT.md). If `AUTH_JWT_HEADER` is set, Nexus reads the JWT from that header instead of `Authorization` — useful behind a proxy that writes the token into a non-standard header.
+  - `Authorization: Bearer <jwt>` — OIDC JWT presented directly (scripted callers), or a front-injected header named by `AUTH_JWT_HEADER` (e.g. `Cf-Access-Jwt-Assertion`). See `AUTH_ISSUER` and `AUTH_AUDIENCE` in [ENVIRONMENT.md](./ENVIRONMENT.md#authentication).
 - **Pre-auth IP block**: requests from source IPs banned via `client.ban` are rejected with HTTP `403 Forbidden` before JSON parsing.
-- **Unauthorized**: a valid envelope with an unauthenticated or non-admin caller returns JSON-RPC error `-32000 unauthorized`. The error envelope's `data.hint` field carries an operator-facing one-liner describing how to authenticate against this Nexus, derived from what's actually configured (`set rcon_password <secret>`, `authenticate via OIDC`, both, or "admin auth not configured").
-- **GET /rcon**: returns a small auto-closing HTML page. Reaching it proves an upstream OIDC gate (e.g. Cloudflare Access) let the request through; Nexus then pushes a `rcon: authenticated.` console echo down the trunk control channel to every active session sharing the request's source IP, so the in-game shell sees the success without any popup-tracking machinery (which COOP-same-origin breaks). Gated behind the same admin check as POST so it can't be used as an unauthenticated amplification primitive.
+- **Unauthorized**: a valid envelope with an unauthenticated or non-admin caller returns JSON-RPC error `-32000 unauthorized`. The error envelope's `data.hint` field carries an operator-facing one-liner describing how to authenticate against this Nexus, derived from what's actually configured (`set rcon_password <secret>`, `run rcon login`, both, or "admin auth not configured").
+- **GET /rcon**: returns a small auto-closing HTML page. The WASM shell opens it as a top-level popup so a fronting access gate can run its IdP round trip and set its cookie. When the request carries admin-grade credentials, Nexus pushes a `rcon: authenticated.` console echo down the trunk control channel to every active session sharing the request's source IP, so the in-game shell sees the success without any popup-tracking machinery (which COOP-same-origin breaks). The echo is gated behind the same admin check as POST so it can't be used as an unauthenticated amplification primitive.
 
 ### Request and Response Envelope
 

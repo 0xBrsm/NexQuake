@@ -2,307 +2,288 @@ package main
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/hex"
-	"encoding/pem"
-	"errors"
+	"fmt"
 	"log/slog"
-	"math/big"
-	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/0xBrsm/NexQuake/nexus/trunk"
+	"golang.org/x/crypto/acme/autocert"
 )
 
-const (
-	// wtCertValidity is the maximum WebTransport cert lifetime browsers will
-	// accept via serverCertificateHashes (W3C-mandated 14 days). Setting
-	// NotAfter at exactly the ceiling gives the longest possible reuse
-	// before the rotation timer must fire.
-	wtCertValidity = 14 * 24 * time.Hour
+// EXTERNAL_URL declares the server's public identity and is the single
+// switch between the two run paths (docs/ENVIRONMENT.md "Run Paths"):
+//
+//   - unset (default): plain HTTP, WebSocket only — no TLS and no
+//     WebTransport, like NexQuake before 1.11. Right for localhost play, a
+//     LAN, or sitting behind any reverse proxy / tunnel that owns public
+//     TLS (which may also gate the whole site behind an IdP).
+//   - "https://host": Nexus owns the public endpoint at that hostname.
+//     The hostname is the certificate identity (automatic Let's Encrypt),
+//     HTTPS/WSS serve on the TCP listener, and WebTransport is advertised
+//     at the authority each /start request arrives on — nothing separate
+//     to configure. Whatever public port serves the page must reach
+//     HTTP_PORT over both TCP and UDP.
+//
+// The certificate comes from one of two sources, both rooted at CERT_DIR
+// (default /app/cert):
+//
+//   - BYO cert: if CERT_DIR holds cert.pem + key.pem, those are loaded and
+//     served directly — no ACME. This lets an operator front Nexus with a
+//     cert they already manage, and lets the e2e suite serve a self-signed
+//     cert that the WebTransport client pins via serverCertificateHashes.
+//   - ACME (default): otherwise, certificates are obtained automatically
+//     from Let's Encrypt over the TLS-ALPN-01 challenge on the main TLS
+//     listener (no plain-HTTP port needed). The autocert account/cert cache
+//     lives under CERT_DIR/acme — persist it across restarts to avoid
+//     re-issuing.
 
-	// wtCertRotateBuffer is the safety margin before NotAfter we never
-	// schedule rotation past, so a cert is always replaced before it could
-	// expire mid-handshake.
-	wtCertRotateBuffer = 24 * time.Hour
-)
+// tlsRuntime is the resolved TLS wiring shared by the TCP HTTP server and
+// the WebTransport (QUIC) listener.
+type tlsRuntime struct {
+	// serverTLS is plugged into the TCP http.Server; nil means plain HTTP.
+	// Under ACME this is autocert's own config so the TCP listener serves the
+	// TLS-ALPN-01 challenge (issuance + renewal); under BYO it serves the
+	// resolved cert from wtCert.
+	serverTLS *tls.Config
 
-// wtCertSnapshot pairs a cert with its hex SHA-256 so a single atomic load
-// returns a self-consistent (cert, hash) — readers can never observe a hash
-// from a different generation than the cert.
-type wtCertSnapshot struct {
-	cert    *tls.Certificate
-	hashHex string
+	// getWTCert supplies certs to the WebTransport listener's handshakes;
+	// nil disables WebTransport (no EXTERNAL_URL). It serves the pre-resolved
+	// cert (see resolvedCert) and never calls autocert live — doing so blocks
+	// inside the QUIC handshake and black-holes WebTransport.
+	getWTCert func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+
+	// certHost is the certificate hostname (EXTERNAL_URL's host); empty in
+	// plain-HTTP mode.
+	certHost string
+
+	// resolveCert performs the single cert load/resolve: BYO returns the
+	// loaded pair; ACME calls autocert (whose TLS-ALPN-01 challenge is served
+	// by the TCP listener). resolveTLSCert runs it once at startup, stores the
+	// result in wtCert, and re-runs it periodically so renewals propagate.
+	// nil in plain-HTTP mode.
+	resolveCert func(context.Context) (*tls.Certificate, error)
+
+	// wtCert holds the certificate resolved by resolveTLSCert that the
+	// WebTransport listener serves (and the TCP listener under BYO). Read live
+	// on every handshake via resolvedCert; updated atomically on renewal.
+	wtCert atomic.Pointer[tls.Certificate]
 }
 
-// wtCertManager owns the WebTransport TLS certificate lifecycle. The cert
-// is auto-generated (ECDSA P-256, 14-day validity) on startup and rotated
-// every rotateEvery to stay below the serverCertificateHashes ceiling.
-// Hot rotation is via tls.Config.GetCertificate, so in-flight sessions
-// stay on whichever cert they handshook with.
-type wtCertManager struct {
-	certPath    string
-	keyPath     string
-	rotateEvery time.Duration
-	hosts       []string
-
-	snap atomic.Pointer[wtCertSnapshot]
-}
-
-// newWTCertManager prepares a manager and ensures a usable cert exists on
-// disk. If the on-disk cert has too little life left for the rotation
-// schedule, a fresh one is generated. Returns the manager ready to plug
-// into tls.Config and to drive on Run.
-func newWTCertManager(dir string, rotateEvery time.Duration, hosts []string) (*wtCertManager, error) {
-	if rotateEvery <= 0 || rotateEvery >= wtCertValidity-wtCertRotateBuffer {
-		return nil, errors.New("rotateEvery must be between 0 and 13 days")
+// resolvedCert serves the certificate resolved by resolveTLSCert. It never
+// calls autocert: that blocks inside the QUIC handshake (autocert may attempt
+// an ACME obtain/renew whose TLS-ALPN-01 challenge can't complete on the
+// h3-only WebTransport listener), which black-holed every WebTransport session
+// on the ACME path. Until the startup resolve lands it returns a fast error, so
+// the client stays on WebSocket and adopts WebTransport once the cert is up.
+func (rt *tlsRuntime) resolvedCert(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	if c := rt.wtCert.Load(); c != nil {
+		return c, nil
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	return nil, fmt.Errorf("TLS certificate for %s not resolved yet", rt.certHost)
+}
+
+// setupTLS reads EXTERNAL_URL and CERT_DIR and returns the resolved runtime:
+// a BYO cert when CERT_DIR/cert.pem + key.pem exist, otherwise ACME.
+func setupTLS(_ context.Context) (*tlsRuntime, error) {
+	origin := strings.TrimSpace(os.Getenv("EXTERNAL_URL"))
+	if origin == "" {
+		return &tlsRuntime{}, nil
+	}
+	host, err := parseExternalURL(origin)
+	if err != nil {
 		return nil, err
 	}
-	m := &wtCertManager{
-		certPath:    filepath.Join(dir, "cert.pem"),
-		keyPath:     filepath.Join(dir, "key.pem"),
-		rotateEvery: rotateEvery,
-		hosts:       hosts,
+	certDir := getEnv("CERT_DIR", "/app/cert")
+
+	// BYO cert takes precedence: a complete cert.pem + key.pem pair short-
+	// circuits ACME and serves the operator-supplied cert as-is.
+	certPath := filepath.Join(certDir, "cert.pem")
+	keyPath := filepath.Join(certDir, "key.pem")
+	if fileExists(certPath) && fileExists(keyPath) {
+		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			return nil, fmt.Errorf("load BYO cert from %s: %w", certDir, err)
+		}
+		rt := &tlsRuntime{
+			certHost:    host,
+			resolveCert: func(context.Context) (*tls.Certificate, error) { return &cert, nil },
+		}
+		// The pair is in hand now, so both listeners can serve it immediately;
+		// resolveTLSCert still logs it (and its expiry) for parity with ACME.
+		rt.wtCert.Store(&cert)
+		rt.serverTLS = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: rt.resolvedCert}
+		rt.getWTCert = rt.resolvedCert
+		return rt, nil
 	}
-	if err := m.ensure(); err != nil {
-		return nil, err
+
+	m := &autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		Cache:      autocert.DirCache(filepath.Join(certDir, "acme")),
+		HostPolicy: autocert.HostWhitelist(host),
 	}
-	return m, nil
+	rt := &tlsRuntime{
+		certHost: host,
+		// autocert's own config drives the TCP listener: it serves the cert for
+		// normal SNI and the TLS-ALPN-01 challenge for "acme-tls/1", which is
+		// how issuance and renewal happen. The QUIC listener can't do that
+		// (h3-only ALPN), so WebTransport serves the pre-resolved cert instead.
+		serverTLS: m.TLSConfig(),
+		// Resolve via the whitelisted SNI: autocert loads the cached cert or,
+		// if absent/expired, obtains one — the TLS-ALPN-01 challenge is served
+		// by the TCP listener above. Cheap on a warm cache (no CA contact).
+		//
+		// Advertise an ECDSA cipher suite: autocert keys its cache by
+		// RSA-vs-ECDSA derived from the hello (supportsECDSA), and Let's Encrypt
+		// (autocert's default) issues ECDSA. A hello with no ECDSA suite — which
+		// is what a bare ClientHelloInfo, and quic-go's handshake, present —
+		// makes autocert look up an RSA cert that was never issued, miss the
+		// cache, and block on a (rate-limited) obtain. That hang is exactly what
+		// black-holed WebTransport before this resolve was hoisted out of the
+		// QUIC handshake.
+		resolveCert: func(context.Context) (*tls.Certificate, error) {
+			return m.GetCertificate(&tls.ClientHelloInfo{
+				ServerName:   host,
+				CipherSuites: []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
+			})
+		},
+	}
+	rt.getWTCert = rt.resolvedCert
+	return rt, nil
 }
 
-// GetCertificate is plumbed into tls.Config; called per QUIC handshake.
-func (m *wtCertManager) GetCertificate(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
-	snap := m.snap.Load()
-	if snap == nil {
-		return nil, errors.New(trunk.TransportWebTransport + " cert not initialized")
+// certLeaf returns the parsed leaf of a TLS certificate, using the cached
+// Leaf when present and parsing the DER otherwise. Returns nil if it can't be
+// recovered (logging-only; never fatal).
+func certLeaf(cert *tls.Certificate) *x509.Certificate {
+	if cert.Leaf != nil {
+		return cert.Leaf
 	}
-	return snap.cert, nil
+	if len(cert.Certificate) > 0 {
+		if leaf, err := x509.ParseCertificate(cert.Certificate[0]); err == nil {
+			return leaf
+		}
+	}
+	return nil
 }
 
-// Hash returns the current cert's SHA-256 (hex) for serverCertificateHashes.
-// Returns empty string if not initialized.
-func (m *wtCertManager) Hash() string {
-	if snap := m.snap.Load(); snap != nil {
-		return snap.hashHex
+// resolveTLSCert is the single cert load/resolve step. It runs rt.resolveCert
+// once at startup and stores the result in rt.wtCert so the WebTransport (and,
+// under BYO, the TCP) listener serves it via resolvedCert — never calling
+// autocert live in a handshake. It then refreshes periodically so an autocert
+// renewal propagates to the served cert. No-op in plain-HTTP mode.
+//
+// Resolving also surfaces a failure at startup instead of silently on the first
+// client handshake (autocert issues on demand, so an unconfigured or
+// rate-limited host would otherwise produce no output until a real client with
+// the right SNI connects).
+//
+// Run it in a goroutine *after* the TCP TLS server is accepting: ACME issuance
+// can take seconds (and must not block startup), and its TLS-ALPN-01 challenge
+// arrives back on the TCP listener, so resolution can only complete once that
+// listener is serving. The initial attempt retries with a conservative,
+// minutes-scale backoff — failed ACME validations are themselves rate-limited,
+// so retrying sparsely avoids burning the limit.
+// activateTLSCert resolves the cert once at startup so a TLS failure is fatal
+// before Nexus serves anything else. Synchronous: it returns when the cert is
+// in hand — cached or freshly issued, the TLS-ALPN-01 challenge answered by the
+// already-serving TCP listener — or an error after a short bounded retry. BYO
+// certs resolve instantly. No-op (nil) when TLS is off. On success the cert is
+// stored for the listeners; the caller's "listening ... with TLS" line is the
+// single success announcement, so this logs only the pending retries.
+func activateTLSCert(ctx context.Context, rt *tlsRuntime) error {
+	if rt == nil || rt.resolveCert == nil {
+		return nil
 	}
-	return ""
+	// Short, seconds-scale retry: absorbs a transient LE/network blip at boot
+	// without crash-looping, but a genuine misconfig fails fast (not the
+	// minutes-scale renewal backoff). A persisted acme cache means a healthy
+	// restart loads the cached cert here and never re-issues.
+	backoffs := []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second}
+	for attempt := 0; ; attempt++ {
+		cert, err := rt.resolveCert(ctx)
+		if err == nil {
+			rt.wtCert.Store(cert)
+			return nil
+		}
+		if attempt >= len(backoffs) {
+			return fmt.Errorf("%s: %w", rt.certHost, err)
+		}
+		delay := backoffs[attempt]
+		slog.Warn(fmt.Sprintf("TLS cert pending: %s, retry in %s: %v", rt.certHost, delay, err))
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+	}
 }
 
-// Run drives the rotation schedule until ctx is canceled. Wakeup interval
-// is recomputed after each rotation so a freshly-loaded cert is replaced at
-// roughly the right age regardless of when the process started.
-func (m *wtCertManager) Run(ctx context.Context) {
+// refreshTLSCert re-resolves periodically so an autocert renewal propagates to
+// the served cert. autocert renews lazily when GetCertificate is called near
+// expiry, so this re-call both triggers and picks up the new cert. BYO certs
+// don't change, so this is a cheap no-op. Run as a goroutine after
+// activateTLSCert has succeeded.
+func refreshTLSCert(ctx context.Context, rt *tlsRuntime) {
+	if rt == nil || rt.resolveCert == nil {
+		return
+	}
+	ticker := time.NewTicker(12 * time.Hour)
+	defer ticker.Stop()
 	for {
-		delay := m.nextRotationDelay()
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(delay):
-			if err := m.rotate(); err != nil {
-				slog.Error(trunk.TransportWebTransport+" cert rotate failed", "err", err)
-				// Retry after one rotation interval; don't tight-loop.
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(m.rotateEvery):
-				}
-			} else {
-				slog.Info(trunk.TransportWebTransport+" cert rotated", "sha256", m.Hash())
+		case <-ticker.C:
+			cert, err := rt.resolveCert(ctx)
+			if err != nil {
+				slog.Warn(fmt.Sprintf("TLS cert refresh failed: %s: %v", rt.certHost, err))
+				continue
+			}
+			prev := rt.wtCert.Load()
+			rt.wtCert.Store(cert)
+			if leaf := certLeaf(cert); leaf != nil && certNewer(leaf, prev) {
+				slog.Info(fmt.Sprintf("TLS cert renewed: %s (expires %s)", rt.certHost, leaf.NotAfter.Format(time.DateOnly)))
 			}
 		}
 	}
 }
 
-// ensure loads cert from disk if it has enough life left, otherwise
-// generates and persists a fresh cert.
-func (m *wtCertManager) ensure() error {
-	if cert, err := loadCertFromDisk(m.certPath, m.keyPath); err == nil {
-		if cert.Leaf != nil && time.Until(cert.Leaf.NotAfter) > wtCertRotateBuffer {
-			m.swap(cert)
-			return nil
-		}
+// certNewer reports whether leaf expires later than prev's leaf — i.e. a
+// renewal landed rather than the same cert being re-served.
+func certNewer(leaf *x509.Certificate, prev *tls.Certificate) bool {
+	if prev == nil {
+		return true
 	}
-	return m.rotate()
+	pl := certLeaf(prev)
+	return pl == nil || leaf.NotAfter.After(pl.NotAfter)
 }
 
-// rotate generates a fresh cert, persists it, and atomically swaps it in.
-func (m *wtCertManager) rotate() error {
-	cert, err := generateWTCert(m.hosts)
-	if err != nil {
-		return err
-	}
-	if err := persistCert(m.certPath, m.keyPath, cert); err != nil {
-		return err
-	}
-	m.swap(cert)
-	return nil
+// fileExists reports whether path names an existing regular file.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
-func (m *wtCertManager) swap(cert *tls.Certificate) {
-	m.snap.Store(&wtCertSnapshot{
-		cert:    cert,
-		hashHex: certSHA256Hex(cert),
-	})
-}
-
-// nextRotationDelay computes when the next rotation should fire. Targets
-// (estimated cert creation + rotateEvery) but is clamped to fire no later
-// than rotateBuffer before NotAfter so a cert is always replaced before
-// it could expire. Caller must have ensured the snapshot is populated
-// (newWTCertManager.ensure → swap).
-func (m *wtCertManager) nextRotationDelay() time.Duration {
-	cert := m.snap.Load().cert
-	now := time.Now()
-	target := cert.Leaf.NotAfter.Add(-wtCertValidity).Add(m.rotateEvery)
-	if target.Before(now) {
-		target = now
+// parseExternalURL validates EXTERNAL_URL and returns the certificate
+// hostname. Only "https://host" is accepted: the hostname is the entire
+// public identity. There is no port — clients are routed by the authority
+// each request actually arrives on, so the public port is wherever the
+// page is served from.
+func parseExternalURL(raw string) (string, error) {
+	u, perr := url.Parse(strings.TrimSuffix(raw, "/"))
+	switch {
+	case perr != nil:
+		return "", fmt.Errorf("invalid EXTERNAL_URL %q: %v", raw, perr)
+	case u.Scheme != "https":
+		return "", fmt.Errorf("invalid EXTERNAL_URL %q: must be an https:// URL", raw)
+	case u.Hostname() == "" || u.Port() != "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil:
+		return "", fmt.Errorf("invalid EXTERNAL_URL %q: expected https://host with nothing else (no port — the public port is wherever the page is reached)", raw)
 	}
-	safeMax := cert.Leaf.NotAfter.Add(-wtCertRotateBuffer)
-	if target.After(safeMax) {
-		target = safeMax
-	}
-	if delay := target.Sub(now); delay > 0 {
-		return delay
-	}
-	return 0
-}
-
-// generateWTCert mints a fresh ECDSA P-256 self-signed cert with 14-day
-// validity. localhost + 127.0.0.1 + ::1 are always covered; extra hosts
-// are added as DNS or IP SANs depending on parseability.
-func generateWTCert(hosts []string) (*tls.Certificate, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return nil, err
-	}
-	now := time.Now().UTC()
-	template := &x509.Certificate{
-		SerialNumber:          serial,
-		Subject:               pkix.Name{Organization: []string{"NexQuake"}, CommonName: "NexQuake WebTransport"},
-		NotBefore:             now,
-		NotAfter:              now.Add(wtCertValidity),
-		KeyUsage:              x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true,
-		DNSNames:              []string{"localhost"},
-		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
-	}
-	for _, h := range hosts {
-		if ip := net.ParseIP(h); ip != nil {
-			template.IPAddresses = append(template.IPAddresses, ip)
-		} else if h != "" {
-			template.DNSNames = append(template.DNSNames, h)
-		}
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		return nil, err
-	}
-	leaf, err := x509.ParseCertificate(der)
-	if err != nil {
-		return nil, err
-	}
-	return &tls.Certificate{
-		Certificate: [][]byte{der},
-		PrivateKey:  key,
-		Leaf:        leaf,
-	}, nil
-}
-
-// persistCert writes cert.pem and key.pem atomically. Mode 0o600 on the
-// key, 0o644 on the cert (the cert is published anyway).
-func persistCert(certPath, keyPath string, cert *tls.Certificate) error {
-	if len(cert.Certificate) == 0 {
-		return errors.New("cert has no DER bytes")
-	}
-	keyDER, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
-	if err != nil {
-		return err
-	}
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]})
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
-	if err := writeFileAtomic(certPath, certPEM, 0o644); err != nil {
-		return err
-	}
-	return writeFileAtomic(keyPath, keyPEM, 0o600)
-}
-
-// writeFileAtomic writes data to a temp file in the same dir, then renames
-// to path so readers never see a partial file. Both the file and the parent
-// dir are fsynced so the rename survives a crash.
-func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(mode); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return err
-	}
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	return d.Sync()
-}
-
-// loadCertFromDisk parses the on-disk pair and populates Leaf so callers
-// can read NotAfter without re-parsing.
-func loadCertFromDisk(certPath, keyPath string) (*tls.Certificate, error) {
-	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
-	if err != nil {
-		return nil, err
-	}
-	if len(cert.Certificate) == 0 {
-		return nil, errors.New("loaded cert has no DER bytes")
-	}
-	leaf, err := x509.ParseCertificate(cert.Certificate[0])
-	if err != nil {
-		return nil, err
-	}
-	cert.Leaf = leaf
-	return &cert, nil
-}
-
-// certSHA256Hex returns the hex-encoded SHA-256 of the leaf cert's DER
-// bytes — the input WebTransport's serverCertificateHashes wants.
-func certSHA256Hex(cert *tls.Certificate) string {
-	if cert == nil || len(cert.Certificate) == 0 {
-		return ""
-	}
-	sum := sha256.Sum256(cert.Certificate[0])
-	return hex.EncodeToString(sum[:])
+	return u.Hostname(), nil
 }

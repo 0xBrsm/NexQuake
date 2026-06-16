@@ -86,12 +86,6 @@ EM_JS(int, js_cd_init, (), {
 		return null;
 	}
 
-	var rqf = typeof requestAnimationFrame === 'function'
-		? requestAnimationFrame.bind(window)
-		: function(fn) { return setTimeout(function() { fn(Date.now()); }, 16); };
-	var cqf = typeof cancelAnimationFrame === 'function'
-		? cancelAnimationFrame.bind(window) : clearTimeout;
-
 	function notify() {
 		if (typeof Module.nqOverlayOnCdStateChange === 'function')
 			try { Module.nqOverlayOnCdStateChange(); } catch(e) {}
@@ -102,21 +96,57 @@ EM_JS(int, js_cd_init, (), {
 			try { URL.revokeObjectURL(url); } catch(e) {}
 	}
 
+	// Ramp volume to zero over a few short steps to suppress the click that a
+	// hard pause produces mid-waveform, then run `done` (which performs the
+	// actual pause). Driven by setTimeout rather than requestAnimationFrame:
+	// rAF is suspended while the tab is hidden but audio keeps playing, so an
+	// rAF-driven fade could never reach `done` and the track would play on
+	// forever -- which is exactly how stop/pause used to get stuck.
 	function fadeToSilence(s, done) {
 		var startVol = Number(s.audio.volume);
 		if (s.audio.paused || !Number.isFinite(startVol) || startVol <= 0.001) {
 			if (done) done();
 			return;
 		}
-		var startAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
-		var durationMs = 48;
-		function step(now) {
-			var t = Math.min(1, Math.max(0, (Number(now) - startAt) / durationMs));
-			try { s.audio.volume = startVol * (1 - t); } catch(e) {}
-			if (t >= 1) { s.fadeToken = 0; if (done) done(); return; }
-			s.fadeToken = rqf(step);
+		var steps = 6, i = 0;
+		function step() {
+			i++;
+			if (i >= steps) {
+				s.fadeToken = 0;
+				try { s.audio.volume = 0; } catch(e) {}
+				if (done) done();
+				return;
+			}
+			try { s.audio.volume = startVol * (1 - i / steps); } catch(e) {}
+			s.fadeToken = setTimeout(step, 8);
 		}
-		s.fadeToken = rqf(step);
+		s.fadeToken = setTimeout(step, 8);
+	}
+
+	// The mirror image: start silent and climb to the target volume so a
+	// track doesn't begin with a click either. Kicked off from the 'playing'
+	// event so the ramp aligns with the first audible samples; the play
+	// sites zero the volume before play() so nothing leaks out before then.
+	function fadeIn(s) {
+		s.cancelFade();
+		try { s.audio.volume = 0; } catch(e) {}
+		var target = Number(s.targetVolume);
+		if (!Number.isFinite(target) || target <= 0.001) {
+			try { s.audio.volume = target > 0 ? target : 0; } catch(e0) {}
+			return;
+		}
+		var steps = 6, i = 0;
+		function step() {
+			i++;
+			if (i >= steps) {
+				s.fadeToken = 0;
+				try { s.audio.volume = target; } catch(e1) {}
+				return;
+			}
+			try { s.audio.volume = target * (i / steps); } catch(e2) {}
+			s.fadeToken = setTimeout(step, 8);
+		}
+		s.fadeToken = setTimeout(step, 8);
 	}
 
 	var s = {
@@ -132,13 +162,12 @@ EM_JS(int, js_cd_init, (), {
 		notify: notify,
 		revokeBlob: revokeBlob,
 		fadeToSilence: fadeToSilence,
-		cancelFade: function() { if (s.fadeToken) { cqf(s.fadeToken); s.fadeToken = 0; } },
-		rqf: rqf,
-		cqf: cqf
+		fadeIn: fadeIn,
+		cancelFade: function() { if (s.fadeToken) { clearTimeout(s.fadeToken); s.fadeToken = 0; } }
 	};
 
 	s.audio.preload = 'auto';
-	s.audio.onplaying = function() { s.status = 'playing'; notify(); };
+	s.audio.onplaying = function() { s.status = 'playing'; s.fadeIn(s); notify(); };
 	s.audio.onended = s.audio.onerror = function() {
 		s.cancelFade();
 		revokeBlob(s.blobURL);
@@ -181,7 +210,19 @@ EM_JS(int, js_cd_play, (int track, int looping), {
 	var s = Module._nq_cdaudio;
 	if (!s) return 0;
 	var entry = s.resolveTrack(track);
-	if (!entry) return 0;
+	if (!entry) {
+		// Requested track has no matching file: stop current playback so the
+		// engine's 'stopped' state stays truthful, instead of leaving the
+		// previous track looping with no way for the overlay to reach it.
+		try { s.audio.pause(); s.audio.currentTime = 0; } catch(e0) {}
+		s.revokeBlob(s.blobURL);
+		s.blobURL = "";
+		s.sourcePath = "";
+		s.status = 'stopped';
+		try { s.audio.volume = s.targetVolume; } catch(e1) {}
+		s.notify();
+		return 0;
+	}
 
 	// Same track already active: adjust loop, resume if paused
 	if (s.sourcePath && s.sourcePath === entry.path &&
@@ -190,7 +231,7 @@ EM_JS(int, js_cd_play, (int track, int looping), {
 		try { s.audio.loop = !!looping; } catch(e) {}
 		if (s.status === 'paused') {
 			s.cancelFade();
-			try { s.audio.volume = s.targetVolume; } catch(e2) {}
+			try { s.audio.volume = 0; } catch(e2) {}
 			s.status = 'loading';
 			s.notify();
 			try { s.audio.play(); } catch(e3) {}
@@ -211,8 +252,9 @@ EM_JS(int, js_cd_play, (int track, int looping), {
 		s.audio.loop = !!looping;
 		if (s.audio.src !== entry.url) s.audio.src = entry.url;
 	} catch(e4) {}
+	try { s.audio.volume = 0; } catch(e5) {}
 	s.notify();
-	try { s.audio.play(); } catch(e5) {}
+	try { s.audio.play(); } catch(e6) {}
 	return 1;
 });
 
@@ -232,22 +274,23 @@ EM_JS(void, js_cd_stop, (), {
 	s.notify();
 });
 
-EM_JS(void, js_cd_pause, (), {
+EM_JS(int, js_cd_pause, (), {
 	var s = Module._nq_cdaudio;
-	if (!s || s.status !== 'playing') return;
+	if (!s || s.status !== 'playing') return 0;
 	s.cancelFade();
 	s.status = 'paused';
 	s.notify();
 	s.fadeToSilence(s, function() {
 		try { s.audio.pause(); s.audio.volume = s.targetVolume; } catch(e) {}
 	});
+	return 1;
 });
 
 EM_JS(void, js_cd_resume, (), {
 	var s = Module._nq_cdaudio;
 	if (!s || s.status !== 'paused') return;
 	s.cancelFade();
-	try { s.audio.volume = s.targetVolume; } catch(e) {}
+	try { s.audio.volume = 0; } catch(e) {}
 	s.status = 'loading';
 	s.notify();
 	try { s.audio.play(); } catch(e2) {}
@@ -328,9 +371,8 @@ void CDAudio_Stop(void)
 	if (!initialized || !enabled)
 		return;
 
-	if (!playing && !wasPlaying)
-		return;
-
+	// js_cd_stop is idempotent; forward unconditionally so a desynced
+	// "not playing" flag can never strand the <audio> element.
 	js_cd_stop();
 	playing = false;
 	wasPlaying = false;
@@ -338,12 +380,16 @@ void CDAudio_Stop(void)
 
 void CDAudio_Pause(void)
 {
-	if (!initialized || !enabled || !playing)
+	if (!initialized || !enabled)
 		return;
 
-	js_cd_pause();
-	wasPlaying = playing;
-	playing = false;
+	// js_cd_pause self-guards on the actual playback state and reports
+	// whether it paused, so wasPlaying stays truthful for Resume.
+	if (js_cd_pause())
+	{
+		wasPlaying = true;
+		playing = false;
+	}
 }
 
 void CDAudio_Resume(void)

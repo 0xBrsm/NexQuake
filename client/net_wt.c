@@ -18,10 +18,10 @@
 
 #include "net_wasm.h"
 
-// No location.host fallback: the auto-cert's SAN list is keyed on
-// WT_HOST, so a defaulted hostname wouldn't be covered and the QUIC
-// handshake would always fail. Module.nqTransportConfig.webtransport is set
-// from the /start manifest only when WT_HOST is configured.
+// The WebTransport URL comes from the /start manifest, which advertises it
+// only when the server offers WebTransport (EXTERNAL_URL set). It carries
+// the same authority the page was served from, so the public CA cert always
+// covers it.
 EM_JS (char *, WT_ConnectUrl, (), {
 	var cfg = (Module.nqTransportConfig && Module.nqTransportConfig.webtransport) || null;
 	var url = cfg && cfg.url || "";
@@ -42,22 +42,32 @@ EM_JS (int, WT_JsStart, (const char *url), {
 		session: null, writer: null,
 		recvQueue: [], recvHead: 0, recvCap: 512,
 		sendBuf: null, dropTooBig: 0,
-		opened: false, closed: false, lastError: ""
+		opened: false, everOpened: false, closed: false,
+		closeCode: null, errDetail: ""
 	};
 	var state = Module.nqWt;
+	// Format an error for diagnostics: a WebTransportError carries source
+	// ("session" vs "stream") and an optional stream code; a plain value does
+	// not. Falls back to the message or the value's string form.
+	state.fmtErr = function (e) {
+		if (e && e.source)
+			return "[" + e.source + "] " + (e.message || e.name || "error") +
+				(e.streamErrorCode != null ? " code=" + e.streamErrorCode : "");
+		return String((e && e.message) || e);
+	};
 	try {
-		var cfg = (Module.nqTransportConfig && Module.nqTransportConfig.webtransport) || {};
-		var hashes = cfg.serverCertificateHashes || null;
-		var opts = (hashes && hashes.length) ? { serverCertificateHashes: hashes } : undefined;
-		state.session = opts ? new WebTransport(urlStr, opts) : new WebTransport(urlStr);
+		// The cert chains to a public CA (ACME), so the browser validates it
+		// normally — no serverCertificateHashes pinning.
+		state.session = new WebTransport(urlStr);
 	} catch (e) {
-		state.lastError = String(e && e.message || e);
+		state.errDetail = state.fmtErr(e);
 		state.closed = true;
 		return -1;
 	}
 	state.session.ready.then(function() {
 		state.writer = state.session.datagrams.writable.getWriter();
 		state.opened = true;
+		state.everOpened = true;
 		(async function() {
 			var reader = state.session.datagrams.readable.getReader();
 			try {
@@ -69,17 +79,27 @@ EM_JS (int, WT_JsStart, (const char *url), {
 						state.recvQueue[state.recvHead++] = null;
 					state.recvQueue.push(new Uint8Array(r.value));
 				}
-			} catch (e) { state.lastError = String(e && e.message || e); }
+			} catch (e) { state.errDetail = state.fmtErr(e); }
 			state.opened = false;
 			state.closed = true;
 		})();
 	}).catch(function(e) {
-		state.lastError = String(e && e.message || e);
+		state.errDetail = state.fmtErr(e);
 		state.closed = true;
 	});
-	state.session.closed.finally(function() {
+	// .then(resolve, reject) rather than .finally(): finally() would re-throw a
+	// connect-time rejection as an uncaught promise error on the browser
+	// console. Record the close code / reason; the human-readable report is
+	// composed at read time in WT_JsLastErrorDup from this structured state.
+	state.session.closed.then(function (info) {
 		state.opened = false;
 		state.closed = true;
+		if (info && typeof info.closeCode === "number") state.closeCode = info.closeCode;
+		if (!state.errDetail && info && info.reason) state.errDetail = info.reason;
+	}, function (e) {
+		state.opened = false;
+		state.closed = true;
+		if (!state.errDetail) state.errDetail = state.fmtErr(e);
 	});
 	return 0;
 });
@@ -118,7 +138,7 @@ EM_JS (int, WT_JsSend, (int ptr, int len), {
 		state.sendBuf.set(HEAPU8.subarray(ptr, ptr + len));
 		state.writer.write(state.sendBuf.subarray(0, len)).catch(function(e) {
 			if (e instanceof TypeError) { dropTooBig('?'); return; }
-			state.lastError = String(e && e.message || e);
+			state.errDetail = state.fmtErr(e);
 			// Async write rejection: stream errored — close the session now so
 			// the server tears down its half of the QUIC connection promptly
 			// (rather than holding a ghost route until the idle timeout), then
@@ -130,7 +150,7 @@ EM_JS (int, WT_JsSend, (int ptr, int len), {
 		return len;
 	} catch (e) {
 		// Synchronous throw: stream already errored/closed before we got here.
-		state.lastError = String(e && e.message || e);
+		state.errDetail = state.fmtErr(e);
 		if (state.session) { try { state.session.close(); } catch (_) {} }
 		state.opened = false;
 		state.closed = true;
@@ -169,8 +189,18 @@ EM_JS (void, WT_JsClose, (), {
 });
 
 EM_JS (char *, WT_JsLastErrorDup, (), {
-	var state = Module.nqWt;
-	return stringToNewUTF8((state && state.lastError) ? String(state.lastError) : "");
+	var s = Module.nqWt;
+	if (!s) return stringToNewUTF8("");
+	// Compose at read time from structured state so the report never depends on
+	// which lifecycle event fired first. Lead with whether the handshake ever
+	// completed — the key signal for "WebTransport unreachable" vs "reached the
+	// server, then the session ended".
+	var parts = [];
+	if (s.closed)
+		parts.push(s.everOpened ? "session closed" : "closed before handshake completed");
+	if (typeof s.closeCode === "number") parts.push("code " + s.closeCode);
+	if (s.errDetail) parts.push(s.errDetail);
+	return stringToNewUTF8(parts.join("; "));
 });
 
 //----------------------------------------------------------------------------

@@ -44,10 +44,9 @@ type ServerManager struct {
 
 	serversByID        map[int]*server
 	serverByInstanceID map[int]*server
-	nextServerID          int
-	serverMaxInstances    int
-	nextInstanceID        int
-	runtimeBasedir        string
+	serverMaxInstances int
+	nextInstanceID     int
+	runtimeBasedir     string
 	// stopOverlay halts the assets overlay watcher started alongside
 	// runtimeBasedir; must be invoked before RemoveAll(runtimeBasedir)
 	// so in-flight fsnotify events don't race the teardown.
@@ -193,15 +192,14 @@ func NewServerManager(
 		formatLogLine = func(line string, _ time.Time) string { return line }
 	}
 	return &ServerManager{
-		gameDir:               gameDir,
-		logsDir:               logsDir,
-		consoleInfof:          consoleInfof,
-		formatLogLine:         formatLogLine,
+		gameDir:            gameDir,
+		logsDir:            logsDir,
+		consoleInfof:       consoleInfof,
+		formatLogLine:      formatLogLine,
 		instancesByID:      make(map[int]*instance),
 		instanceIDsByPort:  make(map[int][]int),
 		serversByID:        make(map[int]*server),
 		serverByInstanceID: make(map[int]*server),
-		nextServerID:       1,
 		serverMaxInstances: defaultServerMaxInstances,
 	}
 }

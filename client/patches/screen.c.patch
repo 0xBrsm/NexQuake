@@ -1,23 +1,37 @@
 --- screen.c
 +++ screen.c
-@@ -33,3 +33,4 @@
+@@ -32,6 +32,7 @@
+ float		oldscreensize, oldfov;
  cvar_t		scr_viewsize = {"viewsize","100", true};
  cvar_t		scr_fov = {"fov","90"};	// 10 - 170
-+cvar_t		scr_fov_adapt = {"fov_adapt","0.5"};	// 0=stock fov_x, 1=pure Hor+
++cvar_t		scr_fov_adapt = {"fov_adapt","1", true};	// 0=stock fov_x, 1=pure Hor+
  cvar_t		scr_conspeed = {"scr_conspeed","300"};
-@@ -242,8 +243,27 @@
+ cvar_t		scr_centertime = {"scr_centertime","2"};
+ cvar_t		scr_showram = {"showram","1"};
+@@ -242,9 +243,6 @@
  	if (scr_fov.value > 170)
  		Cvar_Set ("fov","170");
  
 -	r_refdef.fov_x = scr_fov.value;
 -	r_refdef.fov_y = CalcFov (r_refdef.fov_x, r_refdef.vrect.width, r_refdef.vrect.height);
+-
+ // intermission is always full screen	
+ 	if (cl.intermission)
+ 		size = 120;
+@@ -267,6 +265,31 @@
+ 
+ 	R_SetVrect (&vrect, &scr_vrect, sb_lines);
+ 
 +	// fov_adapt blends between literal fov_x (0) and pure Hor+ (1).
 +	// tan(new_half) = tan(fov/2) * (1 + adapt * (aspect/ref - 1)), ref = 4:3.
++	// Aspect comes from the scr_vrect just computed above (R_ViewChanged
++	// installs the same rect as r_refdef.vrect), so a video mode change
++	// takes effect on this recalc instead of one recalc late.
 +	{
 +		double fov = scr_fov.value;
 +		double fov_x = fov;
-+		int vw = r_refdef.vrect.width  > 0 ? r_refdef.vrect.width  : vid.width;
-+		int vh = r_refdef.vrect.height > 0 ? r_refdef.vrect.height : vid.height;
++		int vw = scr_vrect.width  > 0 ? scr_vrect.width  : vid.width;
++		int vh = scr_vrect.height > 0 ? scr_vrect.height : vid.height;
 +		if (vh > 0) {
 +			double aspect = (double)vw / (double)vh;
 +			double ref = 4.0 / 3.0;
@@ -32,19 +46,28 @@
 +		r_refdef.fov_x = (float)fov_x;
 +		r_refdef.fov_y = CalcFov (r_refdef.fov_x, vw, vh);
 +	}
- 
- // intermission is always full screen
- 	if (cl.intermission)
-@@ -315,3 +334,4 @@
++
+ // guard against going from one mode to another that's less than half the
+ // vertical resolution
+ 	if (scr_con_current > vid.height)
+@@ -314,6 +337,7 @@
+ void SCR_Init (void)
  {
  	Cvar_RegisterVariable (&scr_fov);
 +	Cvar_RegisterVariable (&scr_fov_adapt);
  	Cvar_RegisterVariable (&scr_viewsize);
-@@ -810,2 +830,3 @@
+ 	Cvar_RegisterVariable (&scr_conspeed);
+ 	Cvar_RegisterVariable (&scr_showram);
+@@ -808,6 +832,7 @@
+ void SCR_UpdateScreen (void)
+ {
  	static float	oldscr_viewsize;
 +	static float	oldfov_adapt;
  	static float	oldlcd_x;
-@@ -850,3 +871,9 @@
+ 	vrect_t		vrect;
+ 	
+@@ -849,6 +874,12 @@
+ 		vid.recalc_refdef = true;
  	}
  	
 +	if (oldfov_adapt != scr_fov_adapt.value)
@@ -54,3 +77,5 @@
 +	}
 +	
  	if (oldlcd_x != lcd_x.value)
+ 	{
+ 		oldlcd_x = lcd_x.value;

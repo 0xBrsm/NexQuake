@@ -37,22 +37,28 @@ EM_JS (void, WASM_FireOpenHook, (), {
 });
 
 // Connection-level messages (DEC-018): the player sees one story about the
-// connection, not two competing per-transport streams — "Connection by X"
+// connection, not two competing per-transport streams — "Connected by X"
 // when a carrier comes up fresh, "Connection upgraded to WebTransport" as a
 // single line covering both halves of a promotion, "Connection closed ..."
-// with the carrier in parens. Lines print via Cbuf so they execute on the
-// main loop, never from inside a JS event callback — transport callbacks can
-// fire while a C frame is Asyncify-suspended, and re-entering the renderer
-// from there corrupts the suspended state.
-static void GameConsoleEcho (const char *line)
+// with the carrier in parens. These go to the *browser* console, not the game
+// console: a plain console.info can't re-enter the renderer, so it stays safe
+// even when a transport callback fires while a C frame is Asyncify-suspended —
+// unlike a game-console draw, which is why this no longer routes via Cbuf.
+static void ConnectionEcho (const char *line)
 {
-	char cmd[192];
-	// Quoted so the console tokenizer treats the line as one argument —
-	// unquoted parentheses are split into their own tokens and re-joined
-	// with stray spaces.
-	snprintf (cmd, sizeof(cmd), "echo \"%s\"\n", line);
-	Cbuf_AddText (cmd);
+	WASM_Log (WASM_LOG_INFO, "%s", line);
 }
+
+// Mirror the active transport to the browser shell, which shows it as a
+// lower-right "Connected by: <transport>" indicator (shell 00-core.js +
+// shell-ui.css). Called from AdoptTransport on the main loop — never from a
+// transport JS callback — so this synchronous DOM update can't re-enter a
+// suspended engine frame. An empty name hides the indicator (disconnected).
+EM_JS (void, WASM_NotifyTransport, (const char *name), {
+	var n = name ? UTF8ToString (name) : "";
+	if (typeof Module.nqSetTransport === "function")
+		try { Module.nqSetTransport (n); } catch (e) {}
+});
 
 // Set when an adoption already told the story, so the transport's own
 // ready-edge / close event doesn't repeat or contradict it.
@@ -67,8 +73,8 @@ void WASM_OnOpen (const char *transport)
 		announced_open = NULL;
 	else
 	{
-		snprintf (line, sizeof(line), "Connection by %s", transport);
-		GameConsoleEcho (line);
+		snprintf (line, sizeof(line), "Connected by %s", transport);
+		ConnectionEcho (line);
 	}
 	WASM_FireOpenHook ();
 }
@@ -91,7 +97,7 @@ void WASM_OnClose (const char *transport, qboolean expected)
 	{
 		snprintf (line, sizeof(line), "Connection closed %s (%s)",
 			expected ? "by client" : "unexpectedly", transport);
-		GameConsoleEcho (line);
+		ConnectionEcho (line);
 		// Unexpected closes also log synchronously: the echo only prints if
 		// the main loop keeps draining Cbuf, and a disconnect coinciding
 		// with a wedged engine is exactly when the evidence matters.
@@ -184,7 +190,7 @@ static void AdoptTransport (int idx)
 		suppress_close = active->name;
 		announced_open = t->name;
 		snprintf (line, sizeof(line), "Connection upgraded to %s", t->name);
-		GameConsoleEcho (line);
+		ConnectionEcho (line);
 		active->close ();
 		WASM_OnTransportReset ();
 	}
@@ -193,12 +199,13 @@ static void AdoptTransport (int idx)
 		// Fresh adoption of an already-proven transport (warm WebTransport):
 		// announce now; its ready-edge fires after adoption and stays quiet.
 		announced_open = t->name;
-		snprintf (line, sizeof(line), "Connection by %s", t->name);
-		GameConsoleEcho (line);
+		snprintf (line, sizeof(line), "Connected by %s", t->name);
+		ConnectionEcho (line);
 	}
 	active = t;
 	active_index = idx;
 	started = true;
+	WASM_NotifyTransport (t->name);
 }
 
 void WASM_EnsureTransportOpen (void)
@@ -219,6 +226,7 @@ void WASM_EnsureTransportOpen (void)
 		active->close ();
 		WASM_OnTransportReset ();
 		started = false;
+		WASM_NotifyTransport (""); // disconnected — hide the indicator
 		if (active_index < transport_count - 1)
 		{
 			warm_started[active_index] = false;
@@ -318,9 +326,4 @@ int WASM_SendPacket (const byte *packet, int len)
 const char *WASM_LastSendError (void)
 {
 	return active ? active->last_error () : "no transport";
-}
-
-const char *WASM_ActiveTransportName (void)
-{
-	return (active && started) ? active->name : NULL;
 }

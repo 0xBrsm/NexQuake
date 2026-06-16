@@ -1,8 +1,6 @@
 package orch
 
 import (
-	"fmt"
-	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
@@ -47,9 +45,13 @@ type instanceState struct {
 // stable listen port; "-port 0" servers may have multiple dynamically spawned
 // replicas.
 type server struct {
-	// ServerID is the unique identifier assigned at registration.
+	// ServerID identifies the server and equals Line+1, so it reads as the
+	// 1-based servers.ini line the server came from. Unique per server: each
+	// config line registers one server, and a runtime-launched server takes the
+	// next line number above the current max.
 	ServerID int
-	// Line is the 0-based servers.ini line index; -1 for synthetic servers.
+	// Line is the 0-based servers.ini line index. Always >= 0 for a server;
+	// only replica instance launches use -1, and those don't create servers.
 	Line int
 	// TemplateLaunch is the launch spec used to spawn new replicas.
 	TemplateLaunch serverLaunch
@@ -148,7 +150,6 @@ func (m *ServerManager) setServerInstanceLifecycleLocked(s *server, serverID int
 func (m *ServerManager) resetServerRegistryLocked() {
 	m.serversByID = make(map[int]*server)
 	m.serverByInstanceID = make(map[int]*server)
-	m.nextServerID = 1
 }
 
 func (m *ServerManager) closeServerRegistry() {
@@ -202,20 +203,15 @@ func (m *ServerManager) registerServerLaunch(launch serverLaunch) (*instance, er
 	autoscales := hasConfiguredPort && configuredPort == 0 && max(1, m.serverMaxInstances) > 1
 
 	s := &server{
-		ServerID:       m.nextServerID,
+		ServerID:       launch.Line + 1,
 		Line:           launch.Line,
 		TemplateLaunch: cloneServerLaunch(launch),
 		Autoscales:     autoscales,
 		instanceStates: make(map[int]*instanceState),
 	}
-	m.nextServerID++
 	m.serversByID[s.ServerID] = s
 
 	rec := m.appendServerInstanceLocked(s, launch, instanceLifecycleWarming)
-
-	if s.Autoscales {
-		slog.Info(fmt.Sprintf("Server %d enabled for line %d (autoscaling)", s.ServerID, s.Line+1))
-	}
 	return rec, nil
 }
 

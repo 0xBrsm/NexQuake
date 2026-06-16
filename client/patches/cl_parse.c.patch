@@ -1,16 +1,16 @@
 --- cl_parse.c
 +++ cl_parse.c
 @@ -21,6 +21,9 @@
-
+ 
  #include "quakedef.h"
-
+ 
 +#include "com_gameswitch.h"
 +#include "cl_prefetch.h"
 +
  char *svc_strings[] =
  {
  	"svc_bad",
-@@ -173,8 +175,8 @@
+@@ -173,8 +176,8 @@
  			Host_Error ("CL_KeepaliveMessage: received a message");
  			break;
  		case 2:
@@ -21,26 +21,21 @@
  			break;
  		}
  	} while (ret);
-@@ -215,6 +220,8 @@
+@@ -215,6 +218,8 @@
  //
  	CL_ClearState ();
-
+ 
 +	COM_SwitchGameForConnection ();
 +
  // parse protocol version number
  	i = MSG_ReadLong ();
  	if (i != PROTOCOL_VERSION)
-@@ -281,6 +307,8 @@
+@@ -281,6 +286,8 @@
  		S_TouchSound (str);
  	}
-
+ 
 +	CL_Prefetch(model_precache, nummodels, sound_precache, numsounds);
 +
  //
  // now we try to load everything else until a cache allocation fails
  //
-@@ -960,4 +988,3 @@
- 		}
- 	}
- }
--

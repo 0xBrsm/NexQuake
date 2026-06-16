@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <emscripten.h>
 #include "quakedef.h"
+#include "net_wasm.h"
 
 #ifndef NEXQUAKE_VERSION
 #define NEXQUAKE_VERSION "unknown"
@@ -21,6 +22,14 @@ static qboolean text_input_latched, console_text_latched, message_text_latched;
 qboolean menu_text_editing;
 qboolean console_text_editing;
 void main_loop(void);
+
+// Commands ccall'd in before the engine boots would land in a zero-sized
+// cmd_text (Cbuf_Init runs inside Host_Init) and be silently dropped with
+// "Cbuf_AddText: overflow". NQWasm_ExecCommand queues them instead and
+// main_loop flushes the queue on its first frame; the WASM_Log warn reaches
+// the browser console with a JS stack trace, naming the early caller.
+static char pending_cmds[2048];
+static int  pending_cmds_len;
 
 EM_JS(void, js_syncfs, (), {
 	if (typeof FS !== 'undefined')
@@ -285,6 +294,12 @@ void main_loop(void) {
 		canvas_visible = true;
 		js_hide_console();
 	}
+	if (pending_cmds_len)
+	{
+		Cbuf_AddText(pending_cmds);
+		pending_cmds_len = 0;
+	}
+
 	newtime = Sys_FloatTime();
 	time = newtime - oldtime;
 	if (time > sys_ticrate.value * 2) oldtime = newtime;
@@ -323,6 +338,7 @@ void main_loop(void) {
 	console_text_latched = in_con;
 	message_text_latched = in_msg;
 	text_input_latched = want_text;
+
 }
 
 // Exported JS hooks (browser only).
@@ -330,6 +346,21 @@ EMSCRIPTEN_KEEPALIVE void NQWasm_ExecCommand(const char *cmd)
 {
 	if (!cmd || !cmd[0])
 		return;
+	if (!host_initialized)
+	{
+		int len = (int)strlen(cmd);
+		if (pending_cmds_len + len + 2 > (int)sizeof(pending_cmds))
+		{
+			WASM_Log(WASM_LOG_ERROR, "pre-init command queue full, dropped: %s", cmd);
+			return;
+		}
+		memcpy(pending_cmds + pending_cmds_len, cmd, len);
+		pending_cmds_len += len;
+		pending_cmds[pending_cmds_len++] = '\n';
+		pending_cmds[pending_cmds_len] = 0;
+		WASM_Log(WASM_LOG_WARN, "command before engine init, queued: %s", cmd);
+		return;
+	}
 	Cbuf_AddText((char *)cmd);
 	Cbuf_AddText("\n");
 }

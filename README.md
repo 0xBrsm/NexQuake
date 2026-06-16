@@ -55,7 +55,7 @@ Players use the standard Quake multiplayer connection experience; use the Multip
 - **Persistent saves**: Config and saves survive browser sessions via IndexedDB.
 - **Mod support**: Game directory switching at runtime without page reload.
 - **Self-contained**: Single Docker image, single port.
-- **Easy to secure**: Supports OIDC via JWT tokens or just run it behind a reverse proxy.
+- **Easy to secure**: HTTPS out of the box — automatic Let's Encrypt certificates (or bring your own), with admin access gated by OIDC JWT verification or an rcon password; no reverse proxy needed.
 - **Software renderer**: GPU-accelerated palette conversion of the original 8-bit framebuffer.
 - **Auto-quickstart**: Shareware/freeware game data downloads automatically on first run.
 

@@ -127,18 +127,30 @@ func (g *HashedAssetServer) AssetHandler() http.HandlerFunc {
 			return
 		}
 
+		start := time.Now()
 		rc, err := asset.open()
 		if err != nil {
 			http.NotFound(w, r)
 			return
 		}
 		defer rc.Close()
+		openDur := time.Since(start)
 
 		if asset.contentType != "" {
 			w.Header().Set("Content-Type", asset.contentType)
 		}
 		w.Header().Set("Cache-Control", "private, no-store")
 		http.ServeContent(w, r, asset.name, asset.modTime, rc)
+
+		// Clients report multi-second fetches for KB-sized assets; the split
+		// says which side to blame. open covers storage; the rest of total is
+		// ServeContent, which doesn't return until the body is written, so a
+		// fast open with a slow total means the bytes sat in the network path
+		// (tunnel/uplink/client), not in nexus.
+		if total := time.Since(start); total > time.Second {
+			slog.Warn(fmt.Sprintf("asset serve slow: %s open=%dms total=%dms remote=%s",
+				asset.name, openDur.Milliseconds(), total.Milliseconds(), r.RemoteAddr))
+		}
 	}
 }
 

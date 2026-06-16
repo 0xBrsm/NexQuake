@@ -4,6 +4,127 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.12.0
+
+### Added
+- Native HTTPS + WebTransport via a single `EXTERNAL_URL` switch (see
+  `src/docs/ENVIRONMENT.md` "Run Paths"). Unset (default) is plain HTTP +
+  WebSocket, as before 1.11 — standalone, on a LAN, or behind any reverse
+  proxy / tunnel that owns public TLS (which may also gate the site behind an
+  IdP). `EXTERNAL_URL=https://host` makes Nexus own the public endpoint: the
+  hostname is the certificate identity, HTTPS/WSS serve on the TCP listener,
+  and WebTransport is advertised at the authority each `/start` arrives on.
+- Certificate sourced from `CERT_DIR` (default `/app/cert`): a bring-your-own
+  `cert.pem` + `key.pem` is served directly; otherwise certificates are
+  obtained automatically from Let's Encrypt via `autocert` (TLS-ALPN-01 on the
+  main port, so no plain-HTTP port is needed; cache under `CERT_DIR/acme`). One
+  cert source feeds both the HTTPS and QUIC listeners.
+- Bind and TLS are a fatal startup gate: Nexus binds the port, starts serving,
+  then blocks until the certificate is in hand (cached or freshly issued — the
+  ACME TLS-ALPN-01 challenge is answered by the now-live listener) before it
+  launches the game servers or anything else. A failure at either step exits
+  the process. BYO certs resolve instantly; ACME uses a short, seconds-scale
+  retry to ride out a transient blip, then exits — a persisted acme cache means
+  a healthy restart loads the cached cert and never re-issues. On success the
+  single `Nexus listening on port N with TLS (<host>, expires <date>)` line is
+  the one TLS announcement; the cert refreshes on renewal in the background.
+  The container healthcheck also fails on an expired served certificate.
+- Active transport indicator: a lower-right "Connected by: WebTransport (UDP)"
+  / "WebSocket (TCP)" readout in the browser shell (not the game console),
+  updated as the client adopts or upgrades transports and hidden on disconnect.
+  Double-click the corner to collapse/expand it (persisted); hidden on touch.
+- WebTransport now serves the pre-resolved certificate instead of calling
+  `autocert.GetCertificate` inside the QUIC handshake. On the ACME path that
+  call blocks: autocert keys its cache by RSA-vs-ECDSA from the ClientHello,
+  and quic-go advertises no ECDSA suite, so autocert looks up an RSA cert that
+  was never issued (Let's Encrypt issues ECDSA), misses the cache, and blocks
+  on a rate-limited obtain. Every WebTransport session silently timed out while
+  HTTPS/WSS worked; the bring-your-own-cert path (and the e2e suite) was
+  unaffected, so it went unnoticed. The TCP listener still drives ACME so
+  issuance and renewal are unchanged.
+
+### Changed
+- Nexus owns its public endpoint; a reverse proxy is no longer required. The
+  behind-a-front private shape stays supported via `AUTH_CLIENT_IP_HEADER`
+  (real client IPs for bans/audit).
+- `WT_CERT_DIR`/`WT_CERT_ROTATE_DAYS` replaced by `CERT_DIR` — one certificate
+  directory feeding both the BYO-cert and ACME paths.
+- Admin auth is verify-only: Nexus verifies an OIDC JWT presented as a Bearer
+  token or injected by a fronting access gate (`AUTH_ISSUER`, `AUTH_AUDIENCE`,
+  `AUTH_JWT_HEADER`); it runs no server-side login flow. Behind a front, the
+  in-game `rcon login` popup drives the gate's IdP round-trip via the
+  auto-closing `GET /rcon` landing page. `AUTH_RCON_PASSWORD` remains the
+  password option.
+- Direct-exposure admin login without a front: when `EXTERNAL_URL` is set and
+  `AUTH_JWT_HEADER` is the default (`Authorization`), `rcon login` runs an
+  Authorization Code + PKCE flow as a public client. The browser authorizes at
+  the IdP and posts the code + verifier to the new `POST /rcon/session`, which
+  exchanges them server-to-server and sets a verified id_token in an httpOnly
+  `nq_session` cookie (the server-side hop is required because some IdP token
+  endpoints — e.g. Cloudflare Access — omit CORS; it also keeps the token out of
+  page JS). The login outcome shows in an in-game toast. PKCE is gated on both
+  `EXTERNAL_URL` and the default header, so a front that injects the JWT via
+  `Authorization: Bearer` (oauth2-proxy, Pomerium, Envoy) — not just a custom
+  header — keeps the edge-gated popup login instead. New optional `AUTH_CLIENT_ID`
+  (public client id, defaults to `AUTH_AUDIENCE`); login scopes are derived from
+  `AUTH_ADMIN_ID` (`openid profile email`, plus `groups` when a rule gates on it),
+  so there's no scope env to hand-map to a claim. A verified-but-unauthorized
+  token logs its claim keys at debug to make `AUTH_ADMIN_ID` rules easy to target.
+- `AUTH_ADMIN_ID` is now fail-closed: an unset/blank value grants admin to **no**
+  verified SSO login (previously it admitted any). To admit every verified login
+  — delegating authorization to your IdP/edge — set `AUTH_ADMIN_ID=any`; otherwise
+  list claim matchers (`groups:admins`, `email:you@example.com`). A malformed
+  value (not `key:value` and not `any`) is now a fatal startup
+  error instead of silently denying everyone, and Nexus warns at boot if SSO is
+  configured but no admin path (login or password) can grant access.
+- Operator-facing admin terminology is now consistent: the two methods are named
+  **password** (shared secret) and **SSO** (identity-provider login) in the boot
+  summary, warnings, and docs. `OIDC`/`JWT` remain only where the protocol or
+  token itself is meant (env-var reference, the `Bearer <jwt>` API header).
+- Connection-level lines ("Connected by X", "Connection upgraded to X",
+  "Connection closed ...") now print to the browser console instead of the
+  in-game console; the active transport also shows in the lower-right
+  "Connected by:" overlay (see Added). A plain `console.info` can't re-enter the
+  renderer, so this is safe when a transport callback fires mid-Asyncify-suspend
+  and removes the Cbuf deferral the game-console path needed.
+- Orchestration logs now identify a server by its `servers.ini` line directly:
+  the internal server id equals the 1-based line number, so `Server 2 …` always
+  means line 2. Dropped the redundant `Server N enabled for line N (autoscaling)`
+  startup line and the doubled line number in the replica-launch log.
+- Silenced quic-go's one-time "failed to sufficiently increase receive buffer
+  size" stderr line on WebTransport startup (benign for our datagram volume;
+  the real tuning knob is the host `sysctl net.core.rmem_max`). The same pointer
+  is now emitted at debug instead.
+- HTTP server errors now route through `slog`, and benign per-connection TLS
+  handshake noise (SNI-less scanners, SSLv2/old-version probes, mid-handshake
+  resets) is demoted to debug — a public 443 attracts a steady stream of these.
+  Genuine cert-issuance failures (an `acme/autocert` error other than the
+  SNI-less "missing server name") stay at warn.
+
+### Removed
+- The auto-rotating self-signed WebTransport certificate manager. WebTransport
+  now uses the same `CERT_DIR` cert (ACME or BYO) as HTTPS. (The WebTransport
+  e2e suite serves a self-signed cert the client pins by
+  `serverCertificateHashes` — test-only, not in the shipped product.)
+- Client network diagnostics: the `net_diag` cvar, the `netdiag`/`netdiag reset`
+  console commands, and the per-transport status/last-error readout they printed.
+  The lower-right "Connected by:" indicator and the browser-console connection
+  lines cover the active transport.
+
+## 1.11.1
+
+### Changed
+- `fov_adapt` now defaults to `1` (pure Hor+) instead of `0.5`, matching QuakeSpasm,
+  Ironwail, vkQuake, and DarkPlaces. It is also archived now, so a personal blend
+  value persists across sessions instead of silently resetting on reload.
+
+### Fixed
+- Hor+ FOV scaling now applies on the same refdef recalc as a video mode change.
+  `SCR_CalcRefdef` computed the aspect from the previous recalc's view rect, so the
+  boot-time switch into an archived widescreen mode (and any mid-session mode change)
+  left the FOV unscaled until something else forced a recalc (intermission, or
+  touching `fov`/`viewsize`/`fov_adapt`).
+
 ## 1.11.0
 
 ### Added
@@ -11,7 +132,7 @@ Versioning note: entries through `0.19.x` represent pre-1.0 development history.
   `wt.go`, `trunk/webtransport/`). The client tests for a landed WT handshake and
   adopts it over the existing WebSocket path; falls forward to WebSocket automatically
   when WT is absent or fails.
-- Active transport shown in the in-game console and `netdiag` output; `rcon` appends
+- Active transport surfaced to the player on connect/upgrade; `rcon` appends
   the source transport in parens after the client IP.
 
 ### Changed

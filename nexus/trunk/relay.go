@@ -129,7 +129,8 @@ func (s *Session) sendFrame(frame []byte, drop bool) {
 	case <-s.ctx.Done():
 	case s.tx <- frame:
 	default:
-		slog.Warn("trunk tx channel full, dropping packet")
+		// Drop silently and count; End() logs one summary per session.
+		s.txDropped.Add(1)
 	}
 }
 

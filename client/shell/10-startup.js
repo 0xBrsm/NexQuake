@@ -484,6 +484,9 @@ Module = Object.assign(Module || {}, {
     Module.nexquakeAutoSMenuOnFirstLoad = config.smenuOnFirstLoad === true;
     Module.nexquakeSendArgs = Array.isArray(config.sendArgs) ? config.sendArgs.slice() : [];
     Module.nexquakeURLArgs = config.urlArgs === true;
+    // Public OIDC params for client-side `rcon login` PKCE, or null when Nexus
+    // isn't OIDC-configured (the rcon shell then uses password / edge login).
+    Module.nexquakeOIDC = (config.oidc && typeof config.oidc === 'object') ? config.oidc : null;
     Module.nexquakeMainArgs = buildMainArgs();
     Module.nexquakeTouchEnabled = Module.nexquakeMainArgs.indexOf('-notouch') === -1;
     configureStartupMemory(Module.nexquakeMainArgs);
