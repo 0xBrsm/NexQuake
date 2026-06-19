@@ -235,6 +235,12 @@ function nqStartGameRuntime() {
       Module.hideConsole();
     if (!nqFirstStartHooksRan) {
       nqFirstStartHooksRan = true;
+      // Host_Init just ran the client-side precaches (CL_InitTEnts temp-entity
+      // sounds, S_Init ambient sounds) that no server sound_precache list carries
+      // and CL_Prefetch never sees. Warm them in the background now — the VFS
+      // manifest is already mounted — so their first in-game play (e.g. a rocket
+      // explosion on a frag) doesn't trigger a blocking synchronous fetch.
+      nqWasmPrefetchKnownSounds();
       if (Module.nexquakeAutoSMenuOnFirstLoad === true) {
         if (!nqWasmExecCommand('smenu'))
           console.info('Auto-open server search menu skipped: wasm command bridge unavailable');

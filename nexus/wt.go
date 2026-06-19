@@ -31,7 +31,7 @@ import (
 // runtime supplies a QUIC cert source (EXTERNAL_URL set). Returns the
 // configured *qwt.Server (caller drives ListenAndServe and Close) or nil
 // when WT is disabled.
-func setupWebTransport(app *nexusApp, rt *tlsRuntime) (*qwt.Server, error) {
+func setupWebTransport(app *nexusApp, rt *tlsRuntime, mux *http.ServeMux) (*qwt.Server, error) {
 	if rt.getWTCert == nil {
 		return nil, nil
 	}
@@ -80,8 +80,17 @@ func setupWebTransport(app *nexusApp, rt *tlsRuntime) (*qwt.Server, error) {
 	wt.H3.TLSConfig = http3.ConfigureTLSConfig(wt.H3.TLSConfig)
 	qwt.ConfigureHTTP3Server(wt.H3)
 
+	// A browser that has discovered the origin speaks HTTP/3 — which happens
+	// as soon as a WebTransport session opens a QUIC connection here — will
+	// route ordinary page and asset requests over h3 too, not just /connect.
+	// Serve the full app mux on h3 so those requests behave exactly as they do
+	// on the TCP/HTTP-2 listener; without this they hit a /connect-only mux and
+	// return 404 intermittently (whichever transport the browser picks).
+	// /connect (the h3-only WebTransport upgrade) is the more specific pattern,
+	// so it still takes precedence over the "/" delegation.
 	h3mux := http.NewServeMux()
 	h3mux.HandleFunc("/connect", app.handleWebTransport(wt))
+	h3mux.Handle("/", mux)
 	wt.H3.Handler = app.access.HTTPGate(h3mux)
 	return wt, nil
 }

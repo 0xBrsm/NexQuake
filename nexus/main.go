@@ -151,7 +151,7 @@ func main() {
 	mux := app.newMux()
 	setupWebSocket(app, mux)
 
-	wtServer, err := setupWebTransport(app, tlsRT)
+	wtServer, err := setupWebTransport(app, tlsRT, mux)
 	if err != nil {
 		fatalf("WebTransport setup: %v", err)
 	}

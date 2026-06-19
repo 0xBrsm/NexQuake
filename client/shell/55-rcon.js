@@ -205,7 +205,7 @@
 
   function formatServerList(result) {
     var servers = (result && result.servers) || [];
-    if (servers.length === 0) return '\nno quake servers found.\n\n';
+    if (servers.length === 0) return '\nno quake servers found\n\n';
     var out = '\n' +
       pad('#', 3) + ' ' + pad('Server', 15) + ' ' + pad('Candidate', 9) + ' ' +
       pad('Game', 15) + ' ' + pad('Users', 12) + ' ' + 'State\n' +
@@ -230,7 +230,7 @@
 
   function formatServerInstances(result) {
     var servers = (result && result.servers) || [];
-    if (servers.length === 0) return '\nno quake servers found.\n\n';
+    if (servers.length === 0) return '\nno quake servers found\n\n';
     var out = '';
     var any = false;
     for (var i = 0; i < servers.length; i++) {
@@ -254,7 +254,7 @@
                pad(inst.map_name || '?', 15) + ' ' + pad(users, 7) + ' ' + (inst.state || '') + '\n';
       }
     }
-    if (!any) return '\nno running server instances found.\n\n';
+    if (!any) return '\nno running server instances found\n\n';
     return out + '== end list ==\n\n';
   }
 
@@ -271,7 +271,7 @@
 
   function formatClientList(result) {
     var clients = (result && result.clients) || [];
-    if (clients.length === 0) return '\nno active clients.\n\n';
+    if (clients.length === 0) return '\nno active clients\n\n';
     var out = '\n' +
       pad('NQIP', 15) + ' ' + pad('Source', 20) + ' ' + pad('Identity', 19) + ' ' +
       pad('Server', 15) + ' ' + 'Port\n' +
@@ -322,7 +322,7 @@
 
   function formatLogsTail(result) {
     var lines = (result && result.lines) || [];
-    if (lines.length === 0) return 'no buffered Nexus logs.\n';
+    if (lines.length === 0) return 'no buffered Nexus logs\n';
     return lines.join('\n') + '\n';
   }
 
@@ -395,7 +395,7 @@
       if (parsed.error) {
         var msg = 'rcon: ' + (parsed.error.message || 'error');
         var hint = parsed.error.data && parsed.error.data.hint;
-        if (hint) msg += '. ' + hint;
+        if (hint) msg += ' - ' + hint;
         return { error: msg + '\n' };
       }
       return { result: parsed.result };
@@ -410,17 +410,21 @@
   // --- OIDC client-side login (Authorization Code + PKCE) ---
   //
   // Used when Nexus is exposed directly with OIDC configured (Module.nexquakeOIDC
-  // present): the shell runs the whole flow itself and holds the resulting
-  // id_token, sent as Bearer on POST /rcon. When OIDC config is absent we fall
-  // back to runEdgeLogin (a fronting access gate does the IdP round-trip).
+  // present): the shell drives the Authorization Code flow itself, then POSTs the
+  // code + PKCE verifier to Nexus's same-origin /rcon/session, which exchanges it
+  // server-side and sets an httpOnly nq_session cookie (the id_token never enters
+  // JS). When OIDC config is absent we fall back to runEdgeLogin (a fronting
+  // access gate does the IdP round-trip and sets its own cookie).
   //
   // COOP-same-origin on the WASM page severs window.opener, so the popup can't
-  // message us back. Instead the GET /rcon callback page writes the code+state
-  // to localStorage and we pick it up here via a storage event (with a poll as
-  // a belt-and-braces fallback). We then exchange the code for tokens directly
-  // against the IdP — a public-client, no-secret flow IdPs enable CORS for.
+  // message us back. Both flows instead hand off through the GET /rcon landing
+  // page, which writes to localStorage; we pick it up via a storage event (with a
+  // poll as a belt-and-braces fallback). The login outcome is surfaced by
+  // notifyLoginOutcome — a console line always, plus a toast on touch devices.
 
-  var OIDC_CALLBACK_KEY = 'nq_rcon_oidc_cb';  // popup -> opener handoff (code/state)
+  // popup -> opener handoff written by the GET /rcon landing page. The key string
+  // must match Nexus's rconLoginLandingTmpl (src/nexus/connect.go).
+  var LOGIN_CALLBACK_KEY = 'nq_rcon_oidc_cb';
 
   // base64url-encode a byte array (no padding), per RFC 7636.
   function b64url(bytes) {
@@ -453,10 +457,13 @@
     return meta;
   }
 
-  // Resolve once the callback page hands back {code} for our state, or reject on
-  // IdP error / state mismatch / timeout. Listens for the storage event and also
-  // polls, since the event only fires in *other* documents and timing varies.
-  function waitForOidcCallback(expectedState) {
+  // Resolve with the handoff object the GET /rcon landing page relays through
+  // localStorage — {code,state,error} for the PKCE callback, {authorized} for the
+  // edge-gated callback — or reject on timeout. Payload validation is left to the
+  // caller (completePkceLogin checks state/code; completeEdgeLogin reads
+  // authorized). Listens for the storage event and also polls, since the event
+  // only fires in *other* documents and timing varies.
+  function waitForLoginCallback() {
     return new Promise(function (resolve, reject) {
       var settled = false, poll, timer;
       function settle(fn, arg) {
@@ -469,18 +476,14 @@
       }
       function tryRead() {
         var raw;
-        try { raw = localStorage.getItem(OIDC_CALLBACK_KEY); } catch (e) { return; }
+        try { raw = localStorage.getItem(LOGIN_CALLBACK_KEY); } catch (e) { return; }
         if (!raw) return;
-        try { localStorage.removeItem(OIDC_CALLBACK_KEY); } catch (e) { /* ignore */ }
+        try { localStorage.removeItem(LOGIN_CALLBACK_KEY); } catch (e) { /* ignore */ }
         var o;
         try { o = JSON.parse(raw); } catch (e) { return; }
-        if (!o) return;
-        if (o.error) return settle(reject, new Error(o.error));
-        if (o.state !== expectedState) return settle(reject, new Error('login state mismatch'));
-        if (!o.code) return settle(reject, new Error('login returned no code'));
-        settle(resolve, o.code);
+        if (o) settle(resolve, o);
       }
-      function onStorage(e) { if (e.key === OIDC_CALLBACK_KEY) tryRead(); }
+      function onStorage(e) { if (e.key === LOGIN_CALLBACK_KEY) tryRead(); }
       window.addEventListener('storage', onStorage);
       poll = setInterval(tryRead, 300);
       timer = setTimeout(function () { settle(reject, new Error('login timed out')); }, 180000);
@@ -490,15 +493,13 @@
 
   async function runPkceLogin(oidc) {
     if (!(window.crypto && crypto.subtle)) {
-      showAdminToast('rcon: this browser lacks WebCrypto; cannot run OIDC login.');
-      return '';
+      return reportLoginError('rcon: this browser lacks WebCrypto; cannot run OIDC login');
     }
     var meta;
     try {
       meta = await discoverOidc(oidc.issuer);
     } catch (e) {
-      showAdminToast('rcon: ' + (e && e.message ? e.message : String(e)));
-      return '';
+      return reportLoginError('rcon: ' + (e && e.message ? e.message : String(e)));
     }
 
     var verifier = randomToken();
@@ -516,24 +517,23 @@
     authURL.searchParams.set('code_challenge', challenge);
     authURL.searchParams.set('code_challenge_method', 'S256');
 
-    try { localStorage.removeItem(OIDC_CALLBACK_KEY); } catch (e) { /* ignore stale */ }
+    try { localStorage.removeItem(LOGIN_CALLBACK_KEY); } catch (e) { /* ignore stale */ }
 
-    var pending = waitForOidcCallback(state);
+    var pending = waitForLoginCallback();
     setRconLoginActive(true);
     var popup = window.open(authURL.toString(), 'nq_rcon_login', 'width=500,height=650');
     if (!popup) {
       setRconLoginActive(false);
-      showAdminToast('rcon: pop-up blocked. allow pop-ups for this site, then run rcon login.');
-      return '';
+      return reportLoginError('rcon: pop-up blocked - allow pop-ups for this site, then run rcon login');
     }
 
     // Detach the long, interactive tail — waiting for the popup's callback, then
     // the server-side token exchange — from the caller. `rcon login` runs inside
     // a suspended Asyncify engine frame (cmd_rcon.c); awaiting the full flow here
     // would freeze the engine for the entire login and idle out the game
-    // transport. The outcome is shown by the admin toast (whose OK click restores
-    // fullscreen), not the console — async JS can't print to the engine console.
-    completePkceLogin(pending, verifier);
+    // transport. completePkceLogin surfaces the outcome (console line + mobile
+    // toast) once it lands, well after this frame has resumed.
+    completePkceLogin(pending, verifier, state);
     return '';
   }
 
@@ -548,16 +548,53 @@
     } catch (e) { /* ignore */ }
   }
 
-  // showAdminToast surfaces the login outcome via the overlay's single-OK notice
-  // (DOM, so it renders even when unfullscreened — the engine console can't be
-  // printed to asynchronously). The OK click is the user gesture that re-enters
-  // fullscreen; the engine state was never touched, so the user lands back
-  // exactly where they launched `rcon login`. Resolves when dismissed.
+  // notifyLoginOutcome surfaces a completed login's result. The console line is
+  // emitted on every device via NQWasm_ExecCommand (which queues into Cbuf — see
+  // sys_wasm.c) and is the primary signal on desktop; touch devices additionally
+  // get the admin toast, since the console isn't reachable behind the fullscreen
+  // game. MUST be called only from the detached login tail (completePkceLogin /
+  // completeEdgeLogin), never the suspended rcon frame: queuing the echo re-enters
+  // the engine, which is unsafe while an EM_ASYNC_JS frame is parked (cmd_rcon.c).
+  function notifyLoginOutcome(message) {
+    nqWasmExecCommand('echo ' + quoteForConsole(message));
+    if (typeof Module !== 'undefined' && Module && Module.nqIsTouchInput)
+      showAdminToast(message);
+  }
+
+  // Wrap a status line as a single `echo` argument. The engine's command
+  // tokenizer ends a quoted token at the first double-quote, so any embedded
+  // double-quotes are swapped to single quotes (our messages are otherwise plain
+  // single-line ASCII).
+  function quoteForConsole(message) {
+    return '"' + String(message == null ? '' : message).replace(/"/g, "'") + '"';
+  }
+
+  // reportLoginError surfaces a login failure that happens synchronously, before
+  // the flow detaches — i.e. still inside the suspended rcon frame (cmd_rcon.c),
+  // where a console echo (engine re-entry) is unsafe. So instead of echoing, we
+  // return the message for the engine to print once the frame resumes (desktop's
+  // console channel); touch devices also get the toast, since the console isn't
+  // reachable behind the fullscreen game. Same desktop=console / mobile=toast
+  // split as notifyLoginOutcome, just reached without re-entering the engine.
+  function reportLoginError(message) {
+    if (typeof Module !== 'undefined' && Module && Module.nqIsTouchInput)
+      showAdminToast(message);
+    return message + '\n';
+  }
+
+  // showAdminToast surfaces a message via the overlay's single-OK notice (DOM, so
+  // it renders even when unfullscreened). On touch devices the OK click is the
+  // gesture that re-enters fullscreen (the login popup dropped the game out of
+  // it); on desktop we leave fullscreen alone — forcing it on OK there was the
+  // source of the janky enter/exit. The engine state is untouched, so the user
+  // lands back where they launched `rcon login`. Resolves when dismissed.
   function showAdminToast(message) {
     var ctx = (typeof Module !== 'undefined' && Module && Module.nqOverlayCtx) || null;
     if (!ctx || typeof ctx.noticeAsync !== 'function')
       return Promise.resolve(false);
     return ctx.noticeAsync(message, 'OK', function () {
+      if (!(typeof Module !== 'undefined' && Module && Module.nqIsTouchInput))
+        return;
       try {
         if (typeof Module.nqRequestFullscreen === 'function')
           Module.nqRequestFullscreen();
@@ -565,55 +602,81 @@
     });
   }
 
-  // completePkceLogin runs the detached tail of runPkceLogin: await the code the
-  // callback page relays, POST it with the PKCE verifier to Nexus's same-origin
-  // /rcon/session (which exchanges it server-side — the IdP token endpoint isn't
-  // browser-CORS-reachable — and sets the httpOnly nq_session cookie so the
-  // id_token never enters JS), then show the admin toast with the outcome. Never
+  // completePkceLogin runs the detached tail of runPkceLogin: await the handoff the
+  // callback page relays, validate the PKCE state, POST the code + verifier to
+  // Nexus's same-origin /rcon/session (which exchanges it server-side — the IdP
+  // token endpoint isn't browser-CORS-reachable — and sets the httpOnly nq_session
+  // cookie so the id_token never enters JS), then surface the outcome. Never
   // throws; it owns the nqRconLoginActive flag for the flow's lifetime.
-  async function completePkceLogin(pending, verifier) {
+  async function completePkceLogin(pending, verifier, expectedState) {
     var message;
     try {
-      var code = await pending;
+      var cb = await pending;
+      if (cb.error) throw new Error(cb.error);
+      if (cb.state !== expectedState) throw new Error('login state mismatch');
+      if (!cb.code) throw new Error('login returned no code');
       var resp = await fetch(new URL('/rcon/session', location.href).toString(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ code: code, code_verifier: verifier }),
+        body: JSON.stringify({ code: cb.code, code_verifier: verifier }),
       });
       if (resp.ok) {
         var data = {};
         try { data = await resp.json(); } catch (e) { /* tolerate empty body */ }
         message = (data && data.authorized)
-          ? 'rcon: authenticated.'
-          : 'rcon: signed in, but not an admin.';
+          ? 'rcon: authenticated'
+          : 'rcon: account not authorized';
       } else {
-        message = 'rcon: login failed (HTTP ' + resp.status + ').';
+        message = 'rcon: login failed (HTTP ' + resp.status + ')';
       }
     } catch (e) {
       message = 'rcon: login failed: ' + (e && e.message ? e.message : String(e));
     }
     try {
-      await showAdminToast(message);
+      notifyLoginOutcome(message);
     } finally {
       setRconLoginActive(false);
     }
   }
 
   // Edge-gated login: open /rcon as a top-level popup so a fronting access gate
-  // (e.g. Cloudflare Access) runs its IdP flow and sets its cookie. If already
-  // authenticated the popup just flashes through the auto-close landing page;
-  // either way Nexus pushes "rcon: authenticated." down the trunk control
-  // channel once a GET /rcon hit carries admin-grade credentials. The shell
-  // discovers success by polling POST /rcon — no client-side state checks.
+  // (e.g. Cloudflare Access) runs its IdP flow and sets its cookie. The GET /rcon
+  // landing page then relays the authorization outcome Nexus computed for that hit
+  // through localStorage (the same handoff the PKCE callback uses — see
+  // waitForLoginCallback), which completeEdgeLogin turns into the login outcome.
   function runEdgeLogin() {
+    try { localStorage.removeItem(LOGIN_CALLBACK_KEY); } catch (e) { /* ignore stale */ }
+    var pending = waitForLoginCallback();
+    setRconLoginActive(true);
     var loginURL = resolveRPCURL();
     var popup = window.open(loginURL, 'nq_rcon_login', 'width=500,height=600');
     if (!popup) {
-      return 'rcon: pop-up blocked. open ' + loginURL + ' in a new tab,\n' +
-             '      log in to continue.\n';
+      setRconLoginActive(false);
+      return reportLoginError('rcon: pop-up blocked - allow pop-ups for this site, then run rcon login');
     }
+    completeEdgeLogin(pending);
     return '';
+  }
+
+  // completeEdgeLogin runs the detached tail of runEdgeLogin: await the
+  // {authorized} outcome the landing page relays and surface it. Never throws; it
+  // owns the nqRconLoginActive flag for the flow's lifetime.
+  async function completeEdgeLogin(pending) {
+    var message;
+    try {
+      var cb = await pending;
+      message = (cb && cb.authorized)
+        ? 'rcon: authenticated'
+        : 'rcon: account not authorized';
+    } catch (e) {
+      message = 'rcon: login failed: ' + (e && e.message ? e.message : String(e));
+    }
+    try {
+      notifyLoginOutcome(message);
+    } finally {
+      setRconLoginActive(false);
+    }
   }
 
   // Route `rcon login` to the client-side PKCE flow when Nexus advertises OIDC
@@ -640,7 +703,7 @@
       if (plan.clientCmd === 'login') return await runClientLogin();
 
       var r = await postRPC(plan.method, plan.params, String(password || ''));
-      if (r.needsLogin) return 'rcon: not authenticated. run: rcon login.\n';
+      if (r.needsLogin) return 'rcon: not authenticated - run rcon login\n';
       if (r.error) return r.error;
       return formatResult(plan.method, r.result);
     } catch (e) {

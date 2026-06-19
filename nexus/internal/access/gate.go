@@ -178,13 +178,13 @@ func buildUnauthorizedHint(auth *Auth, jwt *JWTVerifier) string {
 	jwtAdmin := jwt != nil && auth.AllowsJWTAdmin()
 	switch {
 	case password && jwtAdmin:
-		return "set rcon_password <secret> or run rcon login."
+		return "set rcon_password <secret> or run rcon login"
 	case password:
-		return "set rcon_password <secret>."
+		return "set rcon_password <secret>"
 	case jwtAdmin:
-		return "run rcon login."
+		return "run rcon login"
 	default:
-		return "admin auth not configured (set AUTH_RCON_PASSWORD, or AUTH_ISSUER/AUTH_AUDIENCE with AUTH_ADMIN_ID)."
+		return "admin auth not configured (set AUTH_RCON_PASSWORD, or AUTH_ISSUER/AUTH_AUDIENCE with AUTH_ADMIN_ID)"
 	}
 }
 

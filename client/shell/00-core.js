@@ -170,6 +170,13 @@ function nqWasmStartMainLoop() {
   return nqWasmCall('NQWasm_StartMainLoop', 'void', [], [], null) !== null;
 }
 
+// Warm the engine's client-side precache set (temp-entity + ambient sounds,
+// registered during Host_Init) that no server sound_precache list covers. Kicks
+// a non-blocking background fetch; safe to call once the engine has booted.
+function nqWasmPrefetchKnownSounds() {
+  return nqWasmCall('NQWasm_PrefetchKnownSounds', 'void', [], [], null) !== null;
+}
+
 function nqWasmGetKeyBinding(key) {
   var binding = nqWasmCall('NQWasm_GetKeyBinding', 'string', ['number'], [Number(key) | 0], '');
   return binding || '';

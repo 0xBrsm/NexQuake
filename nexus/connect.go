@@ -36,13 +36,13 @@ func init() {
 	_ = mime.AddExtensionType(".pak", "application/octet-stream")
 }
 
-// rconLoginLandingHTML is served at GET /rcon. It backs two popup login flows,
+// rconLoginLandingTmpl is served at GET /rcon. It backs two popup login flows,
 // distinguished by whether the URL carries an OAuth `code`/`error`:
 //
 //   - Edge-gated (no query): a fronting access gate (e.g. Cloudflare Access on
 //     the /rcon path) ran its IdP flow and landed the popup back here with its
-//     cookie set. The page just closes; the shell discovers success by polling
-//     POST /rcon.
+//     cookie set. The page relays the authorization outcome Nexus computed for
+//     this hit (the %t) to the opener through localStorage, then closes.
 //   - Client-side PKCE (code present): Nexus is exposed directly with OIDC
 //     configured, so the shell itself drove the Authorization Code flow and the
 //     IdP redirected the popup back here. The page relays the code+state to the
@@ -51,8 +51,9 @@ func init() {
 // Both hand off through storage rather than postMessage because the WASM page
 // sets COOP-same-origin (for SharedArrayBuffer), which severs window.opener the
 // moment the popup navigates to the IdP. localStorage is shared per-origin and
-// fires a `storage` event in the opener, so it survives that severance.
-const rconLoginLandingHTML = `<!doctype html>
+// fires a `storage` event in the opener, so it survives that severance. The key
+// string must match the client shell's LOGIN_CALLBACK_KEY (55-rcon.js).
+const rconLoginLandingTmpl = `<!doctype html>
 <html><head><meta charset="utf-8"><title>rcon</title></head>
 <body><script>
 (function(){
@@ -63,6 +64,8 @@ const rconLoginLandingHTML = `<!doctype html>
       localStorage.setItem('nq_rcon_oidc_cb', JSON.stringify({
         code: code || '', state: state || '', error: error || ''
       }));
+    } else {
+      localStorage.setItem('nq_rcon_oidc_cb', JSON.stringify({ authorized: %t }));
     }
   } catch (e) {}
   window.close();
@@ -71,6 +74,20 @@ const rconLoginLandingHTML = `<!doctype html>
 <p>Authenticated. You can close this window.</p>
 </body></html>
 `
+
+// renderRconLanding fills rconLoginLandingTmpl with the edge-gated authorization
+// outcome. The PKCE branch ignores it (that hit carries no admin creds yet — the
+// token exchange happens later at POST /rcon/session).
+func renderRconLanding(authorized bool) string {
+	// Substitute rather than fmt.Sprintf: the template is HTML/CSS/JS where a
+	// stray % (e.g. width:100%, a %-encoded URL) would otherwise be parsed as a
+	// format verb and corrupt the output or panic.
+	authStr := "false"
+	if authorized {
+		authStr = "true"
+	}
+	return strings.ReplaceAll(rconLoginLandingTmpl, "%t", authStr)
+}
 
 // rconMaxBody caps the size of a POST /rcon body. Admin JSON-RPC envelopes
 // are tiny — method string + a handful of params — so 8 KiB is generous.
@@ -205,45 +222,6 @@ func (app *nexusApp) handleControlFrame(s *trunk.Session, payload []byte) {
 		// queue means a stalled client — dropping the reply mirrors UDP, and
 		// the engine re-sends slist requests anyway.
 		_ = s.TrySendControl(app.serverMgr.BuildSlistResponse())
-	}
-}
-
-// notifyRconLoginComplete pushes a console echo down the trunk control
-// channel to every active session sharing r's source IP, so admins see
-// "rcon: authenticated" in their game console the moment a GET /rcon hit
-// carries admin-grade credentials (e.g. a front-injected JWT after its IdP
-// login flow lands the popup back on /rcon).
-//
-// Gated behind AuthorizeAdmin so an unauthenticated GET /rcon hit can't be
-// used as an amplification primitive to spam echoes at a chosen IP — only
-// requests Nexus would actually authorize as admin trigger the push;
-// absent any admin auth, the popup signal is silent.
-//
-// Source-IP keying is intentionally loose: multiple tabs from one IP all
-// see the echo (harmless), and behind a NAT it could reach a sibling
-// session (also harmless — the echo is a UI signal only).
-func (app *nexusApp) notifyRconLoginComplete(r *http.Request) {
-	req := app.access.Request(r)
-	if !app.access.AuthorizeAdmin(req, r) {
-		return
-	}
-	app.pushRconConsole(req.Client.SourceIP, `echo "rcon: authenticated."`)
-}
-
-// pushRconConsole runs a console command on any trunk client at sourceIP via
-// the control channel. It's how login outcomes reach the in-game console
-// asynchronously — the engine isn't suspended waiting for them (login is
-// detached from the rcon Asyncify frame, see src/client/shell/55-rcon.js), so
-// the transport stays live to receive the push.
-func (app *nexusApp) pushRconConsole(sourceIP, command string) {
-	if app.clients == nil || sourceIP == "" {
-		return
-	}
-	payload := admin.ClientCommandPayload(command)
-	for _, conn := range app.clients.List() {
-		if conn.SourceIP == sourceIP {
-			conn.PushControl(payload)
-		}
 	}
 }
 
@@ -421,16 +399,16 @@ func (app *nexusApp) newMux() *http.ServeMux {
 	// GET /rcon is the in-game rcon shell's login popup target, for both the
 	// edge-gated flow (a fronting access gate round-trips its IdP and lands
 	// back here with its cookie set) and the client-side PKCE callback (the
-	// IdP redirects back here with a `code`). See rconLoginLandingHTML for how
-	// the page distinguishes them. For the edge flow the server also pushes a
-	// "rcon: authenticated" console echo to any trunk session at the request's
-	// source IP, so the admin sees it without the popup-tracking machinery
-	// COOP-same-origin breaks; the PKCE flow prints its own result instead.
+	// IdP redirects back here with a `code`). See rconLoginLandingTmpl for how
+	// the page distinguishes them. For the edge flow the landing page relays the
+	// authorization outcome — computed here via AuthorizeAdmin — to the opener
+	// through localStorage; the shell turns both flows' outcomes into the login
+	// result (a console line, plus a toast on touch devices).
 	mux.HandleFunc("GET /rcon", func(w http.ResponseWriter, r *http.Request) {
-		app.notifyRconLoginComplete(r)
+		authorized := app.access.AuthorizeAdmin(app.access.Request(r), r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		_, _ = io.WriteString(w, rconLoginLandingHTML)
+		_, _ = io.WriteString(w, renderRconLanding(authorized))
 	})
 
 	mux.HandleFunc("POST /rcon", app.handleRcon)

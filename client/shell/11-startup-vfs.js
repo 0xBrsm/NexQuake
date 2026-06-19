@@ -99,8 +99,14 @@
     // Emscripten's built-in FS.createLazyFile only supports browser lazy-loading in Web Workers.
     // NexQuake runs on the main thread, so we implement a tiny "lazy remote file" wrapper:
     // - Create the file node up-front so Quake can open it.
-    // - On first read/open, download the full file into MEMFS (blocking via ASYNCIFY).
-    // This preserves Quake's synchronous filesystem model while avoiding upfront downloads.
+    // - On first read/open, download the full file into MEMFS via a SYNCHRONOUS XHR
+    //   (see ensureLoaded below). This preserves Quake's synchronous filesystem model
+    //   without an upfront download, but the fetch blocks the whole client (engine,
+    //   rendering, input) until it returns.
+    // In practice the synchronous fetch is a fallback: CL_Prefetch (cl_prefetch.c) warms a
+    // connection's precache list asynchronously and in parallel — and blocks the load on it —
+    // before precache reads those files, so a cold synchronous fetch only hits assets prefetch
+    // didn't cover (e.g. files outside the precache list, or prefetch timeouts/failures).
     function createRemoteFile(parent, name, url, size) {
       var node = FS.createFile(parent, name, null, true, false);
       node.url = url;
@@ -326,14 +332,32 @@
     Module.nexquakePrefetchEnqueue = enqueuePrefetch;
     Module.nexquakePrefetchStart = startPrefetch;
 
-    function prefetchGfx() {
+    // Boot-time warm of core base-game assets the engine reaches for immediately
+    // (menu/HUD) that no server precache list covers. Matched by manifest PATH
+    // PREFIX so there's no hardcoded file list to drift — we warm the directory and
+    // the manifest enumerates its contents:
+    //   gfx/         — menu + HUD graphics, palette, conchars
+    //   sound/misc/  — UI sounds: menu nav (menu1-3), talk, key/secret pickups
+    // The engine's other client-side precached sounds (temp-entity weapon/monster
+    // hits, ambient) are scattered across sound/weapons|wizard|... where a prefix
+    // would drag in every gameplay sound, so those are warmed from the engine's sfx
+    // registry instead — see NQWasm_PrefetchKnownSounds (cl_prefetch.c), kicked once
+    // the engine has booted. The two together are the boot warm set.
+    var CORE_ASSET_PREFIXES = ['gfx/', 'sound/misc/'];
+    function prefetchCoreAssets() {
       var entries = manifestBundle && manifestBundle[baseGame];
       var paths = [];
+      var i;
       if (!Array.isArray(entries)) return;
       entries.forEach(function(ent) {
         var path = String(ent && ent.path || '').trim().toLowerCase();
-        if (path && path.indexOf('gfx/') === 0)
-          paths.push(path);
+        if (!path) return;
+        for (i = 0; i < CORE_ASSET_PREFIXES.length; i++) {
+          if (path.indexOf(CORE_ASSET_PREFIXES[i]) === 0) {
+            paths.push(path);
+            break;
+          }
+        }
       });
       if (paths.length > 0)
         prefetchMany(paths, Module.nexquakePrefetchConcurrency);
@@ -693,7 +717,7 @@
     refreshStartBundle()
       .then(function() {
         Module.nexquakeActiveGame = baseGame;
-        prefetchGfx();
+        prefetchCoreAssets();
         startManifestRefreshLoop();
         nqSetBootstrapPhase(3);
         Module.addRunDependency(syncDependencyId);

@@ -417,8 +417,20 @@ static const uint8_t keymap[256] = {
 // EM_JS helpers
 // ---------------------------------------------------------------------------
 EM_JS(void, js_request_pointerlock, (), {
-	var p = document.getElementById('canvas').requestPointerLock();
-	if (p && p.catch) p.catch(function(){});
+	// Request RAW (unaccelerated) pointer movement: movementX/Y then comes straight
+	// from the device instead of through the OS pointer-acceleration / ballistics
+	// curve (Windows "Enhance pointer precision", pointer-speed slider, DPI scaling).
+	// Default (accelerated) movement makes mouselook nonlinear and floaty vs native
+	// and is a known source of erratic aim and outsized movement deltas in browser
+	// FPS games. Falls back to plain pointer lock where unadjustedMovement is
+	// unsupported (Firefox/Safari).
+	var el = document.getElementById('canvas');
+	if (!el || !el.requestPointerLock) return;
+	function plain() { try { var q = el.requestPointerLock(); if (q && q.catch) q.catch(function(){}); } catch (e) {} }
+	var p;
+	try { p = el.requestPointerLock({ unadjustedMovement: true }); }
+	catch (e) { plain(); return; }
+	if (p && p.then) p.then(function(){}, function(){ plain(); });
 });
 
 EM_JS(int, js_overlay_modal_open, (), {
