@@ -4,6 +4,22 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.12.1
+
+### Changed
+- Crosshair is now enabled by default.
+- Mouselook requests raw (unaccelerated) pointer movement from the browser.
+
+### Fixed
+- HTTP/3 page loads no longer intermittently 404; the WebTransport h3 listener
+  now serves the full app mux, not just `/connect`.
+- Reduced first-use audio hitches by prefetching the client sound precache set
+  and warming core UI sounds at boot.
+- `rcon login` reports its outcome consistently by device (console always;
+  mobile toast) across both edge-gated and PKCE flows.
+- The `rcon login` landing page is rendered via string substitution instead of
+  `fmt.Sprintf`, avoiding format-verb corruption from `%` in the HTML template.
+
 ## 1.12.0
 
 ### Added
