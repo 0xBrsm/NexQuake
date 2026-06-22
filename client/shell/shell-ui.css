@@ -64,23 +64,37 @@ canvas.emscripten {
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
-  /* Stable hit-zone so the collapsed (text-hidden) state stays double-clickable. */
-  min-width: 116px;
+  /* Stable hit-zone so the collapsed state stays double-clickable. */
+  min-width: 54px;
   min-height: 34px;
-  text-align: right;
-  color: #ccc;
-  font-family: Arial,Helvetica,sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  /* Match the "WebAssembly" launch-page subtitle (#nq-loader-sub). */
+  color: #555;
+  font-family: monospace;
   line-height: 1.2;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.85);
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.85));
 }
 #nq-transport[hidden] { display: none; }
-#nq-transport .nq-transport-label { font-size: 12px; opacity: 0.7; }
-#nq-transport .nq-transport-name { font-family: var(--nq-font-ui); font-size: 14px; font-weight: bold; }
-/* Collapsed: hide the readout but keep the corner as an invisible toggle target. */
-#nq-transport.nq-transport-collapsed .nq-transport-label,
-#nq-transport.nq-transport-collapsed .nq-transport-name { display: none; }
+/* Chip art (glyph + lettering) is the quake-glyphs.svg, both states stacked;
+   the row is selected by viewBox in JS. Rendered as-is (its own colors) at 50%. */
+#nq-transport .nq-transport-svg {
+  flex: none;
+  width: 84px;
+  height: 27px;
+  opacity: 0.5;
+}
+/* Collapsed: hide the chip but keep the corner as an invisible toggle target. */
+#nq-transport.nq-transport-collapsed .nq-transport-svg { display: none; }
 @media (hover: none) and (pointer: coarse) {
-  #nq-transport { display: none; }
+  /* Show the carrier readout on touch too: mobile has no console/devtools, so
+     this is the only way to see which transport actually won — e.g. WebTransport
+     vs the WebSocket fallback when QUIC/UDP is dropped on the network. Make it
+     non-interactive so it never steals a touch from the controls it shares the
+     lower corner with (the double-click collapse toggle is desktop-only anyway). */
+  #nq-transport { pointer-events: none; }
 }
 body.nq-overlay-panel-open #nq-transport { display: none; }
 

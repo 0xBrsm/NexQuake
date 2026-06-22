@@ -104,12 +104,16 @@ function nqSetTransport(name) {
     transportElement.hidden = true;
     return;
   }
-  var label = name === 'WebSocket' ? 'WebSocket (TCP)'
+  // The chip art (bracketed dual-arrow + UDP/TCP lettering, from
+  // quake-glyphs.svg) holds both states stacked in one SVG; the row is selected
+  // by viewBox — top = UDP (orange), bottom = TCP (cyan). Full name on hover.
+  var detail = name === 'WebSocket' ? 'WebSocket (TCP)'
     : name === 'WebTransport' ? 'WebTransport (UDP)'
     : name;
-  var nameEl = transportElement.querySelector('.nq-transport-name');
-  if (nameEl)
-    nameEl.textContent = label;
+  var svgEl = transportElement.querySelector('.nq-transport-svg');
+  if (svgEl)
+    svgEl.setAttribute('viewBox', name === 'WebSocket' ? '0 242 756 242' : '0 0 756 242');
+  transportElement.title = detail + ' — double-click to toggle';
   nqApplyTransportCollapsed();
   transportElement.hidden = false;
 }

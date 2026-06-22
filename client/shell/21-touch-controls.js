@@ -234,6 +234,16 @@
     bindDragHandlers(buttonBySlot[slot], slot);
   });
 
+  // Invoked from the touch Customize-Controls menu (menu.c via EM_JS). The
+  // left/right screen taps are TOUCH_TAP1/TOUCH_TAP2 (default fire/jump).
+  moduleRef.nqTouchRebindTap = function(zone) {
+    if (zone === 1) openKeyBindModal('TOUCH_TAP1', 228);
+    else if (zone === 2) openKeyBindModal('TOUCH_TAP2', 229);
+  };
+  moduleRef.nqTouchResetLayout = function() {
+    resetLayout();
+  };
+
   if (menuOverlayButton) {
     ['pointerdown', 'pointerup', 'pointercancel', 'touchstart', 'touchend'].forEach(function(type) {
       menuOverlayButton.addEventListener(type, function(ev) {
@@ -294,6 +304,18 @@
 
   function saveLayout() {
     try { localStorage.setItem(storageKey, JSON.stringify(layout)); } catch (e) {}
+  }
+
+  // Reset every slot's position back to the computed default and clear the
+  // "customized" flags. Resets positions only — bindings are left alone.
+  function resetLayout() {
+    layoutSlots.forEach(function(slot) {
+      var d = defaultLayout[slot];
+      if (d) layout[slot] = { x: d.x, y: d.y };
+      customLayout[slot] = false;
+    });
+    saveLayout();
+    applyLayout();
   }
 
   function applyLayout() {
@@ -451,7 +473,9 @@
     if ((!interactive || !menuLayoutMode) && dragState)
       endDrag();
 
-    overlay.classList.toggle('nq-touch-idle', interactive && !touchHeld &&
+    // Never idle-fade while positioning buttons on the Options screen — they'd
+    // vanish mid-edit if the user pauses to look before dragging.
+    overlay.classList.toggle('nq-touch-idle', interactive && !menuLayoutMode && !touchHeld &&
       !moduleRef.nqTouchDragActive && (Date.now() - lastTouchMs) >= touchIdleMs);
 
     syncFixedButtons();
@@ -493,6 +517,35 @@
     saveLayout();
   }
 
+  // Tap-to-bind: open the console-style text modal to set the slot's command.
+  // Slots 1-9 map to engine keys TOUCH1-TOUCH9, so a plain `bind` both takes
+  // effect and persists via the normal config write. Empty input clears it.
+  function openKeyBindModal(keyName, keyCode) {
+    var ctx = moduleRef && moduleRef.nqOverlayCtx;
+    var current = '';
+    if (!ctx || typeof ctx.requestTextCapture !== 'function')
+      return;
+    if (keyCode && moduleRef.ccall && moduleRef.calledRun)
+      current = nqWasmGetKeyBinding(keyCode) || '';
+    ctx.requestTextCapture({
+      initial: current,
+      placeholder: 'bind ' + keyName.toLowerCase(),
+      onResult: function(value) {
+        if (value !== null) {
+          // Strip quotes so the typed command can't break out of the bind arg.
+          var cmd = String(value).replace(/"/g, '').trim();
+          nqWasmExecCommand('bind "' + keyName + '" "' + cmd + '"');
+        }
+        refreshBoundVisibility();
+        syncVisibility();
+      }
+    });
+  }
+
+  function openBindModal(slot) {
+    openKeyBindModal('TOUCH' + slot, slotKeyCodes[slot]);
+  }
+
   function bindDragHandlers(button, slot) {
     var holdTimer = 0;
     var startX = 0;
@@ -505,9 +558,16 @@
     }
 
     function finishPointer(ev) {
+      // A quick tap in layout mode (pointerup before the 350ms hold-drag timer
+      // fires, with no drag started) opens the rebind modal. Movement >8px
+      // already cleared holdTimer in pointermove, and a completed hold set
+      // dragState — both fall through as not-a-tap.
+      var wasTap = !!holdTimer && !dragState;
       clearHold();
       endDrag(ev.pointerId);
       try { button.releasePointerCapture(ev.pointerId); } catch (e) {}
+      if (wasTap && moduleRef.nqTouchMenuLayoutMode)
+        openBindModal(slot);
     }
 
     button.addEventListener('pointerdown', function(ev) {

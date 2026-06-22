@@ -30,7 +30,7 @@ import (
 // setupWebTransport configures the WebTransport listener when the TLS
 // runtime supplies a QUIC cert source (EXTERNAL_URL set). Returns the
 // configured *qwt.Server (caller drives ListenAndServe and Close) or nil
-// when WT is disabled.
+// when WebTransport isn't configured (no QUIC cert).
 func setupWebTransport(app *nexusApp, rt *tlsRuntime, mux *http.ServeMux) (*qwt.Server, error) {
 	if rt.getWTCert == nil {
 		return nil, nil

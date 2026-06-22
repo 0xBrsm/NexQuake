@@ -37,6 +37,7 @@
 enum { NQ_CONTROL_SOCKET = 1, NQ_GAME_SOCKET = 2 };
 
 extern void Rcon_RegisterCommands (void);
+extern void WASM_TransportInit (void);
 extern cvar_t hostname;
 
 //----------------------------------------------------------------------------
@@ -323,6 +324,7 @@ int NQChan_Init (void)
 	tcpipAvailable = true;
 	UpdateMyTCPIPAddress ();
 	Rcon_RegisterCommands ();
+	WASM_TransportInit ();		// register cl_transport (before config exec)
 	return nq_control_socket_handle;
 }
 

@@ -1,0 +1,70 @@
+--- snd_dma.c
++++ snd_dma.c
+@@ -21,6 +21,8 @@
+ 
+ #include "quakedef.h"
+ 
++#include "cl_prefetch.h"
++
+ #ifdef _WIN32
+ #include "winquake.h"
+ #endif
+@@ -732,7 +734,10 @@
+ 	VectorCopy(forward, listener_forward);
+ 	VectorCopy(right, listener_right);
+ 	VectorCopy(up, listener_up);
+-	
++
++// fire any queued non-blocking `play` sounds whose files have now downloaded
++	NQSnd_PollDeferred ();
++
+ // update general area ambient sound sources
+ 	S_UpdateAmbientSounds ();
+ 
+@@ -911,11 +916,9 @@
+ 
+ void S_Play(void)
+ {
+-	static int hash=345;
+ 	int 	i;
+ 	char name[256];
+-	sfx_t	*sfx;
+-	
++
+ 	i = 1;
+ 	while (i<Cmd_Argc())
+ 	{
+@@ -926,20 +929,17 @@
+ 		}
+ 		else
+ 			Q_strcpy(name, Cmd_Argv(i));
+-		sfx = S_PrecacheSound(name);
+-		S_StartSound(hash++, 0, sfx, listener_origin, 1.0, 1.0);
++		NQSnd_PlayDeferred(name, 1.0);
+ 		i++;
+ 	}
+ }
+ 
+ void S_PlayVol(void)
+ {
+-	static int hash=543;
+ 	int i;
+ 	float vol;
+ 	char name[256];
+-	sfx_t	*sfx;
+-	
++
+ 	i = 1;
+ 	while (i<Cmd_Argc())
+ 	{
+@@ -950,9 +950,8 @@
+ 		}
+ 		else
+ 			Q_strcpy(name, Cmd_Argv(i));
+-		sfx = S_PrecacheSound(name);
+ 		vol = Q_atof(Cmd_Argv(i+1));
+-		S_StartSound(hash++, 0, sfx, listener_origin, vol, 1.0);
++		NQSnd_PlayDeferred(name, vol);
+ 		i+=2;
+ 	}
+ }

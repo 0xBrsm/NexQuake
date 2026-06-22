@@ -3,6 +3,10 @@
   if (!Module || !Module.nqOverlayCtx) return;
   var ctx = Module.nqOverlayCtx;
   var textEntryValue = '';
+  // When set ({ onResult }), the modal captures a string for JS (touch-button
+  // rebind) instead of mirroring keystrokes into the engine console. The normal
+  // console/chat path runs unchanged whenever this is null.
+  var captureMode = null;
 
   function setTextEntryValue(value) {
     value = String(value || '');
@@ -31,6 +35,8 @@
 
   function syncTextEntryValueFromGame() {
     var gameValue;
+    if (captureMode)
+      return;
     if (Module.nqConsoleTextEntryOpen) {
       setTextEntryValue('');
       return;
@@ -48,6 +54,8 @@
   }
 
   function syncTextEntryMode() {
+    if (captureMode)
+      return;
     if (!Module.nqTextEntryOpen)
       return;
     ctx.textEntryInput.placeholder = 'tap to type';
@@ -60,6 +68,12 @@
 
   function setTextEntryOpen(open) {
     open = !!open;
+    // Any external close while capturing (e.g. engine closeTextEntry) cancels
+    // the capture cleanly rather than leaving it stuck open.
+    if (!open && captureMode) {
+      finishCapture(null);
+      return;
+    }
     Module.nqTextEntryOpen = open;
     ctx.textEntry.hidden = !open;
     if (open) {
@@ -82,6 +96,32 @@
     setTextEntryOpen(Module.nqIsTouchInput);
   }
 
+  // Open the same modal to capture a string for JS (no engine forwarding).
+  // opts: { initial, placeholder, onResult(value) } — value is null if cancelled.
+  function requestTextCapture(opts) {
+    opts = opts || {};
+    captureMode = { onResult: typeof opts.onResult === 'function' ? opts.onResult : function() {} };
+    Module.nqTextEntryOpen = true;
+    ctx.textEntry.hidden = false;
+    ctx.textEntryInput.placeholder = String(opts.placeholder || '');
+    setTextEntryValue(String(opts.initial || ''));
+    ctx.syncModalOpen();
+    focusTextEntryInput();
+    moveTextEntryCaretToEnd();
+  }
+
+  function finishCapture(value) {
+    var cb = captureMode && captureMode.onResult;
+    captureMode = null;
+    Module.nqTextEntryOpen = false;
+    ctx.textEntry.hidden = true;
+    setTextEntryValue('');
+    try { ctx.textEntryInput.blur(); } catch (e) {}
+    ctx.textEntryInput.placeholder = '';
+    ctx.syncModalOpen();
+    if (cb) cb(value);
+  }
+
   ctx.textEntryInput.addEventListener('focus', function() {
     Module.nqTextEntryFocused = true;
   });
@@ -94,7 +134,9 @@
       return;
     ev.stopImmediatePropagation();
     ev.preventDefault();
-    if (Module.nqMessageTextEntryOpen)
+    if (captureMode)
+      finishCapture(null);
+    else if (Module.nqMessageTextEntryOpen)
       dismissTextEntry();
     else if (Module.nqTextEntryFocused)
       ctx.textEntryInput.blur();
@@ -114,6 +156,11 @@
 
     if (ctx.textEntryInput.value !== nextValue)
       ctx.textEntryInput.value = nextValue;
+    // Capture mode just tracks the value locally; no engine console forwarding.
+    if (captureMode) {
+      textEntryValue = nextValue;
+      return;
+    }
     if (nextValue === previousValue)
       return;
 
@@ -140,6 +187,10 @@
 
   ctx.textEntryForm.addEventListener('submit', function(ev) {
     ev.preventDefault();
+    if (captureMode) {
+      finishCapture(textEntryValue);
+      return;
+    }
     nqWasmTextInputKey(13);
     setTextEntryValue('');
     if (!Module.nqMessageTextEntryOpen)
@@ -147,6 +198,7 @@
   });
 
   ctx.requestTextEntry = requestTextEntry;
+  ctx.requestTextCapture = requestTextCapture;
   ctx.closeTextEntry = function() { setTextEntryOpen(false); };
   ctx.dismissTextEntry = dismissTextEntry;
   ctx.syncTextEntryMode = syncTextEntryMode;

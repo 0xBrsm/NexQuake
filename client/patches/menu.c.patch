@@ -1,6 +1,6 @@
 --- menu.c
 +++ menu.c
-@@ -1061,6 +1061,15 @@
+@@ -1061,6 +1061,22 @@
  }
  
  
@@ -13,10 +13,17 @@
 +extern qboolean IN_InvertPitchEnabled(void);
 +extern void IN_ToggleInvertPitch(void);
 +extern char *IN_InvertPitchLabel(void);
++extern qboolean IN_TouchActive(void);
++extern qboolean IN_TouchFlipEnabled(void);
++extern void IN_ToggleTouchFlip(void);
++extern char *keybindings[256];
++void js_touch_rebind_tap(int zone);
++void js_touch_reset_layout(void);
++
  void M_AdjustSliders (int dir)
  {
  	S_LocalSound ("misc/menu3.wav");
-@@ -1083,14 +1092,17 @@
+@@ -1083,14 +1099,17 @@
  			v_gamma.value = 1;
  		Cvar_SetValue ("gamma", v_gamma.value);
  		break;
@@ -41,7 +48,7 @@
  	case 6:	// music volume
  #ifdef _WIN32
  		bgmvolume.value += dir * 1.0;
-@@ -1126,16 +1138,22 @@
+@@ -1126,16 +1145,22 @@
  		break;
  
  	case 9:	// invert mouse
@@ -67,7 +74,7 @@
  
  #ifdef _WIN32
  	case 13:	// _windowed_mouse
-@@ -1196,8 +1214,8 @@
+@@ -1196,8 +1221,8 @@
  	r = (1.0 - v_gamma.value) / 0.5;
  	M_DrawSlider (220, 64, r);
  
@@ -78,7 +85,7 @@
  	M_DrawSlider (220, 72, r);
  
  	M_Print (16, 80, "       CD Music Volume");
-@@ -1211,14 +1229,14 @@
+@@ -1211,14 +1236,14 @@
  	M_Print (16, 96,  "            Always Run");
  	M_DrawCheckbox (220, 96, cl_forwardspeed.value > 200);
  
@@ -99,7 +106,105 @@
  
  	if (vid_menudrawfn)
  		M_Print (16, 128, "         Video Options");
-@@ -2191,12 +2209,7 @@
+@@ -1392,6 +1417,71 @@
+ }
+ 
+ 
++void M_TouchKeys_Draw (void)
++{
++	qpic_t	*p;
++	char	*bl, *br;
++	int	flip;
++
++	p = Draw_CachePic ("gfx/ttl_cstm.lmp");
++	M_DrawPic ((320 - p->width)/2, 4, p);
++
++	flip = IN_TouchFlipEnabled();
++	bl = keybindings[flip ? K_AUX23 : K_AUX22];	/* physical left  */
++	br = keybindings[flip ? K_AUX22 : K_AUX23];	/* physical right */
++	if (bl && *bl == '+') bl++;
++	if (br && *br == '+') br++;
++
++	M_Print (28, 96, "Tap buttons to bind, hold to drag");
++
++	M_Print (16, 112, "       left screen tap");
++	M_Print (220, 112, (bl && *bl) ? bl : "(unbound)");
++	M_Print (16, 120, "      right screen tap");
++	M_Print (220, 120, (br && *br) ? br : "(unbound)");
++	M_Print (16, 128, "           flip layout");
++	M_DrawCheckbox (220, 128, IN_TouchFlipEnabled());
++	M_Print (16, 136, "Reset button positions");
++
++	if (keys_cursor < 0 || keys_cursor > 3)
++		keys_cursor = 0;
++	M_DrawCharacter (200, 112 + keys_cursor*8, 12 + ((int)(realtime*4)&1));
++}
++
++void M_TouchKeys_Key (int k)
++{
++	switch (k)
++	{
++	case K_ESCAPE:
++		M_Menu_Options_f ();
++		break;
++
++	case K_LEFTARROW:
++	case K_UPARROW:
++		S_LocalSound ("misc/menu1.wav");
++		if (--keys_cursor < 0)
++			keys_cursor = 3;
++		break;
++
++	case K_DOWNARROW:
++	case K_RIGHTARROW:
++		S_LocalSound ("misc/menu1.wav");
++		if (++keys_cursor > 3)
++			keys_cursor = 0;
++		break;
++
++	case K_ENTER:
++		S_LocalSound ("misc/menu2.wav");
++		switch (keys_cursor)
++		{
++		case 0: js_touch_rebind_tap (IN_TouchFlipEnabled() ? 2 : 1); break;
++		case 1: js_touch_rebind_tap (IN_TouchFlipEnabled() ? 1 : 2); break;
++		case 2: IN_ToggleTouchFlip (); break;
++		case 3: js_touch_reset_layout (); break;
++		}
++		break;
++	}
++}
++
+ void M_Keys_Draw (void)
+ {
+ 	int		i, l;
+@@ -1399,6 +1489,12 @@
+ 	char	*name;
+ 	int		x, y;
+ 	qpic_t	*p;
++	if (IN_TouchActive())
++	{
++		M_TouchKeys_Draw ();
++		return;
++	}
++
+ 
+ 	p = Draw_CachePic ("gfx/ttl_cstm.lmp");
+ 	M_DrawPic ( (320-p->width)/2, 4, p);
+@@ -1448,6 +1544,12 @@
+ 	char	cmd[80];
+ 	int		keys[2];
+ 
++	if (IN_TouchActive())
++	{
++		M_TouchKeys_Key (k);
++		return;
++	}
++
+ 	if (bind_grab)
+ 	{	// defining a key
+ 		S_LocalSound ("misc/menu1.wav");
+@@ -2191,12 +2293,7 @@
  	m_state = m_lanconfig;
  	m_entersound = true;
  	if (lanConfig_cursor == -1)
@@ -113,7 +218,7 @@
  	if (StartingGame && lanConfig_cursor == 2)
  		lanConfig_cursor = 1;
  	lanConfig_port = DEFAULTnet_hostport;
-@@ -2841,6 +2859,10 @@
+@@ -2841,6 +2938,10 @@
  
  void M_Menu_Search_f (void)
  {
@@ -124,7 +229,7 @@
  	key_dest = key_menu;
  	m_state = m_search;
  	m_entersound = false;
-@@ -2914,7 +2936,10 @@
+@@ -2914,7 +3015,10 @@
  void M_ServerList_Draw (void)
  {
  	int		n;
@@ -136,7 +241,7 @@
  	qpic_t	*p;
  
  	if (!slist_sorted)
-@@ -2937,18 +2962,25 @@
+@@ -2937,18 +3041,25 @@
  
  	p = Draw_CachePic ("gfx/p_multi.lmp");
  	M_DrawPic ( (320-p->width)/2, 4, p);
@@ -169,7 +274,7 @@
  }
  
  
-@@ -3015,6 +3047,7 @@
+@@ -3015,6 +3126,7 @@
  	Cmd_AddCommand ("menu_video", M_Menu_Video_f);
  	Cmd_AddCommand ("help", M_Menu_Help_f);
  	Cmd_AddCommand ("menu_quit", M_Menu_Quit_f);
@@ -177,7 +282,7 @@
  }
  
  
-@@ -3257,3 +3290,57 @@
+@@ -3229,3 +3341,57 @@
  	if (IPXConfig || TCPIPConfig)
  		net_hostport = lanConfig_port;
  }

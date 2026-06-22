@@ -146,10 +146,19 @@ func (g *HashedAssetServer) AssetHandler() http.HandlerFunc {
 		// says which side to blame. open covers storage; the rest of total is
 		// ServeContent, which doesn't return until the body is written, so a
 		// fast open with a slow total means the bytes sat in the network path
-		// (tunnel/uplink/client), not in nexus.
-		if total := time.Since(start); total > time.Second {
-			slog.Warn(fmt.Sprintf("asset serve slow: %s open=%dms total=%dms remote=%s",
-				asset.name, openDur.Milliseconds(), total.Milliseconds(), r.RemoteAddr))
+		// (tunnel/uplink/client), not in nexus. Only a slow open is nexus's
+		// fault and worth a warning; the network-path case is the client's
+		// link, so it stays at debug to keep the live console quiet while
+		// remaining available when investigating.
+		const slowServe = time.Second
+		total := time.Since(start)
+		msg := fmt.Sprintf("asset serve slow: %s open=%dms total=%dms remote=%s",
+			asset.name, openDur.Milliseconds(), total.Milliseconds(), r.RemoteAddr)
+		switch {
+		case openDur > slowServe:
+			slog.Warn(msg)
+		case total > slowServe:
+			slog.Debug(msg)
 		}
 	}
 }

@@ -242,13 +242,21 @@
         : Module.nexquakePrefetchConcurrency;
     Module.nexquakePrefetchFailures = Module.nexquakePrefetchFailures || Object.create(null);
 
-    async function prefetchOne(lowerRel) {
+    // Resolve a lowercased relative path to its manifest node, preferring the
+    // active mod and falling back to the base game. Shared by prefetchOne (which
+    // then fetches) and nexquakeSoundResident (which only inspects nqLoaded).
+    function resolveRemoteNode(lowerRel) {
       var baseGame = getBaseGameName();
       var activeGame = normalizeGameName(Module.nexquakeActiveGame || baseGame);
-      var outPath = REMOTE_ROOT + '/' + activeGame + '/' + lowerRel;
-      var node = Module.nexquakeRemoteFiles && Module.nexquakeRemoteFiles[outPath];
+      var files = Module.nexquakeRemoteFiles;
+      var node = files && files[REMOTE_ROOT + '/' + activeGame + '/' + lowerRel];
       if (!node && activeGame !== baseGame)
-        node = Module.nexquakeRemoteFiles && Module.nexquakeRemoteFiles[REMOTE_ROOT + '/' + baseGame + '/' + lowerRel];
+        node = files && files[REMOTE_ROOT + '/' + baseGame + '/' + lowerRel];
+      return node;
+    }
+
+    async function prefetchOne(lowerRel) {
+      var node = resolveRemoteNode(lowerRel);
       if (!node || node.nqLoaded) return;
       var resp = await fetch(node.url, { cache: 'no-store' });
       if (!resp.ok) throw new Error('prefetch failed: ' + resp.status + ' for ' + node.url);
@@ -331,6 +339,19 @@
     Module.nexquakePrefetchReset = resetPrefetch;
     Module.nexquakePrefetchEnqueue = enqueuePrefetch;
     Module.nexquakePrefetchStart = startPrefetch;
+
+    // Pure residency check for the engine's non-blocking `play` path
+    // (NQSnd_PlayDeferred). Returns true iff the sound file is already
+    // downloaded into the VFS. No side effects: the engine polls this every
+    // frame for queued plays, so it must not trigger a fetch.
+    Module.nexquakeSoundResident = function(name) {
+      var lowerRel = ('sound/' + String(name || ''))
+        .split('/').filter(Boolean)
+        .map(function(p) { return p.toLowerCase(); }).join('/');
+      if (lowerRel === 'sound') return false;
+      var node = resolveRemoteNode(lowerRel);
+      return !!(node && node.nqLoaded);
+    };
 
     // Boot-time warm of core base-game assets the engine reaches for immediately
     // (menu/HUD) that no server precache list covers. Matched by manifest PATH
@@ -667,39 +688,18 @@
       });
     };
 
-    // Recover from VFS misses for paths the initial manifest didn't know about
-    // (files dropped into GAME_DIR after the client connected). Funnels through
-    // the same refreshAndRetry() helper as ensureLoaded's XHR-404 path.
+    // Files dropped into GAME_DIR after connect (live reload, #113) are picked
+    // up by the ASYNC manifest refresh — the periodic poll
+    // (startManifestRefreshLoop) today, an SSE manifest-changed push next.
     //
-    // Two miss shapes to catch:
-    //   - origLookupPath throws ErrnoError(ENOENT)          (the default)
-    //   - origLookupPath returns { node: null }             (when caller passed
-    //                                                        opts.noent_okay,
-    //                                                        e.g. FS.open)
-    var origLookupPath = FS.lookupPath.bind(FS);
-    function shouldAttemptRefresh(path) {
-      var pathStr = typeof path === 'string' ? path : '';
-      // Quake's cwd is REMOTE_ROOT, so bare/relative paths (e.g. "./id1/foo.bsp"
-      // from Sys_FileTime) resolve under it — accept those too. Only reject
-      // absolute paths outside the remote tree (user data, /tmp, /dev, ...).
-      return !(pathStr.charAt(0) === '/' && (pathStr + '/').indexOf(REMOTE_ROOT + '/') !== 0);
-    }
-    FS.lookupPath = function(path, opts) {
-      try {
-        var result = origLookupPath(path, opts);
-        if (result && result.node) return result;
-        // noent_okay: null node instead of throw.
-        if (!shouldAttemptRefresh(path)) return result;
-        if (!refreshAndRetry()) return result;
-        var retried = origLookupPath(path, opts);
-        return retried && retried.node ? retried : result;
-      } catch (e) {
-        if (!e || e.errno !== 44) throw e;
-        if (!shouldAttemptRefresh(path)) throw e;
-        if (!refreshAndRetry()) throw e;
-        return origLookupPath(path, opts);
-      }
-    };
+    // We deliberately do NOT refresh synchronously on an FS.lookupPath miss.
+    // Quake's COM_FindFile probes searchpaths it *expects* to miss (e.g.
+    // /<mod>/gfx/X.lmp before falling back to /id1/gfx/X.lmp), via Sys_FileTime's
+    // fopen(). A blocking /start refetch on each such miss froze the engine for a
+    // full network round-trip on every menu-screen entry (the long-hunted
+    // "network-dependent menu hitch"). The genuine hash-rotation case — a node
+    // that exists but whose URL 404s — is still recovered synchronously in
+    // ensureLoaded's 404 path, which is rare and unavoidable.
 
     Module.nexquakeSwitchGameData = function(mod) {
       mod = normalizeGameName(mod);

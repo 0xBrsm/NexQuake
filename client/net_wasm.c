@@ -120,6 +120,36 @@ static const wasm_transport_t * const transports[] = {
 
 static const int transport_count = sizeof(transports) / sizeof(transports[0]);
 
+// cl_transport: client preference for the carrier. "auto" (default) prefers
+// WebTransport (UDP) and falls back to WebSocket (TCP); "tcp" forces WebSocket;
+// "udp" forces WebTransport with no fallback (won't connect where UDP/QUIC is
+// blocked). Archived. The choice is frozen mid-connection; a change applies on
+// the next connect.
+cvar_t cl_transport = {"cl_transport", "auto", true};
+
+void WASM_TransportInit (void)
+{
+	Cvar_RegisterVariable (&cl_transport);
+}
+
+// 0 = auto (any), 1 = tcp (WebSocket only), 2 = udp (WebTransport only)
+static int wasm_transport_mode (void)
+{
+	if (!Q_strcasecmp (cl_transport.string, "tcp")) return 1;
+	if (!Q_strcasecmp (cl_transport.string, "udp")) return 2;
+	return 0;
+}
+
+static qboolean transport_allowed (int idx)
+{
+	switch (wasm_transport_mode ())
+	{
+	case 1:  return transports[idx] == &wasm_ws_transport;
+	case 2:  return transports[idx] == &wasm_wt_transport;
+	default: return true;
+	}
+}
+
 //----------------------------------------------------------------------------
 // Transport selection. The ordered registry defines preference; the last
 // entry is the baseline (the always-works substrate the send path may wait
@@ -156,6 +186,7 @@ static void KeepWarmTransports (void)
 	{
 		const wasm_transport_t *t = transports[i];
 
+		if (!transport_allowed (i)) continue;
 		if ((t == active && started) || !t->is_available ()) continue;
 		if (warm_started[i] && !t->is_closed ()) continue; // pending or ready
 		if (now < 0) now = Sys_FloatTime ();
@@ -244,7 +275,7 @@ void WASM_EnsureTransportOpen (void)
 	{
 		for (i = 0; i < (started ? active_index : transport_count); i++)
 		{
-			if (transports[i]->is_available () && transports[i]->is_ready ())
+			if (transport_allowed (i) && transports[i]->is_available () && transports[i]->is_ready ())
 			{
 				AdoptTransport (i);
 				break;
@@ -270,7 +301,11 @@ static qboolean EnsureSendableTransport (void)
 
 	if (started) return true;
 
-	i = transport_count - 1;
+	// Baseline = lowest-preference allowed transport: WebSocket for auto/tcp,
+	// WebTransport for udp (which has no TCP fallback, by design).
+	for (i = transport_count - 1; i >= 0 && !transport_allowed (i); i--)
+		;
+	if (i < 0) i = transport_count - 1;
 	if (!transports[i]->is_available () || transports[i]->start () != 0)
 	{
 		WASM_Log (WASM_LOG_ERROR, "no transport could start: %s",

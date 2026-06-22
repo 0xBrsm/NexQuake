@@ -20,7 +20,7 @@ extern void SNDDMA_Pause(void);
 extern void SNDDMA_Resume(void);
 
 // menu.c local enum values used for touch/menu policy
-#define MSTATE_OPTIONS 8
+#define MSTATE_KEYS 10
 #define MSTATE_QUIT 12
 
 // Bind slots mapped onto stock Quake JOY/AUX keycodes.
@@ -348,7 +348,7 @@ static void sync_touch_mode_transition(void)
 
 	if (nav_mode == touch_menu_mode_latched)
 	{
-		js_set_touch_menu_layout_mode(nav_mode && key_dest == key_menu && m_state == MSTATE_OPTIONS);
+		js_set_touch_menu_layout_mode(nav_mode && key_dest == key_menu && m_state == MSTATE_KEYS);
 		return;
 	}
 
@@ -356,7 +356,7 @@ static void sync_touch_mode_transition(void)
 	if (nav_mode)
 		touch_cancel_all();
 	js_set_touch_menu_mode(nav_mode);
-	js_set_touch_menu_layout_mode(nav_mode && key_dest == key_menu && m_state == MSTATE_OPTIONS);
+	js_set_touch_menu_layout_mode(nav_mode && key_dest == key_menu && m_state == MSTATE_KEYS);
 }
 
 static void update_touch_nav(int nav_base, float thresh, float nx, float ny)
@@ -491,6 +491,17 @@ EM_JS(void, js_set_touch_menu_layout_mode, (int active), {
 
 EM_JS(void, js_set_touch_flip, (int active), {
 	Module.nqTouchFlip = !!active;
+});
+
+// Customize-Controls (touch) menu hooks into the JS overlay:
+EM_JS(void, js_touch_rebind_tap, (int zone), {
+	if (typeof Module !== 'undefined' && typeof Module.nqTouchRebindTap === 'function')
+		Module.nqTouchRebindTap(zone);
+});
+
+EM_JS(void, js_touch_reset_layout, (void), {
+	if (typeof Module !== 'undefined' && typeof Module.nqTouchResetLayout === 'function')
+		Module.nqTouchResetLayout();
 });
 
 // Virtual joystick visual — positioned from C, rendered as two DOM elements
@@ -1424,7 +1435,7 @@ cvar_t *IN_LookspringCvar(void)
 
 char *IN_LookspringLabel(void)
 {
-	return INPUT_PROFILE_PICK("            Lookspring", "        Touch Lookspring", "     Joystick Lookspring");
+	return INPUT_PROFILE_PICK("            Lookspring", "      Touch Lookspring", "   Joystick Lookspring");
 }
 
 cvar_t *IN_LookstrafeCvar(void)
@@ -1434,7 +1445,7 @@ cvar_t *IN_LookstrafeCvar(void)
 
 char *IN_LookstrafeLabel(void)
 {
-	return INPUT_PROFILE_PICK("            Lookstrafe", "        Touch Lookstrafe", "     Joystick Lookstrafe");
+	return INPUT_PROFILE_PICK("            Lookstrafe", "      Touch Lookstrafe", "   Joystick Lookstrafe");
 }
 
 qboolean IN_InvertPitchEnabled(void)
@@ -1458,6 +1469,22 @@ char *IN_InvertPitchLabel(void)
 	return INPUT_PROFILE_PICK("          Invert Mouse", "          Invert Touch", "       Invert Joystick");
 }
 
+// Used by the touch Customize-Controls menu (menu.c).
+qboolean IN_TouchActive(void)
+{
+	return touch_active;
+}
+
+qboolean IN_TouchFlipEnabled(void)
+{
+	return touch_flip.value != 0.0f;
+}
+
+void IN_ToggleTouchFlip(void)
+{
+	Cvar_SetValue (touch_flip.name, touch_flip.value != 0.0f ? 0 : 1);
+}
+
 // ---------------------------------------------------------------------------
 // Init / register callbacks
 // ---------------------------------------------------------------------------
@@ -1468,7 +1495,7 @@ static void init_input(void)
 	touch_menu_mode_latched = (key_dest == key_menu);
 	touch_flip_latched = false;
 	js_set_touch_menu_mode(touch_menu_mode_latched);
-	js_set_touch_menu_layout_mode(touch_menu_mode_latched && m_state == MSTATE_OPTIONS);
+	js_set_touch_menu_layout_mode(touch_menu_mode_latched && m_state == MSTATE_KEYS);
 	touch_sync_flip_mode();
 
 	// Keyboard
