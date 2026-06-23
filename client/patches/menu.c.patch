@@ -218,7 +218,7 @@
  	if (StartingGame && lanConfig_cursor == 2)
  		lanConfig_cursor = 1;
  	lanConfig_port = DEFAULTnet_hostport;
-@@ -2841,6 +2938,10 @@
+@@ -2841,14 +2938,24 @@
  
  void M_Menu_Search_f (void)
  {
@@ -229,7 +229,25 @@
  	key_dest = key_menu;
  	m_state = m_search;
  	m_entersound = false;
-@@ -2914,7 +3015,10 @@
+-	slistSilent = true;
+-	slistLocal = false;
+ 	searchComplete = false;
+-	NET_Slist_f();
+-
++	// The server list streams live over SSE via an always-on subscription owned
++	// by the JS shell, so `hostcache` is already warm. Show "Searching..." only
++	// until the first snapshot has landed; NET_SlistCommit clears slistInProgress
++	// on arrival, and M_Search_Draw then transitions to the results list. Do not
++	// clear the cache — it is the live list. See DEC-020.
++	//
++	// Unlike vanilla, this does NOT touch slistSilent/slistLocal: the menu reads
++	// the live cache and never drives a console-printing search, so leaving
++	// slistSilent set here would silence the next `slist` console command.
++	slistInProgress = !slist_agg_done;
+ }
+ 
+ 
+@@ -2914,7 +3021,10 @@
  void M_ServerList_Draw (void)
  {
  	int		n;
@@ -241,8 +259,17 @@
  	qpic_t	*p;
  
  	if (!slist_sorted)
-@@ -2937,18 +3041,25 @@
+@@ -2935,20 +3045,34 @@
+ 		slist_sorted = true;
+ 	}
  
++	// A live snapshot can shrink the list out from under the cursor (a server
++	// dropped off); keep slist_cursor in range so it isn't drawn past the list.
++	if (slist_cursor >= hostCacheCount)
++		slist_cursor = hostCacheCount - 1;
++	if (slist_cursor < 0)
++		slist_cursor = 0;
++
  	p = Draw_CachePic ("gfx/p_multi.lmp");
  	M_DrawPic ( (320-p->width)/2, 4, p);
 +
@@ -274,7 +301,22 @@
  }
  
  
-@@ -3015,6 +3126,7 @@
+@@ -2981,6 +3105,14 @@
+ 		break;
+ 
+ 	case K_ENTER:
++		// Guard the cursor: a live snapshot may have shrunk the list since the
++		// last draw clamp, so don't connect to a stale slot beyond hostCacheCount.
++		if (hostCacheCount <= 0)
++			break;
++		if (slist_cursor < 0)
++			slist_cursor = 0;
++		if (slist_cursor >= hostCacheCount)
++			slist_cursor = hostCacheCount - 1;
+ 		S_LocalSound ("misc/menu2.wav");
+ 		m_return_state = m_state;
+ 		m_return_onerror = true;
+@@ -3015,6 +3147,7 @@
  	Cmd_AddCommand ("menu_video", M_Menu_Video_f);
  	Cmd_AddCommand ("help", M_Menu_Help_f);
  	Cmd_AddCommand ("menu_quit", M_Menu_Quit_f);
@@ -282,7 +324,7 @@
  }
  
  
-@@ -3229,3 +3341,57 @@
+@@ -3229,3 +3362,57 @@
  	if (IPXConfig || TCPIPConfig)
  		net_hostport = lanConfig_port;
  }

@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -127,47 +126,6 @@ func normalizeServerListEntry(e serverListEntry) serverListEntry {
 	return e
 }
 
-// buildCCREPServerList builds an aggregated CCREP_SERVER_INFO response
-// containing multiple server entries. Returns the datagram and entry count.
-func buildCCREPServerList(entries []serverListEntry) ([]byte, int) {
-	const maxNetDatagramSize = 1024 + 8
-
-	buf := make([]byte, 0, 512)
-	buf = append(buf, 0, 0, 0, 0) // placeholder header
-	buf = append(buf, ccrepServerInfo)
-	countIndex := len(buf)
-	buf = append(buf, 0) // count placeholder
-
-	count := 0
-	for _, e := range entries {
-		e = normalizeServerListEntry(e)
-		serverPort := e.ListenPort
-		if serverPort <= 0 || serverPort > 65535 {
-			continue
-		}
-		serverPortText := strconv.Itoa(serverPort)
-		entrySize := len(serverPortText) + 1 + len(e.Hostname) + 1 + len(e.MapName) + 1 + len(e.GameDir) + 1 + 7
-		if len(buf)+entrySize > maxNetDatagramSize {
-			break
-		}
-
-		buf = appendCString(buf, serverPortText)
-		buf = appendCString(buf, e.Hostname)
-		buf = appendCString(buf, e.MapName)
-		buf = appendCString(buf, e.GameDir)
-		buf = append(buf, byte(e.Users&0xff), byte(e.Users>>8))
-		buf = append(buf, byte(e.MaxUsers&0xff), byte(e.MaxUsers>>8))
-		buf = append(buf, byte(e.Instances&0xff), byte(e.Instances>>8))
-		buf = append(buf, netProtocolVersion)
-		count++
-	}
-
-	buf[countIndex] = byte(count)
-	control := netFlagCtl | uint32(len(buf))
-	binary.BigEndian.PutUint32(buf[0:4], control)
-	return buf, count
-}
-
 func truncateSlistField(s string, maxBytes int) string {
 	if len(s) <= maxBytes {
 		return s
@@ -175,7 +133,11 @@ func truncateSlistField(s string, maxBytes int) string {
 	return s[:maxBytes]
 }
 
-func serverListEntriesLocked(mgr *ServerManager, now time.Time, noteDemand bool) []serverListEntry {
+// serverListEntriesLocked builds the live server-list entries. It is a pure
+// read of current server state — no side effects. (Autoscale demand is noted
+// by a real join signal via noteServerDemandLocked, never from listing the
+// servers; see snapshotForSlist.)
+func serverListEntriesLocked(mgr *ServerManager) []serverListEntry {
 	out := make([]serverListEntry, 0, len(mgr.serversByID))
 	for _, s := range mgr.serversLocked() {
 		if s.aggregateInstances == 0 {
@@ -187,9 +149,6 @@ func serverListEntriesLocked(mgr *ServerManager, now time.Time, noteDemand bool)
 		}
 		instances := uint16(0)
 		if s.Autoscales {
-			if noteDemand {
-				noteServerDemandLocked(s, now)
-			}
 			instances = s.joinableInstances
 		}
 		out = append(out, serverListEntry{
@@ -197,44 +156,57 @@ func serverListEntriesLocked(mgr *ServerManager, now time.Time, noteDemand bool)
 			Hostname:   s.DisplayHostname,
 			MapName:    s.DisplayMap,
 			GameDir:    s.DisplayGameDir,
-			Users:      s.aggregateUsers,
-			MaxUsers:   s.aggregateMaxUsers,
-			Instances:  instances,
+			// Advertise the joinable set so users/max/instances are consistent;
+			// draining/warming instances inflate aggregate* but aren't joinable.
+			Users:     s.joinableUsers,
+			MaxUsers:  s.joinableMaxUsers,
+			Instances: instances,
 		})
 	}
 	return out
 }
 
-// IsSlistRequest reports whether payload is a valid CCREQ_SERVER_INFO datagram.
-func IsSlistRequest(payload []byte) bool {
-	if len(payload) < 4+1 {
-		return false
-	}
-	control := binary.BigEndian.Uint32(payload[0:4])
-	if (control&^netFlagLengthMask) != netFlagCtl || int(control&netFlagLengthMask) != len(payload) {
-		return false
-	}
-	if payload[4] != ccreqServerInfo {
-		return false
-	}
-	i := 5
-	end := i
-	for end < len(payload) && payload[end] != 0 {
-		end++
-	}
-	if end >= len(payload) || string(payload[i:end]) != "QUAKE" {
-		return false
-	}
-	proto := end + 1
-	return proto < len(payload) && payload[proto] == netProtocolVersion
+// SlistEntry is one server in the server-list snapshot the SSE state channel
+// streams (GET /events). Fields mirror serverListEntry and the client
+// hostcache_t. The JSON tags are the on-the-wire shape consumed by the client.
+type SlistEntry struct {
+	Port      int    `json:"port"`
+	Hostname  string `json:"hostname"`
+	Map       string `json:"map"`
+	GameDir   string `json:"gamedir"`
+	Users     uint16 `json:"users"`
+	MaxUsers  uint16 `json:"maxusers"`
+	Instances uint16 `json:"instances"`
 }
 
-// BuildSlistResponse builds an aggregated CCREP_SERVER_INFO response datagram
-// from the current state of all managed servers.
-func (m *ServerManager) BuildSlistResponse() []byte {
-	entries := snapshotForSlist(m)
-	data, _ := buildCCREPServerList(entries)
-	return data
+// SlistEntries returns the current server-list entries, applying the same
+// normalization (UNNAMED/?/id1 defaults, field truncation) and bad-port drop the
+// wire response used. The caller composes and marshals the snapshot (the SSE
+// state channel nests these under "servers").
+func (m *ServerManager) SlistEntries() []SlistEntry {
+	return slistEntriesFrom(snapshotForSlist(m))
+}
+
+// slistEntriesFrom normalizes and filters raw server-list entries into the
+// client-facing shape (split out so the normalization is unit-testable).
+func slistEntriesFrom(entries []serverListEntry) []SlistEntry {
+	out := make([]SlistEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.ListenPort <= 0 || e.ListenPort > 65535 {
+			continue
+		}
+		e = normalizeServerListEntry(e)
+		out = append(out, SlistEntry{
+			Port:      e.ListenPort,
+			Hostname:  e.Hostname,
+			Map:       e.MapName,
+			GameDir:   e.GameDir,
+			Users:     e.Users,
+			MaxUsers:  e.MaxUsers,
+			Instances: e.Instances,
+		})
+	}
+	return out
 }
 
 const serverInfoPollStep = 500 * time.Millisecond
@@ -314,10 +286,12 @@ func fillRunningPorts(mgr *ServerManager, dst []int) []int {
 }
 
 func snapshotForSlist(mgr *ServerManager) []serverListEntry {
-	now := time.Now()
-
+	// Listing servers has no demand side effect: the SSE hub polls this ~2x/sec
+	// per connected client (DEC-020), so treating a list as join intent made
+	// every autoscaling server fabricate demand and spin replicas with zero
+	// players. Demand comes from a real join signal (see noteServerDemandLocked).
 	mgr.mu.Lock()
-	out := serverListEntriesLocked(mgr, now, true)
+	out := serverListEntriesLocked(mgr)
 	mgr.mu.Unlock()
 
 	slices.SortFunc(out, func(a, b serverListEntry) int {

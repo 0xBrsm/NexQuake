@@ -110,7 +110,7 @@ func TestMux_BlocksAssetFetchAfterStart(t *testing.T) {
 	app.assetServer = assets.NewHashedAssetServer(gameDir, app.cfg.cdDir, assets.NewPakIndexCache())
 	handler := accessGate.HTTPGate(app.newMux())
 
-	startReq := httptest.NewRequest(http.MethodGet, "/start", nil)
+	startReq := httptest.NewRequest(http.MethodGet, "/gamedir", nil)
 	startReq.RemoteAddr = "198.51.100.1:4242"
 	startRec := httptest.NewRecorder()
 	handler.ServeHTTP(startRec, startReq)
@@ -120,7 +120,7 @@ func TestMux_BlocksAssetFetchAfterStart(t *testing.T) {
 
 	blocklist.Block("198.51.100.1")
 
-	assetReq := httptest.NewRequest(http.MethodGet, "/nq/not-a-real-hash", nil)
+	assetReq := httptest.NewRequest(http.MethodGet, "/pak/not-a-real-hash", nil)
 	assetReq.RemoteAddr = "198.51.100.1:4242"
 	assetRec := httptest.NewRecorder()
 	handler.ServeHTTP(assetRec, assetReq)

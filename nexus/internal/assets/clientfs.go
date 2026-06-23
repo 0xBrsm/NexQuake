@@ -29,13 +29,17 @@ type assetBacking struct {
 // available for one mod. warnf may be nil; it is used by upper layers (e.g.
 // the manifest gateway) to log non-fatal scan issues without spamming logs
 // when the same scan is run from a hot path.
-func buildVFSManifestWithWarnings(gameDir, mod string, pakCache *PakIndexCache, warnf func(string, ...any)) ([]assetManifestEntry, error) {
-	layers := []string{"common", "client"}
+// clientLayers are the overlay layers the client manifest is built from, in
+// precedence order (later wins). The manifest-generation fingerprint
+// (generation.go) walks exactly these, so the two must stay in lockstep —
+// hence one shared definition.
+var clientLayers = []string{"common", "client"}
 
+func buildVFSManifestWithWarnings(gameDir, mod string, pakCache *PakIndexCache, warnf func(string, ...any)) ([]assetManifestEntry, error) {
 	// Later layers overwrite earlier ones.
 	byKey := make(map[string]assetManifestEntry)
 
-	for _, layer := range layers {
+	for _, layer := range clientLayers {
 		if err := overlayLayerIntoManifest(byKey, gameDir, mod, layer, pakCache, warnf); err != nil {
 			return nil, err
 		}

@@ -39,7 +39,7 @@ func TestHashedAssetServer_IssueAndAssetFetch(t *testing.T) {
 		t.Fatalf("id1 manifest missing entries: %+v", game)
 	}
 
-	hasPath := func(entries []StartManifestEntry, path string) bool {
+	hasPath := func(entries []GamedirManifestEntry, path string) bool {
 		for _, entry := range entries {
 			if entry.Path == path {
 				return true
@@ -58,7 +58,7 @@ func TestHashedAssetServer_IssueAndAssetFetch(t *testing.T) {
 	fooHash := hashAssetKey(ref, "mod:id1:"+normalizeVFSKey("foo.txt"))
 	cdHash := hashAssetKey(ref, "cd:"+normalizeVFSKey("02-intro.ogg"))
 
-	dataReq := httptest.NewRequest(http.MethodGet, "/nq/"+fooHash, nil)
+	dataReq := httptest.NewRequest(http.MethodGet, "/pak/"+fooHash, nil)
 	dataRec := httptest.NewRecorder()
 	gateway.AssetHandler().ServeHTTP(dataRec, dataReq)
 	if dataRec.Code != http.StatusOK {
@@ -68,7 +68,7 @@ func TestHashedAssetServer_IssueAndAssetFetch(t *testing.T) {
 		t.Fatalf("data fetch body=%q want=%q", got, "hello data")
 	}
 
-	cdReq := httptest.NewRequest(http.MethodGet, "/nq/"+cdHash, nil)
+	cdReq := httptest.NewRequest(http.MethodGet, "/pak/"+cdHash, nil)
 	cdRec := httptest.NewRecorder()
 	gateway.AssetHandler().ServeHTTP(cdRec, cdReq)
 	if cdRec.Code != http.StatusOK {
@@ -104,7 +104,7 @@ func TestHashedAssetServer_RangeRequests(t *testing.T) {
 	}
 	hash := hashAssetKey(ref, "mod:id1:"+normalizeVFSKey(game["id1"][0].Path))
 
-	rangeReq := httptest.NewRequest(http.MethodGet, "/nq/"+hash, nil)
+	rangeReq := httptest.NewRequest(http.MethodGet, "/pak/"+hash, nil)
 	rangeReq.Header.Set("Range", "bytes=1-3")
 	rangeRec := httptest.NewRecorder()
 	gateway.AssetHandler().ServeHTTP(rangeRec, rangeReq)

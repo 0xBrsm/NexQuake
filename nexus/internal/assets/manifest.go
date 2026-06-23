@@ -20,10 +20,10 @@ const defaultManifestTTL = 37 * time.Minute
 // evicted; legitimate concurrent page loads stay far below it.
 const maxLiveManifests = 256
 
-// StartManifestEntry is one entry in an issued asset manifest. The Path field
+// GamedirManifestEntry is one entry in an issued asset manifest. The Path field
 // is the logical asset path (e.g. "foo.txt"); the matching content-addressed
-// hash is registered internally and served from /nq/<hash>.
-type StartManifestEntry struct {
+// hash is registered internally and served from /pak/<hash>.
+type GamedirManifestEntry struct {
 	Path string `json:"path"`
 }
 
@@ -45,6 +45,12 @@ type HashedAssetServer struct {
 	mu           sync.RWMutex
 	manifests    map[string]*issuedManifest
 	assetsByHash map[string]hashedAsset
+
+	// Cached client-asset-tree fingerprint for ManifestGeneration (separate
+	// lock: the SSE snapshot reads it often and shouldn't contend with serving).
+	genMu    sync.Mutex
+	genValue string
+	genAt    time.Time
 }
 
 // NewHashedAssetServer creates a HashedAssetServer rooted at gameDir (the
@@ -72,7 +78,7 @@ func NewHashedAssetServer(gameDir, cdDir string, pakCache *PakIndexCache) *Hashe
 // game is keyed by mod name. cd is empty when no CD tracks are configured.
 // Both may be empty (no mods found) — the caller decides whether that is a
 // 404 or some other shape.
-func (g *HashedAssetServer) IssueManifest() (game map[string][]StartManifestEntry, cd []StartManifestEntry, ref string, err error) {
+func (g *HashedAssetServer) IssueManifest() (game map[string][]GamedirManifestEntry, cd []GamedirManifestEntry, ref string, err error) {
 	ref = newManifestRef()
 	game, cd, assets, err := g.buildSnapshot(ref)
 	if err != nil {
@@ -105,7 +111,7 @@ func (g *HashedAssetServer) IssueManifest() (game map[string][]StartManifestEntr
 // AssetHandler returns an HTTP handler that serves individual assets by the
 // per-session hash address issued by IssueManifest.
 //
-// The URL path must be /nq/<hash> where hash is a 16-character hex string.
+// The URL path must be /pak/<hash> where hash is a 16-character hex string.
 // Supports GET and HEAD. Returns 404 for unknown or expired hashes.
 func (g *HashedAssetServer) AssetHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -114,7 +120,7 @@ func (g *HashedAssetServer) AssetHandler() http.HandlerFunc {
 			return
 		}
 
-		hash := strings.TrimPrefix(r.URL.Path, "/nq/")
+		hash := strings.TrimPrefix(r.URL.Path, "/pak/")
 		hash = strings.TrimSpace(hash)
 		if hash == "" || strings.Contains(hash, "/") {
 			http.NotFound(w, r)
@@ -213,13 +219,13 @@ func (g *HashedAssetServer) removeManifestLocked(ref string) {
 	delete(g.manifests, ref)
 }
 
-func (g *HashedAssetServer) buildSnapshot(ref string) (game map[string][]StartManifestEntry, cd []StartManifestEntry, assets map[string]hashedAsset, err error) {
+func (g *HashedAssetServer) buildSnapshot(ref string) (game map[string][]GamedirManifestEntry, cd []GamedirManifestEntry, assets map[string]hashedAsset, err error) {
 	mods, err := ListMods(g.gameDir)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	game = make(map[string][]StartManifestEntry, len(mods))
+	game = make(map[string][]GamedirManifestEntry, len(mods))
 	assets = make(map[string]hashedAsset)
 
 	for _, mod := range mods {
@@ -251,8 +257,8 @@ func (g *HashedAssetServer) buildSnapshot(ref string) (game map[string][]StartMa
 	return game, cd, assets, nil
 }
 
-func appendManifestAssets(ref, namespace string, manifest []assetManifestEntry, assets map[string]hashedAsset) ([]StartManifestEntry, error) {
-	out := make([]StartManifestEntry, 0, len(manifest))
+func appendManifestAssets(ref, namespace string, manifest []assetManifestEntry, assets map[string]hashedAsset) ([]GamedirManifestEntry, error) {
+	out := make([]GamedirManifestEntry, 0, len(manifest))
 	for _, ent := range manifest {
 		key := normalizeVFSKey(ent.Path)
 		if key == "" {
@@ -267,7 +273,7 @@ func appendManifestAssets(ref, namespace string, manifest []assetManifestEntry, 
 			return nil, fmt.Errorf("hash collision for %q", ent.Path)
 		}
 		assets[hash] = asset
-		out = append(out, StartManifestEntry{Path: ent.Path})
+		out = append(out, GamedirManifestEntry{Path: ent.Path})
 	}
 	return out, nil
 }

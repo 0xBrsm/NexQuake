@@ -501,7 +501,7 @@ Module = Object.assign(Module || {}, {
   }
 
   Module.nexquakeApplyClientConfig = applyClientConfig;
-  Module.nexquakeApplyClientConfig((nqTryLoadStartBundleSync() || {}).client);
+  Module.nexquakeApplyClientConfig((nqTryLoadGamedirBundleSync() || {}).client);
 })();
 
 if (loaderReloadButton) {

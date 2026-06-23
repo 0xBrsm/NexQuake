@@ -160,8 +160,16 @@ func runConcurrentJoinBurst(t *testing.T, m *ServerManager, serverID, clientCoun
 					}
 				}
 
+				// Model each simulated client as a real join intent (note demand
+				// directly) plus a server-list read — the slist read itself no
+				// longer signals demand (see snapshotForSlist).
 				begin := time.Now()
-				entries := snapshotForSlist(m)
+				m.mu.Lock()
+				if s := m.serversByID[serverID]; s != nil {
+					noteServerDemandLocked(s, time.Now())
+				}
+				entries := serverListEntriesLocked(m)
+				m.mu.Unlock()
 				latency := time.Since(begin)
 				if len(entries) == 0 {
 					routeFailures.Add(1)

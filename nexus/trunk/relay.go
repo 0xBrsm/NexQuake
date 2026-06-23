@@ -141,11 +141,8 @@ func (s *Session) handleFrame(packet []byte) {
 	}
 
 	if dstPort == controlPort {
-		// Control-channel payload ownership stays outside trunk; the handler
-		// may call s.SendControl to reply or push at will.
-		if s.trunk.onCtrlFrame != nil {
-			s.trunk.onCtrlFrame(s, payload)
-		}
+		// Port 0 is server->client only (DEC-020): NQIP/rcon are pushed via
+		// SendControl, and nothing is expected inbound. Drop it.
 		return
 	}
 

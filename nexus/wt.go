@@ -22,7 +22,7 @@ import (
 // The WT listener binds UDP/HTTP_PORT — TCP and UDP socket spaces don't
 // collide, so the WS and WT listeners coexist on the same port.
 //
-// The advertised WT URL authority is each /start request's own Host header
+// The advertised WT URL authority is each /gamedir request's own Host header
 // — exactly the public host[:port] the browser already reached over TCP —
 // so the one deployment rule is that whatever public port serves the page
 // also reaches HTTP_PORT over UDP.
@@ -46,7 +46,7 @@ func setupWebTransport(app *nexusApp, rt *tlsRuntime, mux *http.ServeMux) (*qwt.
 	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 	slog.Debug("WebTransport: quic-go UDP receive-buffer warning suppressed; raise host sysctl net.core.rmem_max (target 7 MiB) if QUIC throughput matters. See https://github.com/quic-go/quic-go/wiki/UDP-Buffer-Sizes")
 
-	// Register the WT manifest field. The provider is invoked per /start
+	// Register the WT manifest field. The provider is invoked per /gamedir
 	// request so the URL authority is the one the requesting client actually
 	// used to reach the page.
 	app.AddBootstrapClientFields(func(r *http.Request) map[string]any {

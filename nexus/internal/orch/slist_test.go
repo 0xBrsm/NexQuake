@@ -66,8 +66,8 @@ func TestParseCCREPServerInfo_ProtocolMismatch(t *testing.T) {
 	}
 }
 
-func TestBuildCCREPServerListEncodesU16Fields(t *testing.T) {
-	packet, count := buildCCREPServerList([]serverListEntry{{
+func TestSlistEntriesEncodesFields(t *testing.T) {
+	servers := slistEntriesFrom([]serverListEntry{{
 		ListenPort: 26000,
 		Hostname:   "fragfest",
 		MapName:    "dm6",
@@ -76,58 +76,20 @@ func TestBuildCCREPServerListEncodesU16Fields(t *testing.T) {
 		MaxUsers:   10000,
 		Instances:  100,
 	}})
-	if count != 1 {
-		t.Fatalf("entry count = %d, want 1", count)
+	if len(servers) != 1 {
+		t.Fatalf("entry count = %d, want 1", len(servers))
 	}
-	if len(packet) < 8 {
-		t.Fatalf("packet too small: %d", len(packet))
+	s := servers[0]
+	if s.Port != 26000 || s.Hostname != "fragfest" || s.Map != "dm6" || s.GameDir != "id1" {
+		t.Fatalf("unexpected string fields: %+v", s)
 	}
-	if packet[5] != 1 {
-		t.Fatalf("entry count byte = %d, want 1", packet[5])
-	}
-
-	i := 6
-	portText, next, ok := readCString(packet, i)
-	if !ok || portText != "26000" {
-		t.Fatalf("port text = %q, want 26000", portText)
-	}
-	i = next
-	hostname, next, ok := readCString(packet, i)
-	if !ok || hostname != "fragfest" {
-		t.Fatalf("hostname = %q, want fragfest", hostname)
-	}
-	i = next
-	mapName, next, ok := readCString(packet, i)
-	if !ok || mapName != "dm6" {
-		t.Fatalf("map = %q, want dm6", mapName)
-	}
-	i = next
-	gameDir, next, ok := readCString(packet, i)
-	if !ok || gameDir != "id1" {
-		t.Fatalf("gamedir = %q, want id1", gameDir)
-	}
-	i = next
-
-	if i+7 > len(packet) {
-		t.Fatalf("missing numeric tail")
-	}
-	users := uint16(packet[i]) | uint16(packet[i+1])<<8
-	maxUsers := uint16(packet[i+2]) | uint16(packet[i+3])<<8
-	instances := uint16(packet[i+4]) | uint16(packet[i+5])<<8
-
-	if users != 873 {
-		t.Fatalf("users = %d, want 873", users)
-	}
-	if maxUsers != 10000 {
-		t.Fatalf("maxUsers = %d, want 10000", maxUsers)
-	}
-	if instances != 100 {
-		t.Fatalf("instances = %d, want 100", instances)
+	if s.Users != 873 || s.MaxUsers != 10000 || s.Instances != 100 {
+		t.Fatalf("unexpected counters: users=%d max=%d inst=%d", s.Users, s.MaxUsers, s.Instances)
 	}
 }
 
-func TestBuildCCREPServerListPreservesZeroInstances(t *testing.T) {
-	packet, count := buildCCREPServerList([]serverListEntry{{
+func TestSlistEntriesPreservesZeroInstances(t *testing.T) {
+	servers := slistEntriesFrom([]serverListEntry{{
 		ListenPort: 26000,
 		Hostname:   "fragfest",
 		MapName:    "dm6",
@@ -136,22 +98,24 @@ func TestBuildCCREPServerListPreservesZeroInstances(t *testing.T) {
 		MaxUsers:   16,
 		Instances:  0,
 	}})
-	if count != 1 {
-		t.Fatalf("entry count = %d, want 1", count)
+	if len(servers) != 1 {
+		t.Fatalf("entry count = %d, want 1", len(servers))
 	}
-	i := 6
-	for step := 0; step < 4; step++ {
-		_, next, ok := readCString(packet, i)
-		if !ok {
-			t.Fatalf("missing cstring %d", step)
-		}
-		i = next
+	if servers[0].Instances != 0 {
+		t.Fatalf("instances = %d, want 0", servers[0].Instances)
 	}
-	if i+7 > len(packet) {
-		t.Fatalf("missing numeric fields")
+}
+
+func TestSlistEntriesNormalizesAndSkipsBadPort(t *testing.T) {
+	servers := slistEntriesFrom([]serverListEntry{
+		{ListenPort: 0, Hostname: "skipme"}, // invalid port → skipped
+		{ListenPort: 26000},                 // empty fields → defaults
+	})
+	if len(servers) != 1 {
+		t.Fatalf("entry count = %d, want 1 (bad port dropped)", len(servers))
 	}
-	instances := uint16(packet[i+4]) | uint16(packet[i+5])<<8
-	if instances != 0 {
-		t.Fatalf("instances = %d, want 0", instances)
+	s := servers[0]
+	if s.Hostname != "UNNAMED" || s.Map != "?" || s.GameDir != "id1" {
+		t.Fatalf("defaults not applied: %+v", s)
 	}
 }

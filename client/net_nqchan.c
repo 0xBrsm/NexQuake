@@ -145,13 +145,6 @@ void WASM_OnTransportReset (void)
 	nq_data.r = nq_data.w = nq_data.overflow = 0;
 }
 
-// True when no game qsocket is open — the window where the transport shell
-// may switch substrates without severing a live connection.
-qboolean WASM_TransportIdle (void)
-{
-	return nq_game_socket_refs == 0;
-}
-
 //----------------------------------------------------------------------------
 // Virtual address helpers (127.13.37.<server_id>:<route_port>).
 
@@ -324,7 +317,7 @@ int NQChan_Init (void)
 	tcpipAvailable = true;
 	UpdateMyTCPIPAddress ();
 	Rcon_RegisterCommands ();
-	WASM_TransportInit ();		// register cl_transport (before config exec)
+	WASM_TransportInit ();		// register net_transport (before config exec)
 	return nq_control_socket_handle;
 }
 
@@ -362,7 +355,14 @@ int NQChan_CloseSocket (int socket)
 	else if (socket == NQ_GAME_SOCKET && nq_game_socket_refs > 0)
 		nq_game_socket_refs--;
 
-	if (!nq_control_socket_open && nq_game_socket_refs == 0)
+	// The carrier exists only to serve a game connection: server discovery is
+	// SSE/HTTP now (DEC-020) and nothing else rides it, so its lifetime tracks
+	// the game sockets. Drop it the moment the last one closes — a disconnect,
+	// a server hop, or a failed connect — so it isn't held open at the menu and
+	// the next connect re-selects fresh (re-applying net_transport). The control
+	// socket stays open for the whole session (opened in NQChan_Init), so the
+	// old `!nq_control_socket_open` guard only ever fired at engine shutdown.
+	if (nq_game_socket_refs == 0)
 	{
 		NQ_ResetState ();
 		WASM_CloseTransport ();

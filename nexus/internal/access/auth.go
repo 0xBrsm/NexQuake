@@ -97,7 +97,7 @@ func InitJWT(ctx context.Context) (*JWTVerifier, error) {
 // client-side Authorization Code + PKCE login: the issuer (for endpoint
 // discovery), the public client_id, and the scopes to request (derived by the
 // caller from the admin rules — see [Auth.LoginScopes]). Keys are JSON-shaped
-// for direct inclusion in the /start client config; none of these values are
+// for direct inclusion in the /gamedir client config; none of these values are
 // secret.
 //
 // Returns nil — disabling PKCE so the client uses password or edge-gated login

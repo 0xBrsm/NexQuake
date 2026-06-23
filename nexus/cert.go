@@ -26,7 +26,7 @@ import (
 //   - "https://host": Nexus owns the public endpoint at that hostname.
 //     The hostname is the certificate identity (automatic Let's Encrypt),
 //     HTTPS/WSS serve on the TCP listener, and WebTransport is advertised
-//     at the authority each /start request arrives on — nothing separate
+//     at the authority each /gamedir request arrives on — nothing separate
 //     to configure. Whatever public port serves the page must reach
 //     HTTP_PORT over both TCP and UDP.
 //

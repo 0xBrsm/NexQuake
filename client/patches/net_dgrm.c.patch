@@ -1,6 +1,6 @@
 --- net_dgrm.c
 +++ net_dgrm.c
-@@ -54,6 +54,9 @@
+@@ -37,6 +37,9 @@
  
  #include "quakedef.h"
  #include "net_dgrm.h"
@@ -10,7 +10,7 @@
  
  // these two macros are to make the code more readable
  #define sfunc	net_landrivers[sock->landriver]
-@@ -516,11 +521,12 @@
+@@ -517,11 +520,12 @@
  static int		testDriver;
  static int		testSocket;
  
@@ -25,7 +25,7 @@
  	struct qsockaddr clientaddr;
  	int		control;
  	int		len;
-@@ -644,11 +650,12 @@
+@@ -645,11 +649,12 @@
  static int		test2Driver;
  static int		test2Socket;
  
@@ -40,17 +40,7 @@
  	struct qsockaddr clientaddr;
  	int		control;
  	int		len;
-@@ -1150,6 +1150,9 @@
- 		if (MSG_ReadByte() != CCREP_SERVER_INFO)
- 			continue;
- 
-+		NET_SlistParseAggregatedList(net_landriverlevel);
-+		continue;
-+
- 		dfunc.GetAddrFromName(MSG_ReadString(), &readaddr);
- 		// search the cache for this server
- 		for (n = 0; n < hostCacheCount; n++)
-@@ -1302,6 +1313,10 @@
+@@ -1303,6 +1308,10 @@
  					continue;
  				}
  			}

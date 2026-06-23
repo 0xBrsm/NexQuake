@@ -24,7 +24,7 @@ const (
 
 // Transport family names returned by [Transport.Name] and used in connection
 // logs and SessionInfo.Transport (and thus rcon client.list). These are the
-// canonical display strings — NOT the lowercase /start JSON keys.
+// canonical display strings — NOT the lowercase /gamedir JSON keys.
 const (
 	TransportWebSocket    = "WebSocket"
 	TransportWebTransport = "WebTransport"
@@ -50,13 +50,6 @@ type Transport interface {
 	// Close tears down the underlying connection.
 	Close() error
 }
-
-// ControlHandler is an application callback invoked for every incoming
-// control-channel frame (port 0). The handler may call [Session.SendControl]
-// to send a reply (or any other control frame) — there's no return-value
-// reply path. The payload slice is only valid for the duration of the
-// call; copy it if retained.
-type ControlHandler func(s *Session, payload []byte)
 
 // PortFilter gates outbound UDP forwarding. Called for every incoming
 // non-control frame before the payload is written to the local UDP socket;
@@ -165,9 +158,9 @@ func (s *Session) End() {
 
 // Run starts the UDP and tunnel I/O goroutines and blocks until the session
 // ends. It calls End before returning. Application protocol — including any
-// initial control-channel handshake — is the caller's responsibility; queue
-// such frames via [Session.SendControl] before invoking Run, or send them
-// from inside the [ControlHandler] callback.
+// initial control-channel push — is the caller's responsibility; queue such
+// frames via [Session.SendControl] before invoking Run or at any time while it
+// runs.
 func (s *Session) Run() {
 	s.runStarted.Store(true)
 	go s.udpReadLoop()
@@ -176,10 +169,9 @@ func (s *Session) Run() {
 	s.End()
 }
 
-// SendControl enqueues a control-channel frame (port 0) for delivery. Used
-// by both the [ControlHandler] when replying to inbound frames and by
-// the application for unsolicited server→client pushes. Returns an error
-// if the session has ended before the frame could be queued.
+// SendControl enqueues a control-channel frame (port 0) for delivery. The
+// control channel is server→client only (NQIP identity, rcon/console pushes).
+// Returns an error if the session has ended before the frame could be queued.
 func (s *Session) SendControl(payload []byte) error {
 	if s.ctx.Err() != nil {
 		return s.ctx.Err()

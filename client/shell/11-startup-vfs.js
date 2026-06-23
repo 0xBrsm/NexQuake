@@ -67,7 +67,7 @@
           return '';
         key = 'mod:' + normalizedMod + ':' + normalizedPath;
       }
-      return '/nq/' + fnv1a64Hex(ref + ':' + key);
+      return '/pak/' + fnv1a64Hex(ref + ':' + key);
     }
 
     function ensureGameDir(mod) {
@@ -488,10 +488,8 @@
     var manifestDependencyId = 'manifest:' + baseGame;
     var syncDependencyId = 'sync:' + baseGame;
     var manifestBundle = null;
-    var manifestRefreshIntervalMs = 13 * 60 * 1000;
     var manifestRefreshState = {
       inFlight: null,
-      loopStarted: false,
       retryAfterMs: 0,
       failureCount: 0
     };
@@ -528,8 +526,18 @@
       var rawCd = (rawBundle && Array.isArray(rawBundle.cd)) ? rawBundle.cd : [];
       var game = Object.create(null);
 
-      applyClientConfig(rawBundle && rawBundle.client);
-      applyTransportConfig(rawBundle && rawBundle.client);
+      // Client/transport config is boot-only: sendArgs become callMain's argv and
+      // the rest is read during startup. The boot fetch (refreshGamedirBundle at the
+      // bottom of this module) runs while a run-dependency is held, so calledRun is
+      // still false and config applies. Every later refetch shares this path but
+      // runs after the runtime is up (calledRun true) — the SSE manifestGen refresh,
+      // an FS-miss refresh, a websocket-open refresh — and must only pick up changed
+      // assets, never re-apply config onto a live session.
+      if (!Module.calledRun) {
+        var clientConfig = rawBundle && rawBundle.client;
+        applyClientConfig(clientConfig);
+        applyTransportConfig(clientConfig);
+      }
       Object.keys(rawGame).forEach(function(rawMod) {
         var mod = normalizeGameName(rawMod);
         if (mod)
@@ -542,28 +550,28 @@
       return { game: game, cd: rawCd };
     }
 
-    function fetchStartBundle() {
-      var rawBundle = Module.nexquakeStartBundle;
+    function fetchGamedirBundle() {
+      var rawBundle = Module.nexquakeGamedirBundle;
       var bundlePromise;
 
       if (rawBundle)
-        Module.nexquakeStartBundle = null;
+        Module.nexquakeGamedirBundle = null;
       bundlePromise = rawBundle
         ? Promise.resolve(rawBundle)
-        : fetch('/start').then(function(response) {
+        : fetch('/gamedir').then(function(response) {
           if (!response.ok) throw new Error('start bundle fetch failed: ' + response.status);
           Module.nexquakeAssetRef = String(response.headers.get('X-NexQuake-Ref') || '');
           if (!Module.nexquakeAssetRef)
             throw new Error('start bundle missing X-NexQuake-Ref header');
           return response.text();
-        }).then(nqParseStartBundle);
+        }).then(nqParseGamedirBundle);
 
       return bundlePromise.then(normalizeRawBundle);
     }
 
-    function fetchStartBundleSync() {
+    function fetchGamedirBundleSync() {
       var xhr = new XMLHttpRequest();
-      xhr.open('GET', '/start', false);
+      xhr.open('GET', '/gamedir', false);
       xhr.send(null);
       if (xhr.status !== 200)
         throw new Error('start bundle fetch failed: ' + xhr.status);
@@ -571,7 +579,7 @@
       if (!ref)
         throw new Error('start bundle missing X-NexQuake-Ref header');
       Module.nexquakeAssetRef = ref;
-      return normalizeRawBundle(nqParseStartBundle(xhr.responseText));
+      return normalizeRawBundle(nqParseGamedirBundle(xhr.responseText));
     }
 
     function installManifest(mod, entries) {
@@ -618,7 +626,7 @@
       });
     }
 
-    function installStartBundle(bundle) {
+    function installGamedirBundle(bundle) {
       var activeGame = normalizeGameName(Module.nexquakeActiveGame || baseGame);
       manifestBundle = bundle.game;
       preloadAllManifestRoots();
@@ -630,25 +638,25 @@
         Module.nexquakeSwitchGameData(activeGame);
     }
 
-    function refreshStartBundle() {
+    function refreshGamedirBundle() {
       if (manifestRefreshState.inFlight)
         return manifestRefreshState.inFlight;
-      manifestRefreshState.inFlight = fetchStartBundle()
-        .then(installStartBundle)
+      manifestRefreshState.inFlight = fetchGamedirBundle()
+        .then(installGamedirBundle)
         .finally(function() {
           manifestRefreshState.inFlight = null;
         });
       return manifestRefreshState.inFlight;
     }
 
-    function refreshStartBundleSync() {
-      installStartBundle(fetchStartBundleSync());
+    function refreshGamedirBundleSync() {
+      installGamedirBundle(fetchGamedirBundleSync());
     }
 
     // Cooldown-gated sync refresh. Returns true iff the refresh ran successfully
     // and the caller should retry the failing operation once. Shared by
     // ensureLoaded (XHR 404) and FS.lookupPath (missing path under REMOTE_ROOT).
-    // installStartBundle re-enters FS.lookupPath for every file; isRefreshing
+    // installGamedirBundle re-enters FS.lookupPath for every file; isRefreshing
     // short-circuits those reentries cheaply instead of re-checking the clock.
     function refreshAndRetry() {
       if (manifestRefreshState.isRefreshing) return false;
@@ -657,7 +665,7 @@
       manifestRefreshState.isRefreshing = true;
       manifestRefreshState.retryAfterMs = now + 5000;
       try {
-        refreshStartBundleSync();
+        refreshGamedirBundleSync();
         manifestRefreshState.failureCount = 0;
         return true;
       } catch (err) {
@@ -671,31 +679,23 @@
       }
     }
 
-    function startManifestRefreshLoop() {
-      if (manifestRefreshState.loopStarted)
-        return;
-      manifestRefreshState.loopStarted = true;
-      setInterval(function() {
-        refreshStartBundle().catch(function(err) { console.warn('Failed to refresh manifest bundle:', err); });
-      }, manifestRefreshIntervalMs);
-    }
-
-    Module.nexquakeRefreshRemoteManifest = refreshStartBundle;
+    Module.nexquakeRefreshRemoteManifest = refreshGamedirBundle;
 
     Module.nexquakeOnWebSocketOpen = function() {
-      refreshStartBundle().catch(function(err) {
+      refreshGamedirBundle().catch(function(err) {
         console.warn('Failed to refresh manifest bundle on websocket open:', err);
       });
     };
 
     // Files dropped into GAME_DIR after connect (live reload, #113) are picked
-    // up by the ASYNC manifest refresh — the periodic poll
-    // (startManifestRefreshLoop) today, an SSE manifest-changed push next.
+    // up by the ASYNC manifest refresh, driven by the SSE state channel: a
+    // changed manifest generation (56-sse.js) calls nexquakeRefreshRemoteManifest.
+    // A reconnect re-delivers the current generation, so a missed event self-heals.
     //
     // We deliberately do NOT refresh synchronously on an FS.lookupPath miss.
     // Quake's COM_FindFile probes searchpaths it *expects* to miss (e.g.
     // /<mod>/gfx/X.lmp before falling back to /id1/gfx/X.lmp), via Sys_FileTime's
-    // fopen(). A blocking /start refetch on each such miss froze the engine for a
+    // fopen(). A blocking /gamedir refetch on each such miss froze the engine for a
     // full network round-trip on every menu-screen entry (the long-hunted
     // "network-dependent menu hitch"). The genuine hash-rotation case — a node
     // that exists but whose URL 404s — is still recovered synchronously in
@@ -714,11 +714,10 @@
       }
     };
 
-    refreshStartBundle()
+    refreshGamedirBundle()
       .then(function() {
         Module.nexquakeActiveGame = baseGame;
         prefetchCoreAssets();
-        startManifestRefreshLoop();
         nqSetBootstrapPhase(3);
         Module.addRunDependency(syncDependencyId);
         Module.removeRunDependency(manifestDependencyId);

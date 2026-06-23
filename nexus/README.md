@@ -11,7 +11,7 @@ Go orchestration service that serves the WASM client, serves game data, tunnels 
 | `internal/access/` | **HTTP access policy.** Caller identity, OIDC login flow + JWT verification, RCON/admin authorization rules, and source-IP blocklist. |
 | `internal/clients/` | **Client presence.** Joined runtime view of access identities and active trunk sessions, keyed by VirtualIP for client list/info/ban consumers. |
 | `internal/admin/` | **Admin control plane.** `/rcon` JSON-RPC 2.0 dispatch and client/server commands over narrow consumer-side interfaces. |
-| `internal/assets/` | **Game data gateway.** Quickstart manifests, VFS manifest construction, PAK indexing/streaming, CD index, and hash-addressed asset serving (`/start`, `/nq/<hash>`). |
+| `internal/assets/` | **Game data gateway.** Quickstart manifests, VFS manifest construction, PAK indexing/streaming, CD index, and hash-addressed asset serving (`/gamedir`, `/pak/<hash>`). |
 | `quake106/` | **Shareware extractor.** Standalone Go package that extracts `pak0.pak` from the Quake 1.06 shareware archive with SHA256 verification. See [quake106/README.md](./quake106/README.md). |
 
 ## Dependency Boundaries
@@ -38,12 +38,12 @@ Rules:
 | File | Purpose |
 |------|---------|
 | `main.go` | Process lifecycle only: init, runtime wiring, HTTP server start, signal handling, graceful shutdown, and CLI subcommands (`--version`, `--healthcheck`). |
-| `connect.go` | HTTP mux and connection boundary: route registration (`/health`, `/connect`, `POST /rcon` JSON-RPC, `GET /rcon` login landing page, `/start`, `/nq/`, `/`), top-level access gate wrapping, and `/rcon` JSON-RPC handler. |
+| `connect.go` | HTTP mux and connection boundary: route registration (`/health`, `/connect`, `POST /rcon` JSON-RPC, `GET /rcon` login landing page, `/gamedir`, `/pak/`, `/`), top-level access gate wrapping, and `/rcon` JSON-RPC handler. |
 | `env.go` | Startup config (`runtimeConfig`): reads cross-cutting env vars once and exposes `PATH`/env helpers. |
 | `log.go` | Logging setup (`LOG_LEVEL`, `CONSOLE_TIMESTAMPS`), nexus.log file sink, and operator console ring buffer. |
 | `version.go` | Build metadata (`--version`, `/health`), version ldflags, and CLI sub-command handler. |
 | `ws.go` | WebSocket transport setup: mounts `/connect` and upgrades connections to trunk sessions. |
-| `wt.go` | WebTransport transport setup: HTTP/3 listener on UDP/`HTTP_PORT`, `/connect` Extended CONNECT route, request-derived URL authority in the `/start` manifest. |
+| `wt.go` | WebTransport transport setup: HTTP/3 listener on UDP/`HTTP_PORT`, `/connect` Extended CONNECT route, request-derived URL authority in the `/gamedir` manifest. |
 | `cert.go` | Run-path resolution (`EXTERNAL_URL`): shared cert source for the HTTPS and WebTransport listeners — a BYO `cert.pem`+`key.pem` under `CERT_DIR`, else ACME/Let's Encrypt via `autocert`. |
 
 ## trunk/
@@ -53,7 +53,7 @@ Per-client browser↔UDP tunnel. See [trunk/README.md](./trunk/README.md) for ve
 | File | Purpose |
 |------|---------|
 | `trunk.go` | `Trunk` type, functional options, `SessionInfo`, and session registry (`NewSession`, `SessionByVirtualIP`). |
-| `session.go` | `Session` type, `Transport` interface, `ControlHandler`/`PortFilter` callbacks, `SendControl`/`TrySendControl`, `End`, and per-client I/O lifecycle. |
+| `session.go` | `Session` type, `Transport` interface, `PortFilter` callback, `SendControl`/`TrySendControl`, `End`, and per-client I/O lifecycle. |
 | `relay.go` | Frame encoding (2-byte big-endian port prefix), tunnel read/write loops, and UDP read/write loops. |
 | `vip.go` | Deterministic `127.x.x.x` VirtualIP allocation from source keys. |
 | `websocket/websocket.go` | `Transport` adapter and `Upgrader` for `gorilla/websocket` (64 KiB inbound read limit); the only file importing it. |
@@ -61,7 +61,7 @@ Per-client browser↔UDP tunnel. See [trunk/README.md](./trunk/README.md) for ve
 
 ## internal/access/
 
-Resolves HTTP callers and centralizes access policy before route-specific code runs. All HTTP handlers, including `/health`, `/start`, `/nq/`, `/connect`, `/rcon`, and the static client file server, sit behind the same source-IP block check. `/rcon` additionally asks for admin capability.
+Resolves HTTP callers and centralizes access policy before route-specific code runs. All HTTP handlers, including `/health`, `/gamedir`, `/pak/`, `/connect`, `/rcon`, and the static client file server, sit behind the same source-IP block check. `/rcon` additionally asks for admin capability.
 
 | File | Purpose |
 |------|---------|
@@ -75,7 +75,7 @@ Manages dedicated server processes and their scaled instances. Parses `.bat`-sty
 
 | File | Purpose |
 |------|---------|
-| `autoscale.go` | Server-level instance selection (least-loaded, round-robin tie-break), slist-poll demand accounting, headroom calculation, autoscale scale-up/drain/despawn decisions, and reconcile loops (event-driven + heartbeat). |
+| `autoscale.go` | Server-level instance selection (least-loaded, round-robin tie-break), join-demand accounting, headroom calculation, autoscale scale-up/drain/despawn decisions, and reconcile loops (event-driven + heartbeat). |
 | `launch_plan.go` | `servers.ini` parser (`@macro` + `%arg` expansion) and launch plan builder. |
 | `launcher.go` | Process start/stop wiring under PTY. |
 | `manager.go` | `ServerManager` construction, shared logging hooks, and operator console relay formatting. |
@@ -84,7 +84,7 @@ Manages dedicated server processes and their scaled instances. Parses `.bat`-sty
 | `ops.go` | High-level lifecycle operations (start/stop/restart/remove/launch by 1-based server index). Resolves targets and coordinates instance transitions. |
 | `console.go` | PTY-based server console I/O. Captures output lines, detects listen port from console, supports filtered reads for rcon command capture. |
 | `rcon.go` | Instance command dispatch (`DispatchInstanceCmd`): brackets the user command with random `__NQX_*` sentinels via `echo`, writes the framed line to the instance PTY, and returns exactly the lines the server emits between BEGIN and END. A safety timeout bounds hung-server cases; there is no idle-wait heuristic. |
-| `slist.go` | Server-info poller. Sends `CCREQ_SERVER_INFO` in round-robin, updates cache for WebSocket `slist`, and drives periodic reconcile heartbeat. |
+| `slist.go` | Server-info poller. Sends `CCREQ_SERVER_INFO` in round-robin, updates the cache that backs the `GET /events` SSE snapshot (`SlistEntries`), and drives periodic reconcile heartbeat. |
 
 ## internal/admin/
 
@@ -113,7 +113,7 @@ Tracks live client presence by joining access identity metadata recorded at `/co
 | `clientfs_pak.go` | PAK parser: indexes PAK headers and exposes file offsets/sizes for stream extraction. |
 | `serverfs.go` | Runtime overlay basedir: creates an ephemeral directory of symlinks into `${GAME_DIR}` for the dedicated server's VFS, reconciled per fsnotify event. |
 | `gamedir.go` | Lists valid mod directories under `${GAME_DIR}`. |
-| `manifest.go` | Runtime asset gateway: serves `/start` quickstart metadata and `/nq/<hash>` hash-addressed asset reads. |
+| `manifest.go` | Runtime asset gateway: serves `/gamedir` quickstart metadata and `/pak/<hash>` hash-addressed asset reads. |
 | `manifest_asset.go` | Hashed asset construction and content-type resolution for hash-addressed responses. |
 | `quickstart.go` | Quickstart orchestration: seeds `servers.ini` and plans mod installs from `CFG_DIR/game.json` based on `QUICKSTART` and `servers.ini -game` entries. |
 | `quickstart_extract.go` | Archive and PAK extraction for quickstart mod layer installs. |

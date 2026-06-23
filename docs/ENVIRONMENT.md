@@ -45,9 +45,9 @@ Requires the hostname to resolve to your public IP and the public port serving t
 
 ## WebTransport
 
-WebTransport gives the tunnel UDP-like delivery (unreliable QUIC datagrams) instead of WebSocket's TCP semantics, which removes head-of-line blocking during network hiccups. It is automatic whenever `EXTERNAL_URL` is set and absent otherwise. There is nothing to configure: each `/start` response advertises the WebTransport URL at the exact authority the request arrived on, so whatever address and port work for the page work for QUIC.
+WebTransport gives the tunnel UDP-like delivery (unreliable QUIC datagrams) instead of WebSocket's TCP semantics, which removes head-of-line blocking during network hiccups. It is automatic whenever `EXTERNAL_URL` is set and absent otherwise. There is nothing to configure: each `/gamedir` response advertises the WebTransport URL at the exact authority the request arrived on, so whatever address and port work for the page work for QUIC.
 
-The QUIC listener binds UDP on `HTTP_PORT` — TCP and UDP socket spaces don't collide, so the WebSocket and WebTransport listeners share the port number. The one deployment rule: whatever public port serves the page must also reach `HTTP_PORT` over UDP (e.g. `443:1337/udp` next to `443:1337`). A mismatched mapping black-holes silently: the page and `/start` ride TCP and look fine; only QUIC fails.
+The QUIC listener binds UDP on `HTTP_PORT` — TCP and UDP socket spaces don't collide, so the WebSocket and WebTransport listeners share the port number. The one deployment rule: whatever public port serves the page must also reach `HTTP_PORT` over UDP (e.g. `443:1337/udp` next to `443:1337`). A mismatched mapping black-holes silently: the page and `/gamedir` ride TCP and look fine; only QUIC fails.
 
 Clients treat WebTransport as an upgrade, never a requirement: the session warms up in the background at page load, connections use it only once its handshake has already landed, and WebSocket carries play in the meantime. An unreachable WebTransport endpoint costs nothing beyond a background retry every 20 seconds.
 

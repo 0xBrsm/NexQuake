@@ -67,12 +67,20 @@ type server struct {
 	// ScaleUpInFlight is true while a replica launch is in progress.
 	ScaleUpInFlight bool
 
-	// aggregateUsers is the total player count across all running instances.
+	// aggregateUsers is the total player count across all running instances
+	// (including warming/draining). Used by autoscale, not by the slist display.
 	aggregateUsers uint16
-	// aggregateMaxUsers is the total capacity across all running instances.
+	// aggregateMaxUsers is the total capacity across all running instances
+	// (including warming/draining). Used by autoscale, not by the slist display.
 	aggregateMaxUsers uint16
 	// joinableInstances is the number of running instances currently accepting joins.
 	joinableInstances uint16
+	// joinableUsers / joinableMaxUsers are players and capacity summed over the
+	// joinable instances only — what the slist advertises, so users/max/instances
+	// all describe the same (joinable) set. A draining instance is "running" but
+	// not joinable, so it must not inflate the advertised capacity.
+	joinableUsers    uint16
+	joinableMaxUsers uint16
 	// aggregateInstances is the number of currently running instances.
 	aggregateInstances uint16
 
@@ -267,9 +275,22 @@ func (m *ServerManager) refreshServerSnapshotLocked(s *server) {
 		applyServerDisplayFromInstance(s, rec)
 	}
 
+	// Joinable set: the instances a player can actually join right now. Sum its
+	// players/capacity so the slist advertises a self-consistent users/max/count
+	// (draining and warming instances count toward aggregate* but not this).
+	candidates := m.serverRoutableCandidatesLocked(s, false)
+	joinableUsers := 0
+	joinableMaxUsers := 0
+	for _, c := range candidates {
+		joinableUsers += c.players
+		joinableMaxUsers += c.maxPlayers
+	}
+
 	s.aggregateUsers = uint16(min(max(users, 0), 0xffff))
 	s.aggregateMaxUsers = uint16(min(max(maxUsers, 0), 0xffff))
-	s.joinableInstances = uint16(min(max(len(m.serverRoutableCandidatesLocked(s, false)), 0), 0xffff))
+	s.joinableInstances = uint16(min(max(len(candidates), 0), 0xffff))
+	s.joinableUsers = uint16(min(max(joinableUsers, 0), 0xffff))
+	s.joinableMaxUsers = uint16(min(max(joinableMaxUsers, 0), 0xffff))
 	s.aggregateInstances = uint16(min(max(instances, 0), 0xffff))
 }
 

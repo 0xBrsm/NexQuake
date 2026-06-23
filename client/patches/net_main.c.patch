@@ -1,27 +1,21 @@
 --- net_main.c
 +++ net_main.c
-@@ -21,6 +21,9 @@
- 
- #include "quakedef.h"
- #include "net_vcr.h"
-+#ifdef __EMSCRIPTEN__
-+#include <emscripten/emscripten.h>
-+#endif
- 
- qsocket_t	*net_activeSockets = NULL;
- qsocket_t	*net_freeSockets = NULL;
-@@ -49,8 +52,8 @@
- static double	slistStartTime;
+@@ -46,14 +46,8 @@
+ qboolean	slistInProgress = false;
+ qboolean	slistSilent = false;
+ qboolean	slistLocal = true;
+-static double	slistStartTime;
  static int		slistLastShown;
  
 -static void Slist_Send(void);
 -static void Slist_Poll(void);
-+static void Slist_Send(void *unused);
-+static void Slist_Poll(void *unused);
- PollProcedure	slistSendProcedure = {NULL, 0.0, Slist_Send};
- PollProcedure	slistPollProcedure = {NULL, 0.0, Slist_Poll};
+-PollProcedure	slistSendProcedure = {NULL, 0.0, Slist_Send};
+-PollProcedure	slistPollProcedure = {NULL, 0.0, Slist_Poll};
+-
  
-@@ -63,7 +66,7 @@
+ sizebuf_t		net_message;
+ int				net_activeconnections = 0;
+@@ -63,7 +57,7 @@
  int unreliableMessagesSent = 0;
  int unreliableMessagesReceived = 0;
  
@@ -30,7 +24,7 @@
  cvar_t	hostname = {"hostname", "UNNAMED"};
  
  qboolean	configRestored = false;
-@@ -261,8 +264,7 @@
+@@ -261,8 +255,7 @@
  
  static void PrintSlistHeader(void)
  {
@@ -40,7 +34,7 @@
  	slistLastShown = 0;
  }
  
-@@ -273,10 +275,7 @@
+@@ -273,10 +266,7 @@
  
  	for (n = slistLastShown; n < hostCacheCount; n++)
  	{
@@ -52,66 +46,85 @@
  	}
  	slistLastShown = n;
  }
-@@ -295,6 +294,7 @@
- {
- 	if (slistInProgress)
- 		return;
-+	slist_agg_done = false;
- 
- 	if (! slistSilent)
- 	{
-@@ -308,4 +308,5 @@
- 	SchedulePollProcedure(&slistSendProcedure, 0.0);
- 	SchedulePollProcedure(&slistPollProcedure, 0.1);
- 
-+	Q_memset(hostcache, 0, sizeof(hostcache));
- 	hostCacheCount = 0;
-@@ -312,8 +312,11 @@
+@@ -291,66 +281,25 @@
  }
  
  
++// The server list streams continuously from Nexus over SSE (GET /events); the JS
++// shell (56-sse.js) owns an always-on subscription that keeps `hostcache` warm
++// via NET_SlistBegin/IngestEntry/Commit. There is no Quake wire protocol and no
++// discovery round-trip — this `slist` console command just prints the current
++// snapshot, and connect-by-name resolves against the same warm cache. Nothing
++// blocks. See DEC-020/021.
+ void NET_Slist_f (void)
+ {
+-	if (slistInProgress)
+-		return;
++	// Cold-boot only: if the stream has never delivered a snapshot yet, wait
++	// briefly so the first printed list isn't empty. Fires at most once per
++	// session (no-op once warm); steady-state slist never blocks.
++	NET_SlistAwaitFirstSnapshot();
+ 
+ 	if (! slistSilent)
+ 	{
+-		Con_Printf("Looking for Quake servers...\n");
+ 		PrintSlistHeader();
+-	}
+-
+-	slistInProgress = true;
+-	slistStartTime = Sys_FloatTime();
+-
+-	SchedulePollProcedure(&slistSendProcedure, 0.0);
+-	SchedulePollProcedure(&slistPollProcedure, 0.1);
+-
+-	hostCacheCount = 0;
+-}
+-
+-
 -static void Slist_Send(void)
-+static void Slist_Send(void *unused)
- {
-+	if (!slistInProgress || slist_agg_done)
-+		return;
-+
- 	for (net_driverlevel=0; net_driverlevel < net_numdrivers; net_driverlevel++)
- 	{
- 		if (!slistLocal && net_driverlevel == 0)
-@@ -323,12 +326,12 @@
- 		dfunc.SearchForHosts (true);
- 	}
- 
+-{
+-	for (net_driverlevel=0; net_driverlevel < net_numdrivers; net_driverlevel++)
+-	{
+-		if (!slistLocal && net_driverlevel == 0)
+-			continue;
+-		if (net_drivers[net_driverlevel].initialized == false)
+-			continue;
+-		dfunc.SearchForHosts (true);
+-	}
+-
 -	if ((Sys_FloatTime() - slistStartTime) < 0.5)
-+	if (!slist_agg_done && (Sys_FloatTime() - slistStartTime) < 0.5)
- 		SchedulePollProcedure(&slistSendProcedure, 0.75);
- }
- 
- 
+-		SchedulePollProcedure(&slistSendProcedure, 0.75);
+-}
+-
+-
 -static void Slist_Poll(void)
-+static void Slist_Poll(void *unused)
- {
- 	for (net_driverlevel=0; net_driverlevel < net_numdrivers; net_driverlevel++)
- 	{
-@@ -342,6 +345,16 @@
- 	if (! slistSilent)
+-{
+-	for (net_driverlevel=0; net_driverlevel < net_numdrivers; net_driverlevel++)
+-	{
+-		if (!slistLocal && net_driverlevel == 0)
+-			continue;
+-		if (net_drivers[net_driverlevel].initialized == false)
+-			continue;
+-		dfunc.SearchForHosts (false);
+-	}
+-
+-	if (! slistSilent)
  		PrintSlist();
- 
-+	if (slist_agg_done)
-+	{
-+		if (!slistSilent)
-+			PrintSlistTrailer();
-+		slistInProgress = false;
-+		slistSilent = false;
-+		slistLocal = true;
-+		return;
+-
+-	if ((Sys_FloatTime() - slistStartTime) < 1.5)
+-	{
+-		SchedulePollProcedure(&slistPollProcedure, 0.1);
+-		return;
+-	}
+-
+-	if (! slistSilent)
+ 		PrintSlistTrailer();
+-	slistInProgress = false;
 +	}
-+
- 	if ((Sys_FloatTime() - slistStartTime) < 1.5)
- 	{
- 		SchedulePollProcedure(&slistPollProcedure, 0.1);
-@@ -370,6 +383,7 @@
+ 	slistSilent = false;
+ 	slistLocal = true;
+ }
+@@ -370,6 +319,7 @@
  	qsocket_t		*ret;
  	int				n;
  	int				numdrivers = net_numdrivers;
@@ -119,8 +132,14 @@
  
  	SetNetTime();
  
-@@ -386,14 +400,12 @@
+@@ -384,40 +334,34 @@
+ 			goto JustDoIt;
+ 		}
  
++		// Resolve a server-browser name against the live hostcache (kept warm by
++		// the always-on SSE subscription). A numeric port matches nothing here
++		// and falls through to the driver, which resolves it directly — there is
++		// no discovery round-trip and nothing blocks. See DEC-020.
  		if (hostCacheCount)
  		{
 -			for (n = 0; n < hostCacheCount; n++)
@@ -130,48 +149,60 @@
 -					break;
 -				}
 -			if (n < hostCacheCount)
+-				goto JustDoIt;
+-		}
 +			n = NET_ResolveHostcacheName(host, resolved, sizeof(resolved), false);
 +			if (n < 0) { Con_Printf("Ambiguous host \"%s\"\n", host); return NULL; }
-+			if (n > 0) {
++			if (n > 0)
 +				host = resolved;
- 				goto JustDoIt;
-+			}
- 		}
++		}
++		goto JustDoIt;
  	}
  
-@@ -401,7 +413,12 @@
- 	NET_Slist_f ();
- 
- 	while(slistInProgress)
-+	{
- 		NET_Poll();
-+		#ifdef __EMSCRIPTEN__
-+			emscripten_sleep(1);
-+		#endif
-+	}
- 
- 	if (host == NULL)
+-	slistSilent = host ? true : false;
+-	NET_Slist_f ();
+-
+-	while(slistInProgress)
+-		NET_Poll();
+-
+-	if (host == NULL)
++	// host == NULL (bare `connect`): match vanilla's no-arg UX against the live
++	// cache — connect to the sole server, otherwise print the list so the user
++	// can pick. Wait once for the first snapshot at cold boot so it isn't empty.
++	NET_SlistAwaitFirstSnapshot();
++	if (hostCacheCount == 1)
  	{
-@@ -412,12 +429,12 @@
+-		if (hostCacheCount != 1)
+-			return NULL;
+ 		host = hostcache[0].cname;
+ 		Con_Printf("Connecting to...\n%s @ %s\n\n", hostcache[0].name, host);
++		goto JustDoIt;
  	}
- 
- 	if (hostCacheCount)
+-
+-	if (hostCacheCount)
 -		for (n = 0; n < hostCacheCount; n++)
 -			if (Q_strcasecmp (host, hostcache[n].name) == 0)
 -			{
 -				host = hostcache[n].cname;
 -				break;
 -			}
-+	{
-+		n = NET_ResolveHostcacheName(host, resolved, sizeof(resolved), false);
-+		if (n < 0) { Con_Printf("Ambiguous host \"%s\"\n", host); return NULL; }
-+		if (n > 0)
-+			host = resolved;
-+	}
++	PrintSlistHeader();
++	PrintSlist();
++	PrintSlistTrailer();
++	return NULL;
  
  JustDoIt:
  	for (net_driverlevel=0 ; net_driverlevel<numdrivers; net_driverlevel++)
-@@ -959,6 +976,17 @@
+@@ -431,7 +375,7 @@
+ 
+ 	if (host)
+ 	{
+-		Con_Printf("\n");
++		// PrintSlistHeader leads with its own blank line.
+ 		PrintSlistHeader();
+ 		PrintSlist();
+ 		PrintSlistTrailer();
+@@ -959,6 +903,17 @@
  {
  	PollProcedure *pp, *prev;
  

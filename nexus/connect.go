@@ -17,12 +17,11 @@ import (
 	"github.com/0xBrsm/NexQuake/nexus/internal/access"
 	"github.com/0xBrsm/NexQuake/nexus/internal/admin"
 	"github.com/0xBrsm/NexQuake/nexus/internal/assets"
-	"github.com/0xBrsm/NexQuake/nexus/internal/orch"
 	"github.com/0xBrsm/NexQuake/nexus/trunk"
 )
 
 // headerNexQuakeRef is the response header carrying the manifest session ref
-// returned by /start. The WASM client echoes it back when fetching assets so
+// returned by /gamedir. The WASM client echoes it back when fetching assets so
 // expired sessions can be detected.
 const headerNexQuakeRef = "X-NexQuake-Ref"
 
@@ -93,17 +92,17 @@ func renderRconLanding(authorized bool) string {
 // are tiny — method string + a handful of params — so 8 KiB is generous.
 const rconMaxBody = 8 << 10
 
-// startManifestBundle is the JSON envelope served at /start. The asset server
+// gamedirManifestBundle is the JSON envelope served at /gamedir. The asset server
 // owns the game/cd entries; client config and any transport-routing fields
 // are assembled here from runtimeConfig and registered transport providers.
-type startManifestBundle struct {
+type gamedirManifestBundle struct {
 	Client map[string]any                         `json:"client"`
-	Game   map[string][]assets.StartManifestEntry `json:"game"`
-	CD     []assets.StartManifestEntry            `json:"cd,omitempty"`
+	Game   map[string][]assets.GamedirManifestEntry `json:"game"`
+	CD     []assets.GamedirManifestEntry            `json:"cd,omitempty"`
 }
 
 // AddBootstrapClientFields registers a callback that contributes fields to the
-// "client" object in /start responses. Called per request so transport-specific
+// "client" object in /gamedir responses. Called per request so transport-specific
 // live values (and request-derived ones like the authority in r.Host)
 // propagate within one fetch. Transports use this to add their routing info
 // without the asset server knowing about HTTP layering.
@@ -111,11 +110,11 @@ func (app *nexusApp) AddBootstrapClientFields(fn func(r *http.Request) map[strin
 	app.bootstrapClientFields = append(app.bootstrapClientFields, fn)
 }
 
-// handleStart issues a fresh per-session asset manifest, merges static and
+// handleGamedir issues a fresh per-session asset manifest, merges static and
 // transport-contributed client config, and returns the base64-encoded JSON
 // envelope. The X-NexQuake-Ref header carries the session ref clients echo
 // back when fetching assets.
-func (app *nexusApp) handleStart(w http.ResponseWriter, r *http.Request) {
+func (app *nexusApp) handleGamedir(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -145,7 +144,7 @@ func (app *nexusApp) handleStart(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	bundle, err := json.Marshal(startManifestBundle{Client: client, Game: game, CD: cd})
+	bundle, err := json.Marshal(gamedirManifestBundle{Client: client, Game: game, CD: cd})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -211,18 +210,6 @@ func (app *nexusApp) trunkSession(
 
 	slog.Info(fmt.Sprintf("%s disconnected (%s)", client.ID, transportName),
 		"addr", displayAddr, "vip", vipStr)
-}
-
-// handleControlFrame wires the trunk's port-0 control channel: slist
-// requests only. Other port-0 payloads are silently dropped; admin rcon
-// is served separately by POST /rcon.
-func (app *nexusApp) handleControlFrame(s *trunk.Session, payload []byte) {
-	if orch.IsSlistRequest(payload) {
-		// Non-blocking: this runs on the session's read loop, and a full tx
-		// queue means a stalled client — dropping the reply mirrors UDP, and
-		// the engine re-sends slist requests anyway.
-		_ = s.TrySendControl(app.serverMgr.BuildSlistResponse())
-	}
 }
 
 // logUnauthorizedClaimKeys logs (at debug) the claim keys a verified-but-not-
@@ -382,8 +369,8 @@ func writeResponse(w http.ResponseWriter, resp *admin.Response) {
 //   - GET /rcon             — auto-closing landing page for popup login flows
 //   - POST /rcon            — admin JSON-RPC endpoint
 //   - POST /rcon/session    — server-side PKCE token exchange → httpOnly cookie
-//   - /start                — client bootstrap manifest
-//   - /nq/                  — hashed game assets (pak files, etc.)
+//   - /gamedir                — client bootstrap manifest
+//   - /pak/                  — hashed game assets (pak files, etc.)
 //   - /                     — WASM client static files
 func (app *nexusApp) newMux() *http.ServeMux {
 	mux := http.NewServeMux()
@@ -417,8 +404,12 @@ func (app *nexusApp) newMux() *http.ServeMux {
 	// login. 404s when PKCE isn't offered (see handleRconSession).
 	mux.HandleFunc("POST /rcon/session", app.handleRconSession)
 
-	mux.Handle("/start", addIsolationHeaders(http.HandlerFunc(app.handleStart)))
-	mux.Handle("/nq/", addIsolationHeaders(app.assetServer.AssetHandler()))
+	// GET /events: server-to-client SSE "state changed" stream (server list +
+	// manifest generation). One always-on connection per client; see DEC-021.
+	mux.HandleFunc("GET /events", app.handleEvents)
+
+	mux.Handle("/gamedir", addIsolationHeaders(http.HandlerFunc(app.handleGamedir)))
+	mux.Handle("/pak/", addIsolationHeaders(app.assetServer.AssetHandler()))
 
 	clientFS := http.FileServerFS(os.DirFS(app.cfg.clientDir))
 	mux.Handle("/", addIsolationHeaders(cacheControlClient(clientFS)))

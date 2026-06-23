@@ -15,16 +15,13 @@
 //	+---------+---------+----------+
 //
 // Port 0 is the control channel; non-zero values are UDP destination ports
-// on the backend. Control frames are passed to the application via the
-// callback registered with [WithControlHandler] instead of being forwarded
-// over UDP. The application sends control frames in either direction via
-// [Session.SendControl].
+// on the backend. The control channel is server -> client only: the
+// application pushes control frames via [Session.SendControl] (NQIP identity,
+// rcon/console), and inbound port-0 frames are dropped (see [Session.handleFrame]).
 //
 // # Usage
 //
-//	tk := trunk.New(
-//		trunk.WithControlHandler(handleControl),
-//	)
+//	tk := trunk.New()
 //
 //	http.HandleFunc("/connect", func(w http.ResponseWriter, r *http.Request) {
 //		ws, err := websocket.Upgrader.Upgrade(w, r, nil)
@@ -58,18 +55,16 @@ type Trunk struct {
 	allocator *virtualIPAllocator
 	registry  *registry
 
-	onCtrlFrame ControlHandler
-	allowPort   PortFilter
-	debugRelay  bool // mirrors DEBUG_RELAY=1 env, read once at construction
+	allowPort  PortFilter
+	debugRelay bool // mirrors DEBUG_RELAY=1 env, read once at construction
 }
 
 // Option configures a Trunk at construction time.
 type Option func(*config)
 
 type config struct {
-	serverIP    net.IP
-	onCtrlFrame ControlHandler
-	allowPort   PortFilter
+	serverIP  net.IP
+	allowPort PortFilter
 }
 
 // WithServerIP sets the dedicated server's IP — excluded from the VirtualIP
@@ -77,12 +72,6 @@ type config struct {
 // Default is 127.0.0.1.
 func WithServerIP(ip net.IP) Option {
 	return func(c *config) { c.serverIP = ip.To4() }
-}
-
-// WithControlHandler wires the application callback for control-channel
-// frames (port 0). Without this, control frames are silently dropped.
-func WithControlHandler(fn ControlHandler) Option {
-	return func(c *config) { c.onCtrlFrame = fn }
 }
 
 // WithPortFilter installs a UDP port allowlist callback. Returning false
@@ -93,18 +82,17 @@ func WithPortFilter(fn PortFilter) Option {
 }
 
 // New builds a Trunk ready to accept sessions. All settings are optional;
-// defaults: server IP 127.0.0.1, no control-frame handler, no port filter.
+// defaults: server IP 127.0.0.1, no port filter.
 func New(opts ...Option) *Trunk {
 	cfg := config{serverIP: net.ParseIP("127.0.0.1").To4()}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
 	return &Trunk{
-		allocator:   newAllocator(cfg.serverIP),
-		registry:    newRegistry(),
-		onCtrlFrame: cfg.onCtrlFrame,
-		allowPort:   cfg.allowPort,
-		debugRelay:  os.Getenv("DEBUG_RELAY") == "1",
+		allocator:  newAllocator(cfg.serverIP),
+		registry:   newRegistry(),
+		allowPort:  cfg.allowPort,
+		debugRelay: os.Getenv("DEBUG_RELAY") == "1",
 	}
 }
 

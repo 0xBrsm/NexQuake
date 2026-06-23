@@ -309,7 +309,7 @@ func TestServerRouting_SkipsWarmingInstanceForNewSessions(t *testing.T) {
 	}
 }
 
-func TestServerRouting_RecordsDemandOnSlist(t *testing.T) {
+func TestServerRouting_SlistPollSkipsDemandJoinIntentRecords(t *testing.T) {
 	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
 	m.SetServerMaxInstances(10)
 	t.Cleanup(m.closeServerRegistry)
@@ -329,17 +329,29 @@ func TestServerRouting_RecordsDemandOnSlist(t *testing.T) {
 		t.Fatalf("demand before slist = %d, want 0", beforeDemand)
 	}
 
-	// Slist records one demand event per successful instance pick.
+	// The broadcast slist poll must NOT record demand (DEC-020): the SSE hub
+	// polls it ~2x/sec per client, so noting demand here fabricates join intent
+	// and spins replicas with zero players.
 	entries := snapshotForSlist(m)
 	if len(entries) == 0 {
 		t.Fatalf("expected at least one slist entry")
 	}
 
 	m.mu.RLock()
-	afterDemand := len(s.joinDemandAt)
+	afterPoll := len(s.joinDemandAt)
 	m.mu.RUnlock()
-	if afterDemand != 1 {
-		t.Fatalf("demand after slist = %d, want 1", afterDemand)
+	if afterPoll != 0 {
+		t.Fatalf("slist poll recorded demand = %d, want 0", afterPoll)
+	}
+
+	// A real join intent still records demand for predictive headroom — the
+	// demand primitive is intact, just no longer fed by listing the servers.
+	m.mu.Lock()
+	noteServerDemandLocked(s, time.Now())
+	afterIntent := len(s.joinDemandAt)
+	m.mu.Unlock()
+	if afterIntent != 1 {
+		t.Fatalf("demand after join intent = %d, want 1", afterIntent)
 	}
 }
 
@@ -460,6 +472,44 @@ func TestSnapshotForSlist_StaticPortHidesInstances(t *testing.T) {
 	}
 	if entries[0].Instances != 0 {
 		t.Fatalf("instances = %d, want 0 for fixed-port launch", entries[0].Instances)
+	}
+}
+
+func TestSnapshotForSlist_DrainingInstanceDoesNotInflateCapacity(t *testing.T) {
+	m := NewServerManager(t.TempDir(), t.TempDir(), nil, nil)
+	m.SetServerMaxInstances(10)
+	t.Cleanup(m.closeServerRegistry)
+
+	// Active seed + draining replica, each 6-max. Two instances are "running"
+	// (aggregate capacity 12) but only the seed is joinable, so the slist must
+	// advertise 6 / 1 instance — not the 12 that flapping replicas produced.
+	seed := newRunningInstanceForTest(t, m, 0, 26000, []string{"-dedicated", "-port", "0"}, 0, 6)
+	if err := m.registerServerSeed(seed); err != nil {
+		t.Fatalf("register server seed: %v", err)
+	}
+	replica := newRunningInstanceForTest(t, m, 1, 26001, []string{"-dedicated", "-port", "0"}, 0, 6)
+	attachInstanceForTest(t, m, seed.id, replica)
+
+	m.mu.Lock()
+	s := m.serverByInstanceID[replica.id]
+	s.instanceStates[replica.id].Lifecycle = instanceLifecycleDraining
+	m.refreshServerSnapshotLocked(s)
+	aggMax := s.aggregateMaxUsers
+	m.mu.Unlock()
+
+	if aggMax != 12 {
+		t.Fatalf("aggregateMaxUsers = %d, want 12 (both running instances)", aggMax)
+	}
+
+	entries := snapshotForSlist(m)
+	if len(entries) != 1 {
+		t.Fatalf("slist entries = %d, want 1", len(entries))
+	}
+	if entries[0].MaxUsers != 6 {
+		t.Fatalf("advertised MaxUsers = %d, want 6 (joinable set, not the 12 running aggregate)", entries[0].MaxUsers)
+	}
+	if entries[0].Instances != 1 {
+		t.Fatalf("advertised Instances = %d, want 1 (replica draining)", entries[0].Instances)
 	}
 }
 

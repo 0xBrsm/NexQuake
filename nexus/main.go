@@ -34,6 +34,7 @@ type nexusApp struct {
 	admin       *admin.Admin
 	trunk       *trunk.Trunk
 	serverMgr   *orch.ServerManager
+	stateHub    *stateHub
 	assetServer *assets.HashedAssetServer
 
 	bootstrapClientFields []func(r *http.Request) map[string]any
@@ -129,9 +130,15 @@ func main() {
 		serverMgr:   serverMgr,
 		assetServer: assets.NewHashedAssetServer(cfg.gameDir, cfg.cdDir, assets.NewPakIndexCache()),
 	}
+	// State channel snapshot draws on both serverMgr and assetServer, so wire it
+	// once app exists.
+	app.stateHub = newStateHub(app.buildStateSnapshot)
+	// No inbound control handler: since slist moved to the GET /events SSE
+	// endpoint (DEC-020), nothing is sent client->server on port 0. The trunk's
+	// control plane is now strictly server->client (NQIP, rcon), so any inbound
+	// port-0 frame is dropped.
 	app.trunk = trunk.New(
 		trunk.WithServerIP(nqServerIP),
-		trunk.WithControlHandler(app.handleControlFrame),
 	)
 	app.clients = clients.NewRegistry(app.trunk)
 	app.admin = admin.New(app.clients, serverMgr, auditLogger, tailNexusLogLines, accessGate)
@@ -225,8 +232,12 @@ func main() {
 		fatalf("Failed to start servers: %v", err)
 	}
 
-	// Server info poller (used for Quake's `slist`).
+	// Server info poller (keeps per-server game-state metadata current).
 	stopInfoPoller := serverMgr.StartInfoPoller(runCtx, nqServerIP)
+
+	// State SSE hub: streams live snapshots (server list + manifest generation)
+	// to browsers on GET /events, pushing on any change.
+	go app.stateHub.run(runCtx, 500*time.Millisecond)
 
 	// Refresh the served cert on autocert renewal. No-op for BYO / plain HTTP.
 	go refreshTLSCert(runCtx, tlsRT)

@@ -18,7 +18,7 @@
 
 #include "net_wasm.h"
 
-// The WebTransport URL comes from the /start manifest, which advertises it
+// The WebTransport URL comes from the /gamedir manifest, which advertises it
 // only when the server offers WebTransport (EXTERNAL_URL set). It carries
 // the same authority the page was served from, so the public CA cert always
 // covers it.

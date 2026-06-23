@@ -8,6 +8,18 @@
 
 #include "quakedef.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#else
+#ifndef EMSCRIPTEN_KEEPALIVE
+#define EMSCRIPTEN_KEEPALIVE
+#endif
+#endif
+
+// Set true once the first SSE snapshot lands, clearing the search-menu
+// "Searching..." spinner at cold boot (the cache is warm from then on). (Named
+// for the retired aggregated wire path; kept as the first-snapshot flag so
+// net.h is untouched.)
 qboolean slist_agg_done = false;
 
 #define SLIST_COL_SERVER  0
@@ -25,84 +37,97 @@ typedef struct {
 } slist_layout_t;
 
 // -----------------------------------------------------------------------
-// Aggregated server list parsing
+// Server list ingest (SSE). The browser's EventSource('/events') stream is
+// parsed in the JS shell (56-sse.js), which drives Begin -> IngestEntry* ->
+// Commit to repopulate hostcache. No Quake wire protocol is involved.
+//
+// These run from the EventSource onmessage callback, so they only touch
+// hostcache memory and the menu/console flags — no engine re-entry, no socket
+// operations (the asyncify callback contract).
 // -----------------------------------------------------------------------
 
-// Called from _Datagram_SearchForHosts immediately after CCREP_SERVER_INFO
-// is confirmed. Reads the NexQuake aggregated payload, fills hostcache, and
-// sets slist_agg_done so the poll loop short-circuits.
-void NET_SlistParseAggregatedList(int ldriver)
+extern qboolean slistInProgress; // net_main.c
+extern qboolean slist_sorted;    // menu.c
+
+// Pick an initialized landriver to resolve the virtual address for connect.
+static int NET_SlistLandriver(void)
 {
-	int s, num_servers, server_port, slot;
-	char *server_port_text;
+	int i;
+	for (i = 0; i < net_numlandrivers; i++)
+		if (net_landrivers[i].initialized)
+			return i;
+	return 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void NET_SlistBegin(void)
+{
+	hostCacheCount = 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void NET_SlistIngestEntry(int port, const char *name,
+		const char *map, const char *gamedir, int users, int maxusers,
+		int instances)
+{
+	int slot, ldriver;
 	struct qsockaddr addr;
+	char portstr[16];
 
-	slist_agg_done = true;
-	num_servers = MSG_ReadByte();
-	for (s = 0; s < num_servers && hostCacheCount < HOSTCACHESIZE; s++)
-	{
-		server_port_text = MSG_ReadString();
-		server_port = Q_atoi(server_port_text);
-		if (server_port < 1 || server_port > 65535)
-		{
-			// Skip remaining fields in malformed entries.
-			MSG_ReadString();
-			MSG_ReadString();
-			MSG_ReadString();
-			MSG_ReadByte();
-			MSG_ReadByte();
-			MSG_ReadByte();
-			MSG_ReadByte();
-			MSG_ReadByte();
-			MSG_ReadByte();
-			MSG_ReadByte();
-			continue;
-		}
+	if (port < 1 || port > 65535 || hostCacheCount >= HOSTCACHESIZE)
+		return;
 
-		// In NexQuake's WS transport, hostcache entries must use the same
-		// virtual addressing scheme as direct port connects (so serverinfo
-		// can match cls.netcon->addr back to hostcache[n].addr).
-		Q_memset(&addr, 0, sizeof(addr));
-		if (net_landrivers[ldriver].GetAddrFromName(server_port_text, &addr) == -1)
-			net_landrivers[ldriver].SetSocketPort(&addr, server_port);
+	sprintf(portstr, "%d", port);
+	ldriver = NET_SlistLandriver();
 
-		slot = hostCacheCount++;
-		hostcache[slot].instances = 1;
-		Q_strncpy(hostcache[slot].name, MSG_ReadString(), sizeof(hostcache[slot].name) - 1);
-		hostcache[slot].name[sizeof(hostcache[slot].name) - 1] = 0;
-		Q_strncpy(hostcache[slot].map, MSG_ReadString(), sizeof(hostcache[slot].map) - 1);
-		hostcache[slot].map[sizeof(hostcache[slot].map) - 1] = 0;
-		Q_strncpy(hostcache[slot].gamedir, MSG_ReadString(), sizeof(hostcache[slot].gamedir) - 1);
-		hostcache[slot].gamedir[sizeof(hostcache[slot].gamedir) - 1] = 0;
-		hostcache[slot].users    = MSG_ReadByte() | (MSG_ReadByte() << 8);
-		hostcache[slot].maxusers = MSG_ReadByte() | (MSG_ReadByte() << 8);
-		hostcache[slot].instances = MSG_ReadByte() | (MSG_ReadByte() << 8);
-		if (MSG_ReadByte() != NET_PROTOCOL_VERSION)
-		{
-			Q_strcpy(hostcache[slot].cname, hostcache[slot].name);
-			// Cap so "*" + cname + NUL fits name[] — a full-length name from
-			// the network would otherwise overflow by one into map[].
-			hostcache[slot].cname[sizeof(hostcache[slot].name) - 2] = 0;
-			Q_strcpy(hostcache[slot].name, "*");
-			Q_strcat(hostcache[slot].name, hostcache[slot].cname);
-		}
-		Q_memcpy(&hostcache[slot].addr, &addr, sizeof(struct qsockaddr));
-		hostcache[slot].driver  = net_driverlevel;
-		hostcache[slot].ldriver = ldriver;
-		Q_strncpy(hostcache[slot].cname, va("%d", server_port), sizeof(hostcache[slot].cname) - 1);
-		hostcache[slot].cname[sizeof(hostcache[slot].cname) - 1] = 0;
-	}
+	// Match the virtual addressing of direct port connects so in-game
+	// serverinfo can map cls.netcon->addr back to this hostcache entry.
+	Q_memset(&addr, 0, sizeof(addr));
+	if (net_landrivers[ldriver].GetAddrFromName(portstr, &addr) == -1)
+		net_landrivers[ldriver].SetSocketPort(&addr, port);
+
+	slot = hostCacheCount++;
+	Q_strncpy(hostcache[slot].name, (char *)(name ? name : ""), sizeof(hostcache[slot].name) - 1);
+	hostcache[slot].name[sizeof(hostcache[slot].name) - 1] = 0;
+	Q_strncpy(hostcache[slot].map, (char *)(map ? map : ""), sizeof(hostcache[slot].map) - 1);
+	hostcache[slot].map[sizeof(hostcache[slot].map) - 1] = 0;
+	Q_strncpy(hostcache[slot].gamedir, (char *)(gamedir ? gamedir : ""), sizeof(hostcache[slot].gamedir) - 1);
+	hostcache[slot].gamedir[sizeof(hostcache[slot].gamedir) - 1] = 0;
+	hostcache[slot].users    = users;
+	hostcache[slot].maxusers = maxusers;
+	hostcache[slot].instances = instances;
+	Q_memcpy(&hostcache[slot].addr, &addr, sizeof(struct qsockaddr));
+	hostcache[slot].driver  = 0;
+	hostcache[slot].ldriver = ldriver;
+	// connect target is the port string (connect re-resolves it per driver).
+	Q_strncpy(hostcache[slot].cname, portstr, sizeof(hostcache[slot].cname) - 1);
+	hostcache[slot].cname[sizeof(hostcache[slot].cname) - 1] = 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void NET_SlistCommit(void)
+{
+	slist_agg_done = true;  // first snapshot received
+	slist_sorted = false;   // force the server browser to re-sort/repaint
+	slistInProgress = false;
+}
+
+// Cold-boot gate for the `slist` console command: block (asyncify) until the
+// always-on SSE stream (started by the JS shell at runtime init) delivers its
+// first snapshot, so the first printed list isn't empty before the stream has
+// connected. Fires at most once per session — slist_agg_done stays set after,
+// so steady-state slist never blocks. No-op on native builds (no stream, and
+// emscripten_sleep is the only yield that lets the JS callback run). See DEC-020.
+void NET_SlistAwaitFirstSnapshot(void)
+{
+#ifdef __EMSCRIPTEN__
+	double start = Sys_FloatTime();
+	while (!slist_agg_done && (Sys_FloatTime() - start) < 2.0)
+		emscripten_sleep(16);
+#endif
 }
 
 // -----------------------------------------------------------------------
 // Hostcache name resolution. Callers can require exact matches for explicit
 // rcon targeting or allow fuzzy prefix matching for connect-style UX.
 // -----------------------------------------------------------------------
-
-void NET_InvalidateHostCache(void)
-{
-	hostCacheCount = 0;
-}
 
 int NET_ResolveHostcacheName(char *token, char *out, int out_size, qboolean exact)
 {
@@ -418,6 +443,11 @@ void NET_SlistPrintHeader(int budget)
 {
 	slist_layout_t layout;
 	char line[128];
+
+	// Blank line above the header for separation from prior console output —
+	// stock got this from the "Looking for Quake servers..." line, which is gone
+	// now that slist is an instant cache read rather than a LAN search.
+	Con_Printf("\n");
 
 	NET_SlistBuildLayout(budget, &layout);
 	NET_SlistFormatHeader(&layout, line, sizeof(line));

@@ -19,7 +19,7 @@ Full API documentation (wire format, usage example): `go doc ./...` or
 | File | Responsibility |
 |---|---|
 | `trunk.go` | `Trunk` type, functional options, `SessionInfo`, session registry |
-| `session.go` | `Session` type, `Transport` interface, `ControlHandler`/`PortFilter` callbacks, lifecycle API |
+| `session.go` | `Session` type, `Transport` interface, `PortFilter` callback, `SendControl`/`TrySendControl`, lifecycle API |
 | `relay.go` | I/O engine: frame encoding, tunnel read/write loops, UDP read/write loops |
 | `vip.go` | Deterministic 127.x.x.x VirtualIP allocator |
 
@@ -33,7 +33,7 @@ Adapter sub-packages implement `Transport` for specific protocols:
 ## Vendoring checklist
 
 1. Frame format is fixed: 2-byte big-endian port header + payload. Keep client and relay in sync.
-2. Port `0` is the control channel. Define your own payload semantics in `WithControlHandler`.
+2. Port `0` is the control channel, server -> client only: push frames with `Session.SendControl` (inbound port-0 frames are dropped).
 3. Override `Upgrader.CheckOrigin` for production deployments.
 4. Set `WithPortFilter` to restrict clients to specific UDP destinations.
 5. Keep `sourceKey` stable across reconnects if deterministic VirtualIP identity matters.

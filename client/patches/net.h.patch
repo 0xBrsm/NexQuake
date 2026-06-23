@@ -1,6 +1,8 @@
 --- net.h
 +++ net.h
-@@ -227,6 +227,8 @@
+@@ -225,11 +225,13 @@
+ 
+ typedef struct
  {
 -	char	name[16];
 +	char	name[24];
@@ -10,13 +12,18 @@
  	int		users;
  	int		maxusers;
 +	int		instances;
-@@ -237,6 +238,15 @@
+ 	int		driver;
+ 	int		ldriver;
+ 	struct qsockaddr addr;
+@@ -237,6 +239,17 @@
  
  extern int hostCacheCount;
  extern hostcache_t hostcache[HOSTCACHESIZE];
 +int NET_ResolveHostcacheName(char *token, char *out, int out_size, qboolean exact);
-+void NET_InvalidateHostCache(void);
-+void NET_SlistParseAggregatedList(int ldriver);
++void NET_SlistBegin(void);
++void NET_SlistIngestEntry(int port, const char *name, const char *map, const char *gamedir, int users, int maxusers, int instances);
++void NET_SlistCommit(void);
++void NET_SlistAwaitFirstSnapshot(void);
 +void NET_SlistPrintHeader(int budget);
 +void NET_SlistPrintEntry(int budget, const hostcache_t *host);
 +int NET_SlistWidth(int budget);
@@ -26,7 +33,7 @@
  
  #if !defined(_WIN32 ) && !defined (__linux__) && !defined (__sun__)
  #ifndef htonl
-@@ -314,6 +315,6 @@
+@@ -314,7 +328,7 @@
  {
  	struct _PollProcedure	*next;
  	double					nextTime;
@@ -34,3 +41,4 @@
 +	void					(*procedure)(void *arg);
  	void					*arg;
  } PollProcedure;
+ 

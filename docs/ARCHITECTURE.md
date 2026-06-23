@@ -117,7 +117,7 @@ AudioContext auto-resume on first user gesture handles browser autoplay policies
 
 Quake's CD audio system originally played music tracks from a physical CD-ROM drive. NexQuake replaces this with digital audio streaming from a server-side directory (`CD_DIR`).
 
-Nexus scans `CD_DIR` for `.ogg` and `.mp3` files and includes the resulting track index in the `/start` quickstart payload. CD audio bytes are then fetched through hash-addressed `/nq/<hash>` URLs (backed internally by the CD stream resolver). Track numbers are extracted from filenames (e.g., `02-intro.ogg` is track 2).
+Nexus scans `CD_DIR` for `.ogg` and `.mp3` files and includes the resulting track index in the `/gamedir` quickstart payload. CD audio bytes are then fetched through hash-addressed `/pak/<hash>` URLs (backed internally by the CD stream resolver). Track numbers are extracted from filenames (e.g., `02-intro.ogg` is track 2).
 
 `cd_wasm.c` replaces the original `cd_audio.c` with Emscripten `EM_JS` bindings that drive an HTML5 `<audio>` element. The JavaScript layer resolves tracks through a two-tier system: first checking user-uploaded files in the Emscripten virtual filesystem, then falling back to the server manifest. Playback respects the `bgmvolume` cvar and handles browser autoplay policies with resume-on-user-gesture logic.
 
@@ -276,7 +276,7 @@ Within each layer, Quake's standard precedence applies: loose files override PAK
 
 ### PAK Streaming
 
-The browser client never downloads full PAK files. Nexus indexes PAK headers on startup and serves files through per-client hash-addressed URLs (`/nq/<hash>`). Internally, hash entries can resolve to loose files or offsets inside PAK archives, so when the client requests a texture, model, or sound, Nexus can seek into a PAK, read just that entry, and stream it directly. This means:
+The browser client never downloads full PAK files. Nexus indexes PAK headers on startup and serves files through per-client hash-addressed URLs (`/pak/<hash>`). Internally, hash entries can resolve to loose files or offsets inside PAK archives, so when the client requests a texture, model, or sound, Nexus can seek into a PAK, read just that entry, and stream it directly. This means:
 
 - No multi-megabyte PAK transfers to the browser
 - No server-side extraction or disk duplication

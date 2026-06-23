@@ -235,7 +235,7 @@ function nqSaveCdEnabled(value) {
   nqSaveStoredBool(NQ_CD_ENABLED_STORAGE_KEY, value);
 }
 
-function nqParseStartBundle(encoded) {
+function nqParseGamedirBundle(encoded) {
   var text = String(encoded || '').trim();
   var binary;
 
@@ -255,18 +255,18 @@ function nqParseStartBundle(encoded) {
   }
 }
 
-// Load /start before wasm instantiation so startup memory can follow client sendArgs.
-function nqTryLoadStartBundleSync() {
+// Load /gamedir before wasm instantiation so startup memory can follow client sendArgs.
+function nqTryLoadGamedirBundleSync() {
   var moduleRef = (typeof Module !== 'undefined' && Module) ? Module : (window.Module = window.Module || {});
   var request;
   var assetRef;
 
-  if (moduleRef.nexquakeStartBundle)
-    return moduleRef.nexquakeStartBundle;
+  if (moduleRef.nexquakeGamedirBundle)
+    return moduleRef.nexquakeGamedirBundle;
 
   try {
     request = new XMLHttpRequest();
-    request.open('GET', '/start', false);
+    request.open('GET', '/gamedir', false);
     request.send(null);
     if (request.status < 200 || request.status >= 300)
       throw new Error('start bundle fetch failed: ' + request.status);
@@ -276,10 +276,10 @@ function nqTryLoadStartBundleSync() {
       throw new Error('start bundle missing X-NexQuake-Ref header');
 
     moduleRef.nexquakeAssetRef = assetRef;
-    moduleRef.nexquakeStartBundle = nqParseStartBundle(request.responseText);
-    return moduleRef.nexquakeStartBundle;
+    moduleRef.nexquakeGamedirBundle = nqParseGamedirBundle(request.responseText);
+    return moduleRef.nexquakeGamedirBundle;
   } catch (err) {
-    console.warn('Failed to preload /start bundle before wasm instantiation:', err);
+    console.warn('Failed to preload /gamedir bundle before wasm instantiation:', err);
     return null;
   }
 }

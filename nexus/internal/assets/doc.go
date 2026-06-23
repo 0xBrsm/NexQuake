@@ -19,6 +19,6 @@
 // Typical usage in the nexus HTTP mux:
 //
 //	gw := assets.NewHashedAssetServer(gameDir, cdDir, pakCache, concurrency, smenu, args, urlArgs)
-//	mux.Handle("/start", http.HandlerFunc(gw.StartHandler()))
-//	mux.Handle("/nq/",   http.HandlerFunc(gw.AssetHandler()))
+//	mux.Handle("/gamedir", http.HandlerFunc(gw.GamedirHandler()))
+//	mux.Handle("/pak/",   http.HandlerFunc(gw.AssetHandler()))
 package assets

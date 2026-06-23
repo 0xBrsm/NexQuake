@@ -26,8 +26,8 @@ void WASM_Log (int level, const char *fmt, ...);
 
 // Lifecycle hooks — each transport calls these on its underlying event or
 // polled state transition. `transport` is the display name (matches
-// wasm_transport_t.name). Shared behavior (logging format, open-hook fire,
-// NET_InvalidateHostCache) lives here so every transport stays identical.
+// wasm_transport_t.name). Shared behavior (logging format, open-hook fire)
+// lives here so every transport stays identical.
 void WASM_OnOpen  (const char *transport);
 void WASM_OnError (const char *transport, const char *reason);
 void WASM_OnClose (const char *transport, qboolean expected);
@@ -67,10 +67,5 @@ void WASM_OnPacket (const byte *packet, int length);
 // game connection does not survive a switch (the replacement session gets a
 // fresh VirtualIP), which is why the shell prefers switching while idle.
 void WASM_OnTransportReset (void);
-
-// Provided by the protocol adapter; true when no game socket is open — the
-// window where the transport shell may switch substrates (e.g. adopt a warm
-// WebTransport session that landed) without severing a live connection.
-qboolean WASM_TransportIdle (void);
 
 #endif

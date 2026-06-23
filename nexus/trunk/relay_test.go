@@ -43,41 +43,24 @@ func TestDecodeFrame(t *testing.T) {
 	}
 }
 
-func TestConnHandleFrame_ControlDispatch(t *testing.T) {
+func TestConnHandleFrame_InboundControlDropped(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	called := false
-	tk := &Trunk{
-		onCtrlFrame: func(s *Session, payload []byte) {
-			called = true
-			if string(payload) != "ping" {
-				t.Fatalf("control payload = %q, want %q", string(payload), "ping")
-			}
-			_ = s.SendControl([]byte("pong"))
-		},
-	}
+	// Port 0 is server->client only (DEC-020): an inbound control frame is
+	// dropped — neither dispatched anywhere nor echoed back on the tx channel.
 	r := &Session{
 		tx:     make(chan []byte, 1),
 		ctx:    ctx,
 		cancel: cancel,
-		trunk:  tk,
+		trunk:  &Trunk{},
 	}
 
 	r.handleFrame(buildFrame(controlPort, []byte("ping")))
-	if !called {
-		t.Fatalf("HandleControlFrame callback was not called")
-	}
 
 	select {
 	case frame := <-r.tx:
-		if frame[0] != byte(controlPort>>8) || frame[1] != byte(controlPort) {
-			t.Fatalf("response frame routed to non-zero port: [%d %d]", frame[0], frame[1])
-		}
-		if string(frame[2:]) != "pong" {
-			t.Fatalf("response payload = %q, want %q", string(frame[2:]), "pong")
-		}
+		t.Fatalf("inbound control frame produced output, want drop: %v", frame)
 	default:
-		t.Fatalf("expected control response frame")
 	}
 }
