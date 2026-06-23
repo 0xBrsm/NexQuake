@@ -28,7 +28,7 @@ The client patches and overlays are a mix of required and additive features. The
 |------|---------|
 | `net_wasm.c/h` | Browser transport manager. Owns the ordered transport registry, shared lifecycle, handshake waits, fallback, logging hooks, and raw byte send/receive dispatch. |
 | `net_nqchan.c/h` | NexQuake channel/protocol adapter: port-header framing, CTL/DATA demux, ring buffers, virtual 127.x.y.z addressing, and route/server-id tracking. |
-| `net_wt.c` | WebTransport substrate: warm background QUIC session, URL from `/gamedir`, oversized-datagram drop semantics. |
+| `net_wt.c` | WebTransport substrate: lazy per-connection QUIC session, URL from `/gamedir`, oversized-datagram drop semantics. |
 | `net_ws.c` | WebSocket substrate. Owns the Emscripten WebSocket lifecycle; pushes received bytes into `WASM_OnPacket`. |
 | `net_bsd.c` | Driver table registering only the NexQuake landriver. |
 
@@ -58,15 +58,15 @@ The control channel also flows the other way: Nexus can push admin-driven consol
 
 ### 5. Nexus Server List
 
-**Quality-of-life addition.** Quake's original server browser sends LAN broadcast packets and waits 1.5 seconds for responses. NexQuake runs on a loopback network, which does not support broadcast. Instead, Nexus provides an aggregated server list over the relay connection. This feature parses the batched response format, adds a gamedir column so players can see which mod each server runs, and provides UI improvements (centered layout, console auto-close, `smenu` shortcut command).
+**Quality-of-life addition.** Quake's original server browser sends LAN broadcast packets and waits 1.5 seconds for responses. NexQuake runs on a loopback network, which does not support broadcast. Instead, Nexus owns the server list and streams it to the client over a session-scoped Server-Sent Events channel (`GET /events`); the JS shell ingests each JSON snapshot into the engine hostcache. This adds a gamedir column so players can see which mod each server runs, live in-place updates, and UI improvements (centered layout, console auto-close, `smenu` shortcut command).
 
 | File | Purpose |
 |------|---------|
 | `patches/net.h.patch` | `gamedir[16]` field in `hostcache_t`. |
-| `patches/net_main.c.patch` | Aggregated slist with early-exit, gamedir column in `slist` output, poll dedup. |
-| `net_slist.c` | Batched server list parsing (count + per-server fields), extracted from `net_dgrm.c.patch`. |
-| `patches/net_dgrm.c.patch` | `void*` poll signatures and `emscripten_sleep` yields; no longer handles slist parsing. |
-| `patches/menu.c.patch` | Gamedir column, centered layout, console auto-close, `smenu` command. |
+| `patches/net_main.c.patch` | gamedir column in `slist` output; reads the SSE-fed hostcache. |
+| `net_slist.c` | SSE ingest seam: `NET_SlistBegin`/`IngestEntry`/`Commit` rebuild `hostcache[]` from each snapshot; `slist_agg_done` short-circuits the broadcast wait. |
+| `shell/56-sse.js` | Owns the always-on `EventSource`/fetch-stream subscription to `/events`; parses snapshots and drives the ingest seam. |
+| `patches/menu.c.patch` | Gamedir column, centered layout, console auto-close, `smenu` command; live menu repaint on snapshot. |
 
 ### 6. Asset Prefetch
 

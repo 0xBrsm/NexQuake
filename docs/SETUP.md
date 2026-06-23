@@ -108,7 +108,7 @@ SV_MAX_INSTANCES=10
 
 When autoscaling is enabled, the server shows up as one row in the server list with aggregate player counts and an instance count. The port shown to players is one of the running instances, selected by least-loaded round-robin at browse time. Connecting directly to that port connects to that specific instance.
 
-Nexus tracks how often players browse the server (`slist` poll hits) over a 30-second window to estimate demand. When free slots across the server fall below the headroom target — `max(4, ceil(joinRPS × 12s × 1.5))` — and the server is below `SV_MAX_INSTANCES`, a new instance is spawned.
+Scaling is reactive to actual fill, not to how often the server is browsed. When free slots across the server fall below the headroom target — a floor of `4` free slots — and the server is below `SV_MAX_INSTANCES`, a new instance is spawned.
 
 ### Instance Lifecycle
 

@@ -4,6 +4,36 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.13.0
+
+### Added
+- `net_transport` cvar (`auto`|`tcp`|`udp`) to pin or auto-select the client
+  network carrier.
+- Touch "Customize Controls" menu for editing the on-screen control layout.
+
+### Changed
+- The server browser now updates live, streamed from Nexus over a
+  session-scoped Server-Sent Events channel instead of on-demand
+  control-protocol queries; a manifest-generation change also triggers a
+  jittered client refetch to pick up server-added assets.
+- Renamed the bootstrap/asset endpoints to `/gamedir` (per-session manifest +
+  boot config) and `/pak/<hash>` (content-addressed asset bytes); on-the-wire
+  JSON and the asset-ref header are unchanged.
+- The client transport carrier is now lazy and per-connection (keep-warm
+  retired) with a bounded WebTransport probe that falls back to TCP, and the
+  indicator is redesigned into a compact UDP/TCP chip.
+- Un-precached mod sounds now play non-blocking instead of stalling the client.
+- Autoscaling now spawns on reactive free-slot headroom rather than
+  server-browser poll rate.
+
+### Fixed
+- Eliminated the network-dependent menu-entry hitch caused by a synchronous
+  manifest refetch on filesystem-lookup misses; new files are still picked up
+  via async refresh.
+- Client/transport config is now applied once at boot and no longer re-applied
+  on manifest refetches (reconnect, lazy-load recovery), so a refetch can't
+  reconfigure a live session.
+
 ## 1.12.1
 
 ### Changed

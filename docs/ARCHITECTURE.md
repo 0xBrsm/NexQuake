@@ -155,18 +155,18 @@ Because Nexus never parses the datagram payload, it has no knowledge of whether 
 
 ### Multi-Server Routing
 
-Server selection is port-based. `connect <port>` connects directly to that instance. For autoscaled servers (`-port 0` lines) there is no proxy port — load balancing happens at slist time.
+Server selection is port-based. `connect <port>` connects directly to that instance. For autoscaled servers (`-port 0` lines) there is no proxy port — load balancing happens when Nexus builds each server-list snapshot.
 
-When a client sends a `CCREQ_SERVER_INFO` browse request, `snapshotForSlist()` calls `pickServerInstanceLocked()` for each server. This selects the least-loaded routable instance (fill ratio `players/maxplayers`, round-robin tie-break) and puts that instance's actual listen port in the slist entry. The aggregate users/maxusers/instances reflect the whole server, but the port the client receives is a real instance port it connects to directly.
+Each time Nexus builds a server-list snapshot (see [Server List Delivery](#server-list-delivery)), `snapshotForSlist()` calls `pickServerInstanceLocked()` for each server. This selects the least-loaded routable instance (fill ratio `players/maxplayers`, round-robin tie-break) and puts that instance's actual listen port in the entry. The aggregate users/maxusers/instances reflect the whole server, but the port the client receives is a real instance port it connects to directly.
 
 Instance selection order:
 
 1. Prefer `active` instances with free slots.
 2. If all `active` instances are full, include full ones rather than failing.
 3. If no `active` instance exists, fall back to `draining` instances — free slots first, then full.
-4. If no routable instance exists, the server is omitted from the slist response.
+4. If no routable instance exists, the server is omitted from the snapshot.
 
-Each slist poll may return a different instance port for the same server as load shifts. There is no session affinity; the slist is the load balancer.
+Each snapshot may carry a different instance port for the same server as load shifts. There is no session affinity; the server list is the load balancer.
 
 ### Scaling Lifecycle and Autoscaling
 
@@ -184,25 +184,23 @@ Server reconcile runs in two loops:
 
 Scale-up and scale-down policy:
 
-- Headroom target is `max(4, ceil(joinRPS * 12s * 1.5))`, where `joinRPS` is the rate of slist poll hits on that server over a `30s` sliding window.
+- Headroom target is a floor of `4` free slots. Scaling is reactive to actual fill, not to how often a server is browsed — server-list polling never drives scaling. (A demand-based dynamic headroom term exists in the code but is fed only by a real join signal, which is currently unwired, so the floor applies.)
 - Scale-up happens when current free slots fall below target headroom, no scale-up is already in flight, cooldown (`30s`) has elapsed, and running instances are below `SV_MAX_INSTANCES`.
 - Idle instances only move to `draining` when at least two active routable instances remain and enough headroom would still exist after draining.
 - While scale-up is in flight, additional active instances are not moved to `draining`.
 - Draining instances with zero players for 6 reconcile polls are despawned.
 - A hard safety guard prevents despawning the last running instance of a server.
 
-Control/broadcast traffic uses `udp_port = 0`. For `slist`, Nexus detects `CCREQ_SERVER_INFO` and replies with aggregated `CCREP_SERVER_INFO` data built from its polled cache:
+The aggregated list Nexus builds from its polled cache is:
 
 - one row per autoscaled server (a load-balanced instance port, aggregate users/maxusers, instance count),
 - plus non-scaled servers as direct entries.
 
-This replaces NetQuake's UDP broadcast, which never worked well and doesn't work across loopback addresses on Linux anyway.
+### Server List Delivery
 
-### Server List Aggregation
+Standard NetQuake server browsing (`slist`) sends a UDP broadcast and waits for individual server replies. NexQuake runs on loopback, where broadcast never reaches game servers, so Nexus owns the server list and streams it to clients over a session-scoped Server-Sent Events channel (`GET /events`) — the in-band `CCREQ_SERVER_INFO`/`CCREP_SERVER_INFO` browse intercept that earlier versions used is retired (control port `0` is now server→client only).
 
-Standard NetQuake server browsing (`slist`) sends a UDP broadcast `CCREQ_SERVER_INFO` and waits for individual server replies. NexQuake runs on loopback, where broadcast never reaches game servers, so Nexus intercepts the request and replies with a single aggregated `CCREP_SERVER_INFO` packet containing the full server list.
-
-`net_slist.c` parses this batch response: a count byte followed by per-server fields (port, name, map, gamedir, users, maxusers, instance count). An instance count of `0` means "display as a normal single-instance row"; positive values mean an autoscaled server row and are shown in the users column. Parsed entries are written directly into `hostcache[]` and the `slist_agg_done` flag short-circuits the normal poll loop so the client does not wait for individual server replies that will never come. A dynamic column layout adapts the console output width to the terminal, adding a gamedir column so players can see which mod each server runs.
+Internally, Nexus still polls its own game-server instances over the NetQuake control protocol (`CCREQ_SERVER_INFO` → `CCREP_SERVER_INFO`) to keep a warm cache, then publishes a JSON state snapshot (`{servers, manifestGen}`) whenever it changes. Each `servers` entry carries port, name, map, gamedir, users, maxusers, and instance count; an instance count of `0` means a normal single-instance row, positive values an autoscaled row shown in the users column. The client ingests each snapshot into `hostcache[]` via `NET_SlistBegin`/`NET_SlistIngestEntry`/`NET_SlistCommit` (`net_slist.c`); the first snapshot sets `slist_agg_done` so the console `slist` and connect-by-name paths don't wait for broadcast replies that never come. A dynamic column layout adapts the console output width, adding a gamedir column so players can see which mod each server runs.
 
 ## Port-Only Relay Addressing
 
