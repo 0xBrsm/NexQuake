@@ -1,0 +1,28 @@
+# cl_demo.c — demo filename buffer overflows
+#
+# CL_Record_f() builds the demo path with an unbounded sprintf of the
+# user-supplied demo name (Cmd_Argv(1)) into a MAX_OSPATH buffer, and
+# CL_PlayDemo_f() strcpy's the name into a 256-byte buffer. Both then call
+# COM_DefaultExtension(), whose unchecked strcat appends ".dem" and can write
+# past the end. A long demo name typed at the console overflows the stack.
+# Fix: bound both copies with snprintf, reserving 5 bytes for the extension.
+--- cl_demo.c
++++ cl_demo.c
+@@ -230,7 +230,7 @@
+ 	else
+ 		track = -1;	
+ 
+-	sprintf (name, "%s/%s", com_gamedir, Cmd_Argv(1));
++	snprintf (name, sizeof(name) - 5, "%s/%s", com_gamedir, Cmd_Argv(1));
+ 	
+ //
+ // start the map up
+@@ -288,7 +288,7 @@
+ //
+ // open the demo file
+ //
+-	strcpy (name, Cmd_Argv(1));
++	snprintf (name, sizeof(name) - 5, "%s", Cmd_Argv(1));
+ 	COM_DefaultExtension (name, ".dem");
+ 
+ 	Con_Printf ("Playing demo from %s.\n", name);

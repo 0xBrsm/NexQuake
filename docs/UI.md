@@ -50,6 +50,25 @@ Notes:
 - Existing files prompt for overwrite before upload.
 - All writes (upload/edit/delete/move) are synced to browser storage.
 
+## Demos and Replay
+
+NexQuake records standard Quake `.dem` files, with two additions over stock NetQuake: recording can start at any time (stock Quake only allows it before connecting), and an instant-replay command writes the recent past on demand.
+
+| Command | Action |
+|---------|--------|
+| `record <name>` | Start recording to `<name>.dem`. Works mid-game, not just before connecting. |
+| `stop` | Stop the current recording. |
+| `replay [name]` | Write the last `replay_seconds` of play to a demo. With no name, auto-names it `<map>-replay-NN.dem`. |
+| `playdemo <name>` | Play back a recorded demo. |
+
+Because `replay` needs no typing, it suits a key bind for "save that" moments, for example `bind x replay`.
+
+| Cvar | Default | Archived | Meaning |
+|------|---------|----------|---------|
+| `replay_seconds` | `10` | yes | Seconds of play kept in the replay buffer. `0` disables the buffer; plain `record` still works. |
+
+Demos are written to the active game directory and appear in the `Game Files` list, where the download button saves them to your device (see [Game File Mode](#game-file-mode)). A replay demo briefly shows your connection point before the captured window begins.
+
 ## Local Files Override Server Files
 
 For the same path, local user files override server-provided files. If both exist, the client uses your local copy.

@@ -6,6 +6,7 @@ Optional patches for bugs in the original id Software WinQuake source. These tar
 
 | Patch | Severity | Fix |
 |-------|----------|-----|
+| `cl_demo.c.patch` | buffer overflow (local) | Unbounded `sprintf`/`strcpy` of demo filenames in `CL_Record_f`/`CL_PlayDemo_f` |
 | `common.c.patch` | crash / UB | `COM_FileBase` walks pointer before string start |
 | `com_parse.c.patch` | buffer overflow (remote) | `COM_Parse` writes past `com_token` buffer |
 | `host_cmd.c.patch` | buffer overflow (remote) | Unbounded `sprintf` in save/load paths and `Host_Say` |
@@ -16,6 +17,10 @@ Optional patches for bugs in the original id Software WinQuake source. These tar
 | `world.h.patch` | build failure | Missing prototype for `SV_RecursiveHullCheck` causes implicit-declaration errors |
 
 ## Details
+
+#### `cl_demo.c.patch` — demo filenames
+
+`CL_Record_f()` builds the demo path with an unbounded `sprintf` of the user-supplied demo name (`Cmd_Argv(1)`) into a `MAX_OSPATH` buffer, and `CL_PlayDemo_f()` `strcpy`s the name into a 256-byte buffer. Both then call `COM_DefaultExtension()`, whose unchecked `strcat` of `.dem` can write past the end. A long demo name typed at the console overflows the stack. Fix: bound both copies with `snprintf`, reserving space for the extension.
 
 #### `common.c.patch` — `COM_FileBase`
 

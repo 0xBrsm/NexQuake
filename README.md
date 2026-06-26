@@ -53,6 +53,7 @@ Players use the standard Quake multiplayer connection experience; use the Multip
 - **Universal input**: Native touch controls and Gamepad API support.
 - **CD audio emulation**: Stream the original Quake soundtrack in .ogg or .mp3 format.
 - **Persistent saves**: Config and saves survive browser sessions via IndexedDB.
+- **Demos and instant replay**: Record `.dem` demos at any time (even mid-game) or bind a key to save the last few seconds of play.
 - **Mod support**: Game directory switching at runtime without page reload.
 - **Self-contained**: Single Docker image, single port.
 - **Easy to secure**: HTTPS out of the box — automatic Let's Encrypt certificates (or bring your own), with admin access gated by OIDC JWT verification or an rcon password; no reverse proxy needed.

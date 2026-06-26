@@ -107,7 +107,8 @@ cd_wasm.c \
 in_wasm.c \
 sys_wasm.c \
 vid_wasm.c \
-snd_wasm.c
+snd_wasm.c \
+cl_replay.c
 
 OBJS := $(SRCS:.c=.o)
 

@@ -1,0 +1,50 @@
+--- cl_demo.c
++++ cl_demo.c
+@@ -19,6 +19,7 @@
+ */
+ 
+ #include "quakedef.h"
++#include "cl_replay.h"
+ 
+ void CL_FinishTimeDemo (void);
+ 
+@@ -149,6 +150,9 @@
+ 			break;
+ 	}
+ 
++	// feed the live capture (preamble + instant-replay ring)
++	CL_Replay_Capture ();
++
+ 	if (cls.demorecording)
+ 		CL_WriteDemoMessage ();
+ 	
+@@ -217,8 +221,14 @@
+ 
+ 	if (c == 2 && cls.state == ca_connected)
+ 	{
+-		Con_Printf("Can not record - already connected to server\nClient demo recording must be started before connecting\n");
+-		return;
++		// NexQuake: allow mid-game recording when a signon preamble has been
++		// captured for the current level (cl_replay.c). Without it the demo
++		// would be unplayable, so keep refusing in that case.
++		if (!CL_Demo_HavePreamble ())
++		{
++			Con_Printf("Can not record - no demo preamble captured yet\n");
++			return;
++		}
+ 	}
+ 
+ // write the forced cd track number, or -1
+@@ -253,6 +263,12 @@
+ 
+ 	cls.forcetrack = track;
+ 	fprintf (cls.demofile, "%i\n", cls.forcetrack);
++
++	// NexQuake: mid-game record -- seed the demo with the captured signon
++	// preamble (rebased onto the current server time) so it is playable
++	// even though recording started post-connect
++	if (c == 2 && cls.state == ca_connected)
++		CL_Demo_WritePreamble (cls.demofile, cl.mtime[0]);
+ 	
+ 	cls.demorecording = true;
+ }
