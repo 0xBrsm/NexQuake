@@ -99,10 +99,6 @@ typedef struct { int width, height; char desc[32]; } vid_mode_t;
 static vid_mode_t modelist[VID_NUM_MODES];
 static int        vid_nummodes;
 static cvar_t     vid_mode = {"vid_mode", VID_DEFAULT_MODE, true};
-// Live re-mode: Native follows window resizes/rotations. Safe now that the
-// render width is capped below the edge-rasterizer overflow (see VID_MAX_WIDTH).
-// Archived toggle so it can be disabled if ever needed.
-static cvar_t     vid_followwindow = {"vid_followwindow", "1", true};
 static int        startup_vid_mode;
 static int        vid_modenum = -1;
 static int        vid_cursor = 0;        // menu row: 0 = Mode, 1 = Detail
@@ -445,7 +441,6 @@ void VID_Init(unsigned char *palette) {
 
 	build_modelist();
 	Cvar_RegisterVariable(&vid_mode);
-	Cvar_RegisterVariable(&vid_followwindow);
 	Cmd_AddCommand("vid_describemodes", VID_DescribeModes_f);
 	vid_menudrawfn = VID_MenuDraw;
 	vid_menukeyfn = VID_MenuKey;
@@ -493,7 +488,7 @@ void VID_Update(vrect_t *rects) {
 	// and never re-correct. Re-checking each frame self-heals once the viewport
 	// settles; the EM_JS aspect read is cheap. (disp_changed only resizes the GL
 	// buffer above.)
-	if (vid_followwindow.value && mode_is_native(vid_modenum) && disp_w > 0 && disp_h > 0) {
+	if (mode_is_native(vid_modenum) && disp_w > 0 && disp_h > 0) {
 		int tw, th;
 		native_dims(mode_tier(vid_modenum), live_viewport_aspect(), &tw, &th);
 		if (abs(tw - VGA_width) > NATIVE_REMODE_EPS || abs(th - VGA_height) > NATIVE_REMODE_EPS) {

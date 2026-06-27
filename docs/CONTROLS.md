@@ -164,7 +164,7 @@ vid_mode 4
 
 Detail is the render height (240/480/960), shared by both modes. **Classic** renders a fixed 4:3 image, centered with black bars on non-4:3 windows. **Native** derives its width from the height tier and the window's current aspect, so it fills the browser window with no black bars; width is capped at 3840 to cover 4K-wide and 32:9 ultrawide displays (beyond that the height trims to stay within the cap).
 
-Native also **follows the window live**: resizing the browser or rotating the device re-renders to the new aspect and orientation. `vid_followwindow` (default `1`) controls this — set `vid_followwindow 0` to freeze the render at its selected resolution and simply scale it to the window.
+Native also **follows the window live**: resizing the browser or rotating the device re-renders to the new aspect and orientation so it always fills the window. (To pin a fixed image instead, use a Classic mode.)
 
 FOV scales automatically with aspect. `fov` is interpreted as the user's horizontal FOV at 4:3; wider viewports blend between that literal value and pure Hor+ expansion based on `fov_adapt` (default `1`, matching the QuakeSpasm-family and DarkPlaces behavior). `fov_adapt 0` disables scaling (literal fov_x, stock Quake behavior — vertical shrinks on widescreens). `fov_adapt 1` is pure Hor+ (vertical preserved, horizontal widens on ultrawide). Values in between trade peripheral vision for edge comfort, and the setting is archived so a personal blend persists across sessions.
 
@@ -185,7 +185,6 @@ FOV scales automatically with aspect. `fov` is interpreted as the user's horizon
 | `joy_invertpitch` | `0` | yes | Gamepad look |
 | `analog_speed` | `400` | no | Analog shared |
 | `vid_mode` | `1` | yes | Video |
-| `vid_followwindow` | `1` | yes | Video |
 | `fov_adapt` | `1` | yes | Video |
 
 Archived cvars are written to `config.cfg` automatically and restored on next load. Non-archived cvars reset to their defaults on each startup unless set explicitly in `autoexec.cfg`.
