@@ -4,6 +4,33 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.14.0
+
+### Added
+- Mid-game demo recording: `record` can now be started at any point during a
+  live game, not only before connecting, capturing from the current frame.
+- Instant replay: bind a key to `replay` to play back a rolling in-memory ring
+  of the last few seconds of play. Recording and replay share a passive
+  signon-preamble capture so playback is contiguous, and demos are written to
+  the in-browser filesystem (no automatic download).
+- Native (window-fill) video modes that render at the browser window's live
+  aspect with no black bars and follow it on resize and device rotation;
+  Classic mode keeps a fixed 4:3 image. A redesigned Video Options menu adds
+  Mode (Classic/Native) and Detail (Low/Medium/High) rows plus a live
+  Resolution readout. `vid_mode` now spans 0–5 (Classic/Native × Low/Med/High)
+  and the selected mode persists across launches, so the client boots straight
+  into it.
+
+### Changed
+- The software renderer now supports render widths up to 3840px to cover
+  4K-wide and 32:9 ultrawide displays, and the viewmodel scales independently
+  of aspect so the weapon no longer recedes on ultrawide or portrait viewports.
+
+### Fixed
+- Bounded the demo-filename copies in `CL_Record_f`/`CL_PlayDemo_f`
+  (`bugfix/cl_demo.c.patch`): a long demo name typed at the console could
+  overflow the stack via unchecked `sprintf`/`strcpy` plus the `.dem` append.
+
 ## 1.13.0
 
 ### Added
