@@ -123,15 +123,13 @@ Nexus scans `CD_DIR` for `.ogg` and `.mp3` files and includes the resulting trac
 
 ### Video Modes and FOV Scaling
 
-The video mode list is built once at startup in `build_modelist()` from two aspect ratios — fixed 4:3 and the detected viewport aspect — each at three scale factors (25%, 50%, 100%), producing up to six entries. Duplicates are deduplicated. The first group (fixed 4:3) appear as **Classic Modes** in the Video Modes menu; the second group (viewport-matched) appear as **Fullscreen Modes**.
+`build_modelist()` produces six modes from a shared Detail-height ladder (240/480/960). Modes 0–2 are **Classic** — fixed 4:3 at each height. Modes 3–5 are **Native** — `native_dims()` anchors the same height and derives width from the live window aspect (`live_viewport_aspect()`), so Native fills the window with no black bars. Render width is capped at `VID_MAX_WIDTH` (3840); at wider aspects the height trims to stay within the cap.
 
-When `VID_SetMode()` changes resolution, `update_mode_fov()` adjusts the `fov` cvar to preserve the vertical field of view:
+Native **follows the window live**: `VID_Update()` recomputes the target each frame and, when it drifts from the current render, debounces a `VID_SetMode()` re-mode (orientation flips snap; gradual drags coalesce). This is gated by `vid_followwindow` (default on). The check runs every frame rather than only on canvas-resize, because mobile `innerWidth/innerHeight` can lag the canvas reflow after a rotation. The selected mode index is mirrored to `localStorage` and read in `VID_Init()`, so the engine boots directly into the last mode instead of the compiled default.
 
-```
-new_fov = atan(tan(old_fov / 2) × (new_aspect / old_aspect)) × 2
-```
+FOV is handled separately, in the `screen.c` patch (`SCR_CalcRefdef`): `fov` is the horizontal FOV at 4:3, and `fov_adapt` (default 1, archived) blends toward pure Hor+ so wider aspects widen the horizontal view while preserving the vertical. The canvas CSS `--nq-ar` property is updated via `js_update_canvas_ar()`; for Classic the browser pillarboxes/letterboxes to 4:3, while Native sets `--nq-ar` to the window aspect so the canvas fills the viewport.
 
-This keeps the vertical play area constant — switching to a widescreen viewport widens the horizontal view without compressing the vertical. The canvas CSS `--nq-ar` property is updated via `js_update_canvas_ar()` so the browser letterboxes or pillarboxes the canvas when the render aspect does not match the display.
+The software edge rasterizer stores screen-x in fixed point, widened from 12.20 to 14.18 (`patches/r_{main,draw,edge}.c.patch`) so render widths above the legacy ~2047 ceiling do not overflow the active-edge-table sort — this is what makes the 3840-wide ultrawide cap safe.
 
 ## Stateless Tunnel
 

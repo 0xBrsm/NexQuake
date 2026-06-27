@@ -13,16 +13,25 @@ int VGA_width, VGA_height, VGA_rowbytes;
 byte *VGA_pagebase;
 extern viddef_t vid;
 
-//engine mins/maxes
+//engine mins/maxes. The software edge rasterizer's screen-x fixed point was
+//widened 12.20 -> 14.18 (patches/r_{main,draw,edge}.c.patch) so render width
+//can exceed the old 2047 ceiling without overflowing the active-edge-table
+//sort; 18 fraction bits is still far more sub-pixel precision than needed.
+//3840 covers 4K-wide / super-ultrawide at full native resolution.
 #define VID_MIN_WIDTH  320
 #define VID_MIN_HEIGHT 200
-#define VID_MAX_WIDTH  1280
+#define VID_MAX_WIDTH  3840
 #define VID_MAX_HEIGHT 1024
-//
+
 #define VID_ASPECT_RATIO (4.0 / 3.0)
 #define VID_DEFAULT_MODE "1"
 #define VID_NUM_MODES 6
-#define VID_ROW_SIZE 3
+
+// Live re-mode tuning (VID_Update): ignore sub-pixel jitter, snap orientation
+// flips almost immediately, debounce gradual drags so they re-mode once settled.
+#define NATIVE_REMODE_EPS         2      // px; change below this is noise
+#define NATIVE_REMODE_FLIP_DELAY  0.03   // s; portrait<->landscape flip
+#define NATIVE_REMODE_DRAG_DELAY  0.20   // s; continuous resize
 
 
 static int clamp_int(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -51,77 +60,131 @@ static double startup_viewport_aspect(void)
 	return w > h ? (double)w / h : (double)h / w;
 }
 
+// True live window aspect (w/h, tracks resizes) — uses the same innerWidth/
+// innerHeight source that 50-ui.js feeds the canvas CSS vars, so the render
+// aspect and the CSS box stay in lockstep (no residual letterbox).
+EM_JS(double, js_live_viewport_aspect, (), {
+	try {
+		var w = window.innerWidth  || (window.visualViewport && window.visualViewport.width)  || (screen && screen.width)  || 0;
+		var h = window.innerHeight || (window.visualViewport && window.visualViewport.height) || (screen && screen.height) || 0;
+		if (w > 0 && h > 0) return w / h;
+	} catch (e) {}
+	return 0.0;
+});
+
+// Persist the selected mode index to localStorage and read it back at boot, so
+// VID_Init can start directly in the user's last mode instead of the compiled
+// default — avoiding the visible default->config jump on launch. We store the
+// mode *index* (not dimensions); geometry is always recomputed for the current
+// window, so launching in a different orientation than you exited still fits.
+EM_JS(void, js_persist_vid_mode, (int n), {
+	try { localStorage.setItem("nqVidMode", n); } catch (e) {}
+});
+
+EM_JS(int, js_startup_vid_mode, (), {
+	try {
+		var v = localStorage.getItem("nqVidMode");
+		if (v !== null && v !== "") return parseInt(v, 10) | 0;
+	} catch (e) {}
+	return -1;
+});
+
+static double live_viewport_aspect(void)
+{
+	double a = js_live_viewport_aspect();
+	return a > 0.0 ? a : startup_viewport_aspect();
+}
+
 typedef struct { int width, height; char desc[32]; } vid_mode_t;
 static vid_mode_t modelist[VID_NUM_MODES];
 static int        vid_nummodes;
 static cvar_t     vid_mode = {"vid_mode", VID_DEFAULT_MODE, true};
+// Live re-mode: Native follows window resizes/rotations. Safe now that the
+// render width is capped below the edge-rasterizer overflow (see VID_MAX_WIDTH).
+// Archived toggle so it can be disabled if ever needed.
+static cvar_t     vid_followwindow = {"vid_followwindow", "1", true};
 static int        startup_vid_mode;
 static int        vid_modenum = -1;
-static int        vid_hunkmark = 0;
-static int        vid_line = 0;
-static int        vid_wmodes = 0;
-static int        vid_fixedmodes = 0;
+static int        vid_cursor = 0;        // menu row: 0 = Mode, 1 = Detail
+static int        vid_fixedmodes = 0;    // count of Classic (4:3) modes
+static int        disp_w, disp_h;        // canvas drawing-buffer size (window px)
+static int        vid_hunkmark;          // hunk high-mark for the per-mode video block
+static double     native_resize_at;
+static int        native_resize_pending, native_pending_w, native_pending_h;
 
 extern void M_Menu_Options_f(void);
 extern void M_Print(int cx, int cy, char *str);
-extern void M_PrintWhite(int cx, int cy, char *str);
 extern void M_DrawCharacter(int cx, int line, int num);
 extern void M_DrawPic(int x, int y, qpic_t *pic);
 extern qpic_t *Draw_CachePic(char *path);
 int VID_NumModes(void);
 char *VID_GetModeDescription(int n);
 
-#define MAX_COLUMN_SIZE 5
-#define MODE_AREA_HEIGHT (MAX_COLUMN_SIZE + 6)
+// Decode a mode index: 0..vid_fixedmodes-1 are Classic, the rest Native; the
+// Detail tier (0..2) is the offset within either group.
+static int mode_is_native(int m) { return m >= vid_fixedmodes; }
+static int mode_tier(int m)      { return mode_is_native(m) ? m - vid_fixedmodes : m; }
 
-// Compute (w,h) from one anchored dimension; anchor_w true = width anchor.
-static void mode_size(double aspect, qboolean anchor_w, int anchor, int *w, int *h)
+// Detail tiers expressed as render height (Low / Medium / High), shared by both
+// Modes: Classic renders them 4:3, Native renders them at the window aspect, so
+// toggling Mode at a tier keeps the same height — only the width changes.
+static const int   detail_height[3] = { 240, 480, 960 };
+static const char *detail_name[3]   = { "Low", "Medium", "High" };
+
+// Scale v into [lo,hi], moving its partner by the same factor so the pair's
+// aspect is preserved. (v's min and max are mutually exclusive, so one call
+// per axis covers both bounds.)
+static void fit_axis(double *v, double *partner, double lo, double hi)
 {
-	if (anchor_w) {
-		*w = clamp_int(anchor, VID_MIN_WIDTH,  VID_MAX_WIDTH);
-		*h = clamp_int((int)(*w / aspect + 0.5), VID_MIN_HEIGHT, VID_MAX_HEIGHT);
-	} else {
-		*h = clamp_int(anchor, VID_MIN_HEIGHT, VID_MAX_HEIGHT);
-		*w = clamp_int((int)(*h * aspect + 0.5), VID_MIN_WIDTH,  VID_MAX_WIDTH);
-	}
+	double s = *v < lo ? lo / *v : (*v > hi ? hi / *v : 1.0);
+	*v *= s; *partner *= s;
 }
 
-static void append_mode(int w, int h)
+// Native (window-matching) dimensions: anchor on the Detail height, derive
+// width from the window aspect, and fit both axes (aspect-preserving) into the
+// engine envelope. At very wide aspects the width saturates and the height is
+// trimmed so the image still fills the window edge-to-edge without bars.
+static void native_dims(int tier, double aspect, int *w, int *h)
 {
-	int i;
+	double hh = detail_height[clamp_int(tier, 0, 2)];
+	double ww;
 
-	if (vid_nummodes >= VID_NUM_MODES) return;
-	for (i = 0; i < vid_nummodes; i++) {
-		if (modelist[i].width == w && modelist[i].height == h)
-			return;
-	}
-	modelist[vid_nummodes].width  = w;
-	modelist[vid_nummodes].height = h;
-	sprintf(modelist[vid_nummodes].desc, "%dx%d", w, h);
-	vid_nummodes++;
+	if (aspect <= 0.0) aspect = VID_ASPECT_RATIO;
+	ww = hh * aspect;
+	fit_axis(&ww, &hh, VID_MIN_WIDTH,  VID_MAX_WIDTH);
+	fit_axis(&hh, &ww, VID_MIN_HEIGHT, VID_MAX_HEIGHT);
+	*w = clamp_int((int)(ww + 0.5), VID_MIN_WIDTH,  VID_MAX_WIDTH);
+	*h = clamp_int((int)(hh + 0.5), VID_MIN_HEIGHT, VID_MAX_HEIGHT);
 }
 
+static void set_mode_entry(int idx, int w, int h)
+{
+	modelist[idx].width  = w;
+	modelist[idx].height = h;
+	snprintf(modelist[idx].desc, sizeof(modelist[idx].desc), "%dx%d", w, h);
+}
+
+// Modes 0-2: Classic 4:3 (fixed). Modes 3-5: Native (recomputed live on resize).
+// Both share the detail_height ladder, so mode N and N+3 have the same height.
 static void build_modelist(void)
 {
-	static const double scales[3]    = {0.25, 0.5, 1.0};
-	const double hardcap = (double)VID_MAX_WIDTH / VID_MAX_HEIGHT;
-	double aspects[2] = {VID_ASPECT_RATIO, startup_viewport_aspect()};
-	int w, h, i, j;
+	double aspect = live_viewport_aspect();
+	int w, h, j;
 
-	vid_nummodes = 0;
-	vid_fixedmodes = 0;
 	startup_vid_mode = Q_atoi(vid_mode.string);
 
-	for (i = 0; i < 2; i++) {
-		qboolean wa = (aspects[i] >= hardcap);
-		int base = wa ? VID_MAX_WIDTH : VID_MAX_HEIGHT;
-		for (j = 0; j < 3; j++) {
-			mode_size(aspects[i], wa, (int)(base * scales[j] + 0.5), &w, &h);
-			append_mode(w, h);
-		}
-		if (i == 0)
-			vid_fixedmodes = vid_nummodes;
+	for (j = 0; j < 3; j++) {
+		h = detail_height[j];
+		w = (int)(h * VID_ASPECT_RATIO + 0.5);
+		set_mode_entry(j, w, h);
 	}
+	vid_fixedmodes = 3;
+
+	for (j = 0; j < 3; j++) {
+		native_dims(j, aspect, &w, &h);
+		set_mode_entry(3 + j, w, h);
+	}
+	vid_nummodes = 6;
 }
 
 static void VID_DescribeModes_f(void)
@@ -131,132 +194,94 @@ static void VID_DescribeModes_f(void)
 		Con_Printf("%2d: %s%s\n", i, modelist[i].desc, i == vid_modenum ? "  *" : "");
 }
 
-static void draw_mode_grid(int start, int count, int base_y)
+// Apply a Mode (native?) + Detail (tier) selection. Native dimensions are
+// recomputed from the live window aspect so the choice takes effect at the
+// right size immediately.
+static void vid_apply(int native, int tier)
 {
-	int i, col = 16, row = base_y;
-	for (i = 0; i < count; i++) {
-		char *desc = VID_GetModeDescription(start + i);
-		if (start + i == vid_modenum)
-			M_PrintWhite(col, row, desc);
-		else
-			M_Print(col, row, desc);
-		col += 13 * 8;
-		if ((i % VID_ROW_SIZE) == (VID_ROW_SIZE - 1)) {
-			col = 16;
-			row += 8;
-		}
+	int m = (native ? vid_fixedmodes : 0) + clamp_int(tier, 0, 2);
+	if (native) {
+		int w, h;
+		native_dims(tier, live_viewport_aspect(), &w, &h);
+		set_mode_entry(m, w, h);
 	}
+	VID_SetMode(m, NULL);
 }
 
-static void grid_cursor_pos(int line, int fixed, int classic_y, int fs_y,
-	int *cx, int *cy)
-{
-	int in_classic = (line < fixed);
-	int local = in_classic ? line : line - fixed;
-	*cx = 8 + (local % VID_ROW_SIZE) * 13 * 8;
-	*cy = (in_classic ? classic_y : fs_y) + (local / VID_ROW_SIZE) * 8;
-}
-
-// Navigate a flat grid of `count` items in `cols` columns.
-static int grid_nav(int line, int count, int cols, int key)
-{
-	int total_rows;
-	switch (key) {
-	case K_LEFTARROW:  // wrap left within row
-		line = (line / cols) * cols + (line + cols - 1) % cols;
-		if (line >= count)
-			line = count - 1;
-		break;
-	case K_RIGHTARROW:  // wrap right within row
-		line = (line / cols) * cols + (line + 1) % cols;
-		if (line >= count)
-			line = (line / cols) * cols;
-		break;
-	case K_UPARROW:  // wrap up to bottom-most row in same column
-		line -= cols;
-		if (line < 0) {
-			total_rows = (count + cols - 1) / cols;
-			line += total_rows * cols;
-			while (line >= count)
-				line -= cols;
-		}
-		break;
-	case K_DOWNARROW:  // wrap down to top-most row in same column
-		line += cols;
-		if (line >= count) {
-			total_rows = (count + cols - 1) / cols;
-			line -= total_rows * cols;
-			while (line < 0)
-				line += cols;
-		}
-		break;
-	}
-	return line;
-}
+// Video menu layout (8x8 text-grid coords). Resolution sits a blank row below
+// Detail to set the read-only readout apart from the two adjustable rows.
+#define VID_MENU_LABEL_X    56
+#define VID_MENU_VALUE_X   152
+#define VID_MENU_CURSOR_X  136
+#define VID_MENU_MODE_Y     56
+#define VID_MENU_DETAIL_Y   64
+#define VID_MENU_RES_Y      80
 
 static void VID_MenuDraw(void)
 {
-	int fixed_modes, fullscreen_modes, fixed_rows;
-	int classic_y, fs_label_y, fs_modes_y, cursor_x, cursor_y;
 	qpic_t *p;
-
-	if (vid_nummodes <= 0) {
-		M_Print(16, 36, "No video modes available");
-		M_Print(16, 52, "Esc to exit");
-		return;
-	}
+	int cur = vid_modenum >= 0 ? vid_modenum : 0;
+	int is_native = mode_is_native(cur);
+	int tier = mode_tier(cur);
+	int rw, rh;
+	char buf[32];
 
 	p = Draw_CachePic("gfx/vidmodes.lmp");
 	M_DrawPic((320 - p->width) / 2, 4, p);
 
-	vid_wmodes = vid_nummodes;
-	fixed_modes = clamp_int(vid_fixedmodes, 0, vid_wmodes);
-	fullscreen_modes = vid_wmodes - fixed_modes;
-	fixed_rows = (fixed_modes + (VID_ROW_SIZE - 1)) / VID_ROW_SIZE;
-	classic_y = 36 + 2 * 8;
-	fs_label_y = 36 + (fixed_rows + 4) * 8;
-	fs_modes_y = fs_label_y + 2 * 8;
+	M_Print(VID_MENU_LABEL_X, VID_MENU_MODE_Y, "Mode");
+	M_Print(VID_MENU_VALUE_X, VID_MENU_MODE_Y, is_native ? "Native" : "Classic (4:3)");
 
-	if (vid_line < 0 || vid_line >= vid_wmodes)
-		vid_line = clamp_int(vid_modenum, 0, vid_wmodes - 1);
+	M_Print(VID_MENU_LABEL_X, VID_MENU_DETAIL_Y, "Detail");
+	M_Print(VID_MENU_VALUE_X, VID_MENU_DETAIL_Y, (char *)detail_name[tier]);
 
-	M_Print(13 * 8, 36, "Classic Modes");
-	draw_mode_grid(0, fixed_modes, classic_y);
-
-	if (fullscreen_modes > 0) {
-		M_Print(11 * 8, fs_label_y, "Fullscreen Modes");
-		draw_mode_grid(fixed_modes, fullscreen_modes, fs_modes_y);
+	// Resolution is read-only. For Native it tracks the live window.
+	if (is_native)
+		native_dims(tier, live_viewport_aspect(), &rw, &rh);
+	else {
+		rw = modelist[cur].width; rh = modelist[cur].height;
 	}
+	M_Print(VID_MENU_LABEL_X, VID_MENU_RES_Y, "Resolution");
+	snprintf(buf, sizeof(buf), "%d x %d", rw, rh);
+	M_Print(VID_MENU_VALUE_X, VID_MENU_RES_Y, buf);
 
-	M_Print(9 * 8, 36 + MODE_AREA_HEIGHT * 8 + 8, "Press Enter to set mode");
-	M_Print(15 * 8, 36 + MODE_AREA_HEIGHT * 8 + 8 * 2, "Esc to exit");
+	M_DrawCharacter(VID_MENU_CURSOR_X, vid_cursor == 0 ? VID_MENU_MODE_Y : VID_MENU_DETAIL_Y,
+	                12 + ((int)(realtime * 4) & 1));
+}
 
-	grid_cursor_pos(vid_line, fixed_modes, classic_y, fs_modes_y, &cursor_x, &cursor_y);
-	M_DrawCharacter(cursor_x, cursor_y, 12 + ((int)(realtime * 4) & 1));
+// Advance the highlighted row's value, wrapping (Quake menus cycle).
+static void vid_adjust(int dir)
+{
+	int cur = vid_modenum >= 0 ? vid_modenum : 0;
+	int is_native = mode_is_native(cur);
+	int tier = mode_tier(cur);
+
+	if (vid_cursor == 0)
+		vid_apply(!is_native, tier);                 // Mode: toggle Classic <-> Native
+	else
+		vid_apply(is_native, (tier + dir + 3) % 3);  // Detail: cycle Low/Med/High
 }
 
 static void VID_MenuKey(int key)
 {
-	if (vid_wmodes <= 0)
-		return;
-	if (vid_line < 0 || vid_line >= vid_wmodes)
-		vid_line = clamp_int(vid_modenum, 0, vid_wmodes - 1);
-
 	switch (key) {
 	case K_ESCAPE:
 		S_LocalSound("misc/menu1.wav");
 		M_Menu_Options_f();
 		break;
-	case K_LEFTARROW:
-	case K_RIGHTARROW:
 	case K_UPARROW:
 	case K_DOWNARROW:
 		S_LocalSound("misc/menu1.wav");
-		vid_line = grid_nav(vid_line, vid_wmodes, VID_ROW_SIZE, key);
+		vid_cursor ^= 1;
 		break;
+	case K_LEFTARROW:
+		S_LocalSound("misc/menu3.wav");
+		vid_adjust(-1);
+		break;
+	case K_RIGHTARROW:
 	case K_ENTER:
-		S_LocalSound("misc/menu1.wav");
-		VID_SetMode(vid_line, NULL);
+		S_LocalSound("misc/menu3.wav");
+		vid_adjust(1);
 		break;
 	default:
 		break;
@@ -270,7 +295,6 @@ static EMSCRIPTEN_WEBGL_CONTEXT_HANDLE gl_ctx;
 static GLuint prog, blit_prog, vao, fb_tex, pal_tex, resolve_fbo, resolve_tex;
 static byte *pixels;
 static uint32_t pal_rgba[256];
-static int disp_w, disp_h;
 
 // Fullscreen triangle from gl_VertexID (no VBO), palette lookup in fragment
 static const char *vs_src =
@@ -383,6 +407,8 @@ int VID_SetMode(int modenum, unsigned char *palette)
 	VGA_pagebase = vid.buffer = vid.conbuffer = pixels;
 	VGA_rowbytes = vid.rowbytes = vid.conrowbytes = w;
 
+	// Reallocate the z-buffer + surface cache for this mode's resolution. (Stock
+	// maps only, so the per-mode hunk churn from live re-modes stays bounded.)
 	if (d_pzbuffer) { D_FlushCaches(); Hunk_FreeToHighMark(vid_hunkmark); }
 	vid_hunkmark = Hunk_HighMark();
 	int chunk = w * h * sizeof(*d_pzbuffer), cachesize = D_SurfaceCacheForRes(w, h);
@@ -392,6 +418,8 @@ int VID_SetMode(int modenum, unsigned char *palette)
 
 	VID_SetPalette(palette);
 	Cvar_Set("vid_mode", va("%d", modenum));
+	if (modenum != vid_modenum)
+		js_persist_vid_mode(modenum);  // mirror to localStorage for next boot
 	vid_modenum = modenum;
 	vid.recalc_refdef = 1;
 	return 1;
@@ -417,10 +445,17 @@ void VID_Init(unsigned char *palette) {
 
 	build_modelist();
 	Cvar_RegisterVariable(&vid_mode);
+	Cvar_RegisterVariable(&vid_followwindow);
 	Cmd_AddCommand("vid_describemodes", VID_DescribeModes_f);
 	vid_menudrawfn = VID_MenuDraw;
 	vid_menukeyfn = VID_MenuKey;
 	init_gl();
+	// Prefer the last mode the user picked (persisted), so boot starts in it
+	// rather than the compiled default and then jumping when config.cfg loads.
+	{
+		int sm = js_startup_vid_mode();
+		if (sm >= 0 && sm < vid_nummodes) startup_vid_mode = sm;
+	}
 	VID_SetMode(clamp_int(startup_vid_mode, 0, vid_nummodes - 1), palette);
 }
 
@@ -446,9 +481,40 @@ void VID_Update(vrect_t *rects) {
 	emscripten_get_element_css_size("#canvas", &css_w, &css_h);
 	double dpr = emscripten_get_device_pixel_ratio();
 	int dw = (int)(css_w * dpr), dh = (int)(css_h * dpr);
-	if (dw > 0 && dh > 0 && (dw != disp_w || dh != disp_h)) {
+	int disp_changed = (dw > 0 && dh > 0 && (dw != disp_w || dh != disp_h));
+	if (disp_changed) {
 		disp_w = dw; disp_h = dh;
 		emscripten_set_canvas_element_size("#canvas", disp_w, disp_h);
+	}
+	// Native follows the window: recompute the target from the live window aspect
+	// EVERY frame and re-mode (debounced) when it drifts. Deliberately not gated
+	// on canvas-resize — on mobile, innerWidth/innerHeight lag the canvas reflow
+	// after a rotation, so a one-shot check can read a stale (pre-rotation) aspect
+	// and never re-correct. Re-checking each frame self-heals once the viewport
+	// settles; the EM_JS aspect read is cheap. (disp_changed only resizes the GL
+	// buffer above.)
+	if (vid_followwindow.value && mode_is_native(vid_modenum) && disp_w > 0 && disp_h > 0) {
+		int tw, th;
+		native_dims(mode_tier(vid_modenum), live_viewport_aspect(), &tw, &th);
+		if (abs(tw - VGA_width) > NATIVE_REMODE_EPS || abs(th - VGA_height) > NATIVE_REMODE_EPS) {
+			if (!native_resize_pending ||
+			    abs(tw - native_pending_w) > NATIVE_REMODE_EPS || abs(th - native_pending_h) > NATIVE_REMODE_EPS) {
+				// Snap orientation flips (rotation) immediately; debounce drags.
+				int flip = (VGA_width >= VGA_height) != (tw >= th);
+				native_resize_pending = 1;
+				native_pending_w = tw; native_pending_h = th;
+				native_resize_at = realtime + (flip ? NATIVE_REMODE_FLIP_DELAY : NATIVE_REMODE_DRAG_DELAY);
+			} else if (realtime >= native_resize_at) {
+				native_resize_pending = 0;
+				set_mode_entry(vid_modenum, tw, th);
+				VID_SetMode(vid_modenum, NULL);
+				return;  // skip render this frame; renderer resets next frame
+			}
+		} else {
+			native_resize_pending = 0;
+		}
+	} else {
+		native_resize_pending = 0;
 	}
 	// Pass 1: palette resolve at game res into FBO
 	glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo);

@@ -261,6 +261,10 @@ if [[ "${kind}" == "client" ]]; then
   apply_patch "${ROOT}/client/patches/cl_main.c.patch"
   apply_patch "${ROOT}/client/patches/screen.c.patch"
   apply_patch "${ROOT}/client/patches/snd_dma.c.patch"
+  apply_patch "${ROOT}/client/patches/r_shared.h.patch"
+  apply_patch "${ROOT}/client/patches/r_main.c.patch"
+  apply_patch "${ROOT}/client/patches/r_draw.c.patch"
+  apply_patch "${ROOT}/client/patches/r_edge.c.patch"
 
   client_gamename="$(sed -n 's/^[[:space:]]*#define[[:space:]]*GAMENAME[[:space:]]*"\([^"]\+\)".*/\1/p' "${OUT_DIR}/quakedef.h" | head -n1)"
   if [[ -z "${client_gamename}" ]]; then
