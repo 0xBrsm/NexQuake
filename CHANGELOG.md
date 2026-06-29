@@ -4,6 +4,15 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.14.1
+
+### Fixed
+- Particle effects (rocket trails, explosions) rendered about twice their
+  intended size in Native mode at High detail. Particle size now tracks the
+  view's projection scale instead of the raw render width, so it matches the
+  rest of the scene at any aspect ratio, and is guarded against extreme
+  render widths or very low `fov` values.
+
 ## 1.14.0
 
 ### Added

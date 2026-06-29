@@ -83,14 +83,25 @@ The control channel also flows the other way: Nexus can push admin-driven consol
 
 Per-device sensitivity cvars extend the Options menu: `sensitivity` (Quake's built-in) for mouse, `touch_sensitivity` for touch swipe-look, and `joy_sensitivity` for gamepad stick look. `lookspring` and `lookstrafe` are similarly per-device. The menu label updates to reflect the active input device.
 
-FOV scales automatically with the canvas aspect ratio when changing video mode (configurable via `vid_mode`). Classic 4:3 (`vid_mode 0`) is the default.
-
 | File | Purpose |
 |------|---------|
 | `in_wasm.c` | Input module: mouse pointer-lock, touch slot dispatch, virtual joystick, swipe-look, gamepad polling, per-device sensitivity cvars (`sensitivity`, `touch_sensitivity`, `joy_sensitivity`). |
 | `patches/keys.c.patch` | Renames `JOY*`/`AUX*` key names to readable aliases (`JOY_A`, `JOY_B`, `TOUCH1`–`TOUCH9`, etc.) for bind commands. |
-| `patches/menu.c.patch` | Per-device sensitivity/lookspring/lookstrafe labels and sliders; video mode menu with fixed and fullscreen sections. |
-| `patches/host.c.patch` | FOV aspect-ratio scaling on video mode change. |
+| `patches/menu.c.patch` | Per-device sensitivity/lookspring/lookstrafe labels and sliders. |
+
+### 8. Dynamic Resolution and Wide Rendering
+
+**Quality-of-life addition.** The Video Options menu exposes Mode (Classic 4:3 / Native window-fill) and Detail (Low/Medium/High) with a live Resolution readout; `vid_mode` spans 0–5 and persists across launches. Native renders at the browser window's live aspect (Hor+ FOV scaling) and follows resizes and device rotation, while Classic keeps a fixed 4:3 image. The software renderer handles widths up to 3840px for 4K-wide and 32:9 ultrawide displays. Pushing the software rasterizer past its legacy ~2047px width ceiling required widening its screen-x fixed point and re-keying resolution-dependent heuristics (particle sizing) off the projection scale rather than raw render width.
+
+| File | Purpose |
+|------|---------|
+| `vid_wasm.c` | Mode list (Classic/Native × Detail), live window-aspect Native sizing, `vid_mode` persistence across launches, and per-mode z-buffer/surface-cache allocation. |
+| `patches/menu.c.patch` | Video Options menu with Mode (Classic/Native) and Detail rows plus a live resolution readout. |
+| `patches/host.c.patch` | FOV aspect-ratio (Hor+) scaling on video mode change. |
+| `patches/r_shared.h.patch` | Raises the software renderer `MAXWIDTH` to 3840 (4K-wide/ultrawide). |
+| `patches/r_main.c.patch` | Widens the edge-rasterizer screen-x fixed point (12.20→14.18) so render width can exceed the legacy 2047px ceiling; draws the viewmodel at an aspect-independent scale. |
+| `patches/r_draw.c.patch`, `patches/r_edge.c.patch` | Companion fixed-point widening in the edge clip and active-edge-table code. |
+| `patches/d_modech.c.patch` | Sizes particles (rocket trails, explosions) by the projection scale rather than raw render width so they stay correct in Native/ultrawide; clamps the particle z-shift to avoid undefined behavior at extreme widths or very low `fov`. |
 
 ## Shell
 
