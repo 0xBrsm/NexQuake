@@ -18,6 +18,20 @@ extern viddef_t vid;
 //can exceed the old 2047 ceiling without overflowing the active-edge-table
 //sort; 18 fraction bits is still far more sub-pixel precision than needed.
 //3840 covers 4K-wide / super-ultrawide at full native resolution.
+//
+//!!! Do NOT raise these without re-checking three independent, unrelated
+//ceilings these values sit just under — each fails silently (no compile
+//error), and the failure modes are a hang, corruption, or a black screen:
+//  - VID_MAX_WIDTH <= ~8191: the 14.18 edge screen-x fixed point above.
+//    Past it, R_EdgeDrawing's active-edge sort cycles -> main-thread hang.
+//  - VID_MAX_WIDTH <= 4096: the resolve texture is uploaded as one GL
+//    texture; 4096 is the floor for WebGL2 MAX_TEXTURE_SIZE. Past it the
+//    upload silently fails on low-end GPUs -> black 3D view.
+//  - VID_MAX_HEIGHT <= MAXHEIGHT (1024, patches/r_shared.h.patch): height
+//    indexes fixed [MAXHEIGHT]-sized scratch (e.g. D_WarpScreen rowptr[]).
+//    This one has ZERO margin today (1024 == 1024) -> any bump overruns.
+//Width also drives MAXWIDTH in r_shared.h.patch (D_WarpScreen column[], sin
+//tables); keep that patch's MAXWIDTH >= VID_MAX_WIDTH.
 #define VID_MIN_WIDTH  320
 #define VID_MIN_HEIGHT 200
 #define VID_MAX_WIDTH  3840
