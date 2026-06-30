@@ -41,6 +41,7 @@ Available actions:
 | Action | How |
 |------|---------|
 | Edit | Double-click a `.cfg` file to open the editor, then use `Save` or `Cancel`. |
+| Play | Click the play (▷) button beside a `.dem` file, or double-click it. Plays the demo and closes the overlay. |
 | Download | Click the download button beside a file. |
 | Delete | Click the delete button and confirm. |
 | Move | Drag a file from the list and drop it onto another game tab. |
@@ -67,7 +68,7 @@ Because `replay` needs no typing, it suits a key bind for "save that" moments, f
 |------|---------|----------|---------|
 | `replay_seconds` | `10` | yes | Seconds of play kept in the replay buffer. `0` disables the buffer; plain `record` still works. |
 
-Demos are written to the active game directory and appear in the `Game Files` list, where the download button saves them to your device (see [Game File Mode](#game-file-mode)). A replay demo briefly shows your connection point before the captured window begins.
+Demos are written to the active game directory and appear in the `Game Files` list, where the play (▷) button (or a double-click) plays them and the download button saves them to your device (see [Game File Mode](#game-file-mode)). A demo recorded under one game directory can be played from any other.
 
 ## Local Files Override Server Files
 

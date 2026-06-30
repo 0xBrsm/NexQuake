@@ -4,6 +4,28 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.15.0
+
+### Added
+- Play demos from the in-game file overlay: each `.dem` entry has a play button
+  and double-clicks to play, so recorded games and instant replays can be
+  reviewed without typing `playdemo` — and a demo recorded under one game
+  directory plays back from any other.
+
+### Fixed
+- Mid-game `record`/`replay` demos no longer open on an out-of-world ("void")
+  camera or drop into an intermission/scoreboard screen when playback ends. The
+  captured signon preamble now reflects the live connection, so playback starts
+  cleanly at the current game state.
+- Particle size now scales linearly with the view projection instead of in
+  exponential power-of-2 steps, so particles stay consistently sized across
+  resolutions and detail tiers (mid-distance particles previously bloated up to
+  ~2x at higher render widths). Classic mode at the default fov is unchanged.
+- Native (window-fill) modes no longer drop to ~30fps from compositing cost on
+  wide/ultrawide windows: the WebGL canvas backbuffer is sized to the render
+  resolution and upscaled by the browser, so present cost tracks the Detail
+  tier rather than the window size.
+
 ## 1.14.1
 
 ### Fixed
