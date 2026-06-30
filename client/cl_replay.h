@@ -43,12 +43,11 @@ void CL_Replay_Reset (void);
 // connection -- i.e. a valid demo can be seeded mid-game.
 qboolean CL_Demo_HavePreamble (void);
 
-// Writes the captured signon preamble (demo-framed messages) to an open demo
-// file, immediately after the caller has written the cd-track header line.
-// Used by both mid-game "record" and "replay". anchortime is the server time
-// (cl.mtime[0] for record, the oldest ring frame for replay) that the frames
-// following the preamble will start at; the preamble's lone gameplay datagram
-// is rebased just before it so the demo timeline is contiguous.
-void CL_Demo_WritePreamble (FILE *f, float anchortime);
+// Writes the captured static signon preamble (demo-framed messages) to an open
+// demo file, immediately after the caller has written the cd-track header line.
+// Used by both mid-game "record" and "replay". The preamble contains no gameplay
+// datagram, so it is written verbatim; the frames the caller appends afterwards
+// (live for record, the ring for replay) carry their own svc_time.
+void CL_Demo_WritePreamble (FILE *f);
 
 #endif // CL_REPLAY_H

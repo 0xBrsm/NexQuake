@@ -1,15 +1,14 @@
 --- d_modech.c
 +++ d_modech.c
-@@ -72,14 +72,29 @@
+@@ -72,15 +72,33 @@
  	d_zrowbytes = vid.width * 2;
  	d_zwidth = vid.width;
  
 -	d_pix_min = r_refdef.vrect.width / 320;
 +	// Particle screen size must track the world projection scale, not raw
 +	// render width. Under Native's Hor+ FOV widening, xscale (= width/hFOV)
-+	// stays ~constant per detail tier while width balloons with aspect, so the
-+	// stock width-keyed sizing oversizes particles on wide/Native modes (most
-+	// visibly at High, where width crosses a d_pix_shift power-of-2 step).
++	// stays ~constant per detail tier while width balloons with aspect, so
++	// the stock width-keyed sizing oversizes particles on wide/Native modes.
 +	// 2*xscale == vrect.width at the 4:3 base FOV, so Classic at the default
 +	// fov is unchanged; wide/portrait/custom-fov views now size correctly.
 +	float pix_ref = 2.0f * xscale;
@@ -21,15 +20,20 @@
 -	d_pix_max = (int)((float)r_refdef.vrect.width / (320.0 / 4.0) + 0.5);
 -	d_pix_shift = 8 - (int)((float)r_refdef.vrect.width / 320.0 + 0.5);
 +	d_pix_max = (int)(pix_ref / (320.0f / 4.0f) + 0.5f);
-+	d_pix_shift = 8 - (int)(pix_ref / 320.0f + 0.5f);
  	if (d_pix_max < 1)
  		d_pix_max = 1;
-+	// A very wide render or a low fov can drive pix_ref large enough to make
-+	// this negative; d_part.c uses it as `izi >> d_pix_shift`, and a negative
-+	// shift is undefined behavior. (Reachable since the width cap rose to 3840
-+	// in #126 — the stock width-keyed formula has the same latent hole.)
-+	if (d_pix_shift < 0)
-+		d_pix_shift = 0;
  
++	// NOTE: d_pix_shift now holds a 16.16 LINEAR multiplier, NOT a shift count
++	// (kept the stock name to avoid touching d_local.h). d_part.c computes
++	// pix = (izi * d_pix_shift) >> 16. The size law must be LINEAR in pix_ref
++	// (as d_pix_min/max are); stock keyed it to a power-of-2 shift,
++	// izi >> (8 - pix_ref/320), which grows as 2^(pix_ref/320) -- exponential --
++	// so mid-distance particles bloat ~2x by 1280-wide even at 4:3. At
++	// pix_ref==320 this multiplier is 512, and izi*512>>16 == izi>>7: bit-for-
++	// bit the stock 320-wide result, so Classic at the default fov is an exact
++	// no-op and only the higher-res modes the port added are corrected.
++	d_pix_shift = (int)(pix_ref * (512.0f / 320.0f) + 0.5f);
++
  	if (pixelAspect > 1.4)
  		d_y_aspect_shift = 1;
+ 	else

@@ -40,11 +40,11 @@
  	cls.forcetrack = track;
  	fprintf (cls.demofile, "%i\n", cls.forcetrack);
 +
-+	// NexQuake: mid-game record -- seed the demo with the captured signon
-+	// preamble (rebased onto the current server time) so it is playable
-+	// even though recording started post-connect
++	// NexQuake: mid-game record -- seed the demo with the captured static
++	// signon preamble so it is playable even though recording started
++	// post-connect; the live frames that follow carry their own svc_time
 +	if (c == 2 && cls.state == ca_connected)
-+		CL_Demo_WritePreamble (cls.demofile, cl.mtime[0]);
++		CL_Demo_WritePreamble (cls.demofile);
  	
  	cls.demorecording = true;
  }

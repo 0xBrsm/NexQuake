@@ -5,6 +5,7 @@
 
   var FILE_DELETE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
   var FILE_EXEC_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.5 9a9 9 0 0 1 14.8-3.4L23 10"/><path d="M20.5 15A9 9 0 0 1 5.7 18.4L1 14"/></svg>';
+  var FILE_PLAY_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
 
   function getDirs() {
     var baseDir = ctx.getBaseGameDir();
@@ -73,6 +74,10 @@
     return path.toLowerCase().endsWith('.cfg');
   }
 
+  function isDem(path) {
+    return path.toLowerCase().endsWith('.dem');
+  }
+
   function toFsPath(dir, displayPath) {
     var rel = String(displayPath || '').trim();
     var root;
@@ -133,6 +138,40 @@
     if (!nqWasmExecCommand(command)) {
       ctx.showErrorMessage('Failed to run: ' + command, 3000);
       console.error('Exec cfg failed: wasm command bridge unavailable');
+      return;
+    }
+    ctx.showInfoMessage(command, 1300);
+  }
+
+  // Build a playdemo argument that the engine resolves no matter which gamedir
+  // is currently active. displayPath is USERFS-relative ("/<mod>/<name>.dem");
+  // "../<mod>/<name>.dem" resolves to "<mod>/<name>.dem" off any active search
+  // path (see COM_FOpenFile), so a demo recorded under one mod still plays from
+  // the console or while connected to another.
+  function toPlayDemoArg(displayPath) {
+    var rel = String(displayPath || '').trim();
+    if (!rel || rel.charAt(0) !== '/' || !isDem(rel))
+      return '';
+    rel = rel.replace(/^\/+/, '');
+    if (/[\r\n"]/.test(rel))
+      return '';
+    return '"../' + rel + '"';
+  }
+
+  function playDemoFile(displayPath) {
+    var arg;
+    var command;
+    if (ctx.isCdDir(ctx.currentDir) || !isDem(displayPath))
+      return;
+    arg = toPlayDemoArg(displayPath);
+    if (!arg) {
+      ctx.showErrorMessage('Invalid demo path', 2000);
+      return;
+    }
+    command = 'playdemo ' + arg;
+    if (!nqWasmExecCommand(command)) {
+      ctx.showErrorMessage('Failed to run: ' + command, 3000);
+      console.error('Play demo failed: wasm command bridge unavailable');
       return;
     }
     ctx.showInfoMessage(command, 1300);
@@ -326,6 +365,8 @@
       span.textContent = shownName;
       if (!isCdMode && isCfg(displayPath))
         span.classList.add('nq-editable');
+      if (!isCdMode && isDem(displayPath))
+        span.classList.add('nq-playable');
 
       if (isCdMode) {
         ctx.setCdTrackMeta(li, displayPath, false);
@@ -350,6 +391,15 @@
         execBtn.title = 'exec cfg';
         execBtn.setAttribute('aria-label', 'exec cfg');
         actions.appendChild(execBtn);
+      }
+
+      if (!isCdMode && isDem(displayPath)) {
+        var playBtn = document.createElement('button');
+        playBtn.className = 'nq-play';
+        playBtn.innerHTML = FILE_PLAY_ICON;
+        playBtn.title = 'play demo';
+        playBtn.setAttribute('aria-label', 'play demo');
+        actions.appendChild(playBtn);
       }
 
       dlBtn = document.createElement('button');
@@ -381,6 +431,7 @@
     openEditor,
     closeEditor,
     execCfgFile,
+    playDemoFile,
     deleteFile,
     requestDeleteFile,
     moveFileToDir,

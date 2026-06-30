@@ -447,6 +447,9 @@
       Module.exportFile(displayPath);
     } else if (btn.classList.contains('nq-exec')) {
       ctx.execCfgFile(displayPath);
+    } else if (btn.classList.contains('nq-play')) {
+      ctx.playDemoFile(displayPath);
+      ctx.setPanelOpen(false);
     } else if (btn.classList.contains('nq-del')) {
       ctx.requestDeleteFile(displayPath)
         .catch(function(err) {
@@ -467,9 +470,14 @@
       return;
     if (ev.target.closest('button'))
       return;
-    if (!displayPath.toLowerCase().endsWith('.cfg'))
+    if (displayPath.toLowerCase().endsWith('.cfg')) {
+      ctx.openEditor(displayPath);
       return;
-    ctx.openEditor(displayPath);
+    }
+    if (displayPath.toLowerCase().endsWith('.dem')) {
+      ctx.playDemoFile(displayPath);
+      ctx.setPanelOpen(false);
+    }
   });
   }
 

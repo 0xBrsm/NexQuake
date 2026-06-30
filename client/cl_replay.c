@@ -37,11 +37,23 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 //   - "record <name>" (patched CL_Record_f) can start at any time: it writes
 //     the cd-track header + preamble, then stock cls.demorecording appends
 //     live frames from then on.
-//   - "replay [name]" splices preamble + ring + a trailing svc_disconnect.
+//   - "replay [name]" writes preamble + ring + a trailing svc_disconnect.
 //
-// In both cases playback opens on the connect frame, then CL_LerpPoint snaps
-// cl.time forward over the (possibly large) gap to the first live/ring frame,
-// so there is no real-time stall; entities resync within a frame or two.
+// This follows the spirit of the proven mid-game-record pattern (QuakeSpasm's
+// "demo_head"): the preamble holds the whole signon -- serverinfo, precaches,
+// baselines, static entities, scores/lightstyles, svc_signonnum 1..3 -- but
+// stops at the boundary where signon completes. The message that arrives at
+// cls.signon == SIGNONS-1 is the first *live* frame (its svc_update promotes
+// the client to SIGNONS); it, and everything after, is excluded from the
+// preamble. So there is no spliced connect-time gameplay frame left over to be
+// rendered and no svc_time rebasing: playback replays the signon, then opens
+// directly on the first ring/live frame, with CL_LerpPoint snapping cl.time up
+// to that frame's server time exactly as at the start of any demo.
+//
+// NOTE: NexQuake's WebSocket/WebTransport carrier piggybacks the reliable
+// signon payload onto svc_time-led datagrams, so the preamble boundary keys off
+// cls.signon, never the leading svc byte. The whole signon is svc_time frames
+// here except the serverinfo block, so "skip svc_time frames" would drop it.
 
 #include "quakedef.h"
 #include "cl_replay.h"
@@ -79,29 +91,6 @@ static int		replay_seq;		// auto-numbered filenames (per session)
 
 static qboolean	replay_alloc_failed;
 
-// The preamble ends with exactly one gameplay datagram (the first post-signon
-// update, which carries the only svc_time in the preamble). We rewrite its
-// timestamp to sit just before the oldest ring frame, so the demo timeline is
-// contiguous instead of jumping from connect-time to the recording window.
-static qboolean	replay_pre_off_set;
-static int	replay_pre_off;		// byte offset of that svc_time float in replay_signon
-
-// Nominal gap between the preamble's last frame and the first ring frame.
-#define REPLAY_STEP	0.05f
-
-static float Replay_ReadFloat (const byte *p)
-{
-	float	f;
-	memcpy (&f, p, 4);
-	return LittleFloat (f);
-}
-
-static void Replay_WriteFloat (byte *p, float v)
-{
-	float	f = LittleFloat (v);
-	memcpy (p, &f, 4);
-}
-
 static void CL_Replay_f (void);
 
 /*
@@ -126,7 +115,6 @@ void CL_Replay_Reset (void)
 {
 	replay_signon_len = 0;
 	replay_signon_done = false;
-	replay_pre_off_set = false;
 	replay_w = 0;
 	replay_used = 0;
 	replay_head = replay_tail = replay_count = 0;
@@ -247,9 +235,10 @@ static void Replay_AppendSignon (int cursize)
 CL_Replay_Capture
 
 Called from CL_GetMessage for every live message. net_message holds the raw
-bytes and cls.signon reflects the state *before* this message is parsed, so the
-message that completes the signon is still seen at SIGNONS-1 and is correctly
-bucketed into the preamble.
+bytes and cls.signon reflects the state *before* this message is parsed. The
+static signon messages (cls.signon < SIGNONS) go into the preamble; the first
+gameplay datagram -- the one that would flip cls.signon to SIGNONS -- is the
+boundary: it and every datagram after it belong to the live/ring stream.
 ==============
 */
 void CL_Replay_Capture (void)
@@ -263,25 +252,26 @@ void CL_Replay_Capture (void)
 
 	if (cls.signon != SIGNONS)
 	{
-		int	at = replay_signon_len;	// where this framed message will land
-
 		// preamble: a fresh svc_serverinfo starts a new map -- the old ring
 		// references stale precache indices, so reset everything.
 		if (net_message.data[0] == svc_serverinfo)
-		{
 			CL_Replay_Reset ();
-			at = 0;
-		}
-		Replay_AppendSignon (cursize);
 
-		// remember the svc_time float of this gameplay datagram (the last such
-		// is the first post-signon update); rewritten at replay time.
-		if (cursize >= 5 && net_message.data[0] == svc_time &&
-			replay_signon_len > at)
+		// The message that arrives at SIGNONS-1 is the final signon stage: its
+		// first svc_update promotes the client to SIGNONS (see CL_ParseUpdate).
+		// That is the first *live* frame, so we keep it -- and everything after
+		// -- OUT of the preamble. Note NexQuake's transport piggybacks the
+		// signon payload (baselines, svc_signonnum) onto svc_time-led datagrams,
+		// so the boundary must key off cls.signon, NOT the message's leading
+		// svc byte; everything up to SIGNONS-1 (serverinfo + signon datagrams)
+		// is genuine signon data and belongs in the preamble.
+		if (cls.signon == SIGNONS - 1)
 		{
-			replay_pre_off = at + REPLAY_HDR_SIZE + 1;
-			replay_pre_off_set = true;
+			replay_signon_done = true;
+			return;
 		}
+
+		Replay_AppendSignon (cursize);
 		return;
 	}
 
@@ -299,15 +289,13 @@ qboolean CL_Demo_HavePreamble (void)
 	return replay_signon_done && replay_signon_len > 0;
 }
 
-void CL_Demo_WritePreamble (FILE *f, float anchortime)
+void CL_Demo_WritePreamble (FILE *f)
 {
 	if (replay_signon_len <= 0)
 		return;
-	// Rebase the preamble's lone gameplay datagram (the first post-signon
-	// update) onto anchortime, so playback steps preamble -> following frames
-	// smoothly instead of jumping from connect-time to the recording start.
-	if (replay_pre_off_set)
-		Replay_WriteFloat (replay_signon + replay_pre_off, anchortime - REPLAY_STEP);
+	// The preamble is the static signon only (no gameplay datagram), so it is
+	// written verbatim -- there is no timestamp to rebase. The caller's next
+	// frames (live for "record", ring for "replay") carry their own svc_time.
 	fwrite (replay_signon, 1, replay_signon_len, f);
 }
 
@@ -321,20 +309,6 @@ static void Replay_WriteRingFrame (FILE *f, int start, int len)
 	fwrite (replay_ring + start, 1, first, f);
 	if (len > first)
 		fwrite (replay_ring, 1, len - first, f);
-}
-
-// Linearize a (possibly wrapped) ring frame into out; returns its length.
-static int Replay_CopyFrame (int idx, byte *out)
-{
-	int		start = replay_frames[idx].start;
-	int		len = replay_frames[idx].len;
-	int		first = REPLAY_RING_MAX - start;
-	if (first > len)
-		first = len;
-	memcpy (out, replay_ring + start, first);
-	if (len > first)
-		memcpy (out + first, replay_ring, len - first);
-	return len;
 }
 
 // Auto-named, map-aware filename: "<gamedir>/<map>-replay-NN.dem".
@@ -399,19 +373,10 @@ static void CL_Replay_f (void)
 		return;
 	}
 
-	// anchor the preamble to the oldest ring frame's server time (svc_time
-	// leads every gameplay datagram) so the spliced timeline is contiguous
-	{
-		byte	head[REPLAY_HDR_SIZE + NET_MAXMESSAGE];
-		int		hlen = Replay_CopyFrame (replay_head, head);
-		float	r0 = (hlen >= REPLAY_HDR_SIZE + 5 && head[REPLAY_HDR_SIZE] == svc_time)
-			? Replay_ReadFloat (head + REPLAY_HDR_SIZE + 1)
-			: replay_frames[replay_head].time;
-
-		// cd track header line (-1 = no forced track), then the preamble
-		fprintf (f, "%i\n", -1);
-		CL_Demo_WritePreamble (f, r0);
-	}
+	// cd track header line (-1 = no forced track), then the static signon
+	// preamble; the ring frames that follow carry their own honest svc_time.
+	fprintf (f, "%i\n", -1);
+	CL_Demo_WritePreamble (f);
 
 	// the rolling window, oldest to newest
 	for (i = 0; i < replay_count; i++)

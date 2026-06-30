@@ -1,0 +1,14 @@
+--- d_part.c
++++ d_part.c
+@@ -88,7 +88,10 @@
+ 	pdest = d_viewbuffer + d_scantable[v] + u;
+ 	izi = (int)(zi * 0x8000);
+ 
+-	pix = izi >> d_pix_shift;
++	// d_pix_shift is a 16.16 linear scale here (see D_ViewChanged), not a shift:
++	// same on-screen particle size at every resolution. izi <= 0x8000/
++	// PARTICLE_Z_CLIP (4096), so the product stays within int at any render width.
++	pix = (izi * d_pix_shift) >> 16;
+ 
+ 	if (pix < d_pix_min)
+ 		pix = d_pix_min;

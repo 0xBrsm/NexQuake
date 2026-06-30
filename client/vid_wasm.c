@@ -403,7 +403,10 @@ int VID_SetMode(int modenum, unsigned char *palette)
 	if (resolve_tex) glDeleteTextures(1, &resolve_tex);
 	fb_tex      = mk_tex(GL_R8,    w, h, GL_RED);
 	resolve_tex = mk_tex(GL_RGBA8, w, h, GL_RGBA);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
+	// Plain LINEAR, no mip chain: the canvas backbuffer is sized to the render
+	// resolution, so Pass 2 presents 1:1 and never minifies. The texture is only
+	// ever sampled from level 0; no per-frame glGenerateMipmap is needed.
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glBindFramebuffer(GL_FRAMEBUFFER, resolve_fbo);
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, resolve_tex, 0);
@@ -486,13 +489,23 @@ void VID_Update(vrect_t *rects) {
 		return;  // skip render this frame; renderer resets next frame
 	}
 
-	double css_w, css_h;
-	emscripten_get_element_css_size("#canvas", &css_w, &css_h);
-	double dpr = emscripten_get_device_pixel_ratio();
-	int dw = (int)(css_w * dpr), dh = (int)(css_h * dpr);
-	int disp_changed = (dw > 0 && dh > 0 && (dw != disp_w || dh != disp_h));
-	if (disp_changed) {
-		disp_w = dw; disp_h = dh;
+	// Canvas backbuffer = render resolution, NOT the full window. The element's
+	// CSS box (sized to the game aspect via --nq-ar) upscales it to fill the
+	// window, so the browser composites only render-res pixels. Sizing the
+	// backbuffer to full-window x devicePixelRatio made the *present* (the
+	// browser compositing the WebGL canvas) -- not the render -- the frame's
+	// bottleneck: a large ultrawide backbuffer can't be composited within the
+	// 60Hz vsync budget, so every Native mode fell to the next vsync (~30fps)
+	// regardless of Detail or render cost (which is ~1ms). Present cost now
+	// tracks the Detail tier, exactly like render cost. Upscaling render->window
+	// is a single bilinear step either way -- here the browser does it on
+	// composite instead of the GL blit doing it into an oversized backbuffer.
+	if (disp_w == 0) {
+		// Fresh mode change: VID_SetMode already sized the canvas, so just adopt
+		// the dims without a redundant emscripten_set_canvas_element_size call.
+		disp_w = VGA_width; disp_h = VGA_height;
+	} else if (VGA_width != disp_w || VGA_height != disp_h) {
+		disp_w = VGA_width; disp_h = VGA_height;
 		emscripten_set_canvas_element_size("#canvas", disp_w, disp_h);
 	}
 	// Native follows the window: recompute the target from the live window aspect
@@ -533,19 +546,16 @@ void VID_Update(vrect_t *rects) {
 	glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, pal_tex);
 	glUseProgram(prog); glBindVertexArray(vao);
 	glDrawArrays(GL_TRIANGLES, 0, 3);
-	// Pass 2: aspect-correct blit to display (letterbox / pillarbox)
+	// Pass 2: present the resolved image 1:1. The canvas backbuffer is sized to
+	// the render resolution (see above), so the viewport is always the full
+	// (0,0,VGA_width,VGA_height) -- the browser handles any letterbox/pillarbox
+	// via CSS (--nq-ar) when upscaling the canvas to fill the window. The blit
+	// never minifies, so the mip filter stays LINEAR (set in VID_SetMode) and no
+	// per-frame glGenerateMipmap is needed.
 	glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, resolve_tex);
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-	glGenerateMipmap(GL_TEXTURE_2D);
-	{
-		int fw = disp_w ? disp_w : VGA_width, fh = disp_h ? disp_h : VGA_height;
-		double gasp = (double)VGA_width / VGA_height;
-		int bx = 0, by = 0, bw = fw, bh = fh;
-		if ((double)fw / fh > gasp) { bw = (int)(fh * gasp + 0.5); bx = (fw - bw) / 2; }
-		else                        { bh = (int)(fw / gasp + 0.5); by = (fh - bh) / 2; }
-		glClear(GL_COLOR_BUFFER_BIT);
-		glViewport(bx, by, bw, bh);
-	}
+	glClear(GL_COLOR_BUFFER_BIT);
+	glViewport(0, 0, VGA_width, VGA_height);
 	glUseProgram(blit_prog);
 	glDrawArrays(GL_TRIANGLES, 0, 3);
 }

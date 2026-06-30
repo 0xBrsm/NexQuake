@@ -556,6 +556,7 @@ body.nq-touch-input #nq-overlay-panel .nq-tabs-wrap {
   word-break: normal;
 }
 #nq-vfs-list li[data-path] .nq-fname.nq-editable { cursor: pointer; }
+#nq-vfs-list li[data-path] .nq-fname.nq-playable { cursor: pointer; }
 #nq-vfs-list li .nq-file-actions {
   position: absolute;
   right: 4px;
