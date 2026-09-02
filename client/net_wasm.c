@@ -1,6 +1,6 @@
 /*
  * net_wasm.c — Portable browser transport shell. See net_wasm.h.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-only
  */
 
 #include "quakedef.h"

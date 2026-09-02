@@ -1,6 +1,6 @@
 /*
  * net_nqchan.h — NexQuake landriver: protocol + addressing over net_wasm.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-only
  *
  * Implements Quake's net_landriver_t on top of net_wasm's transport
  * primitives. Owns NexQuake relay framing, CTL/DATA demux, ring buffers,

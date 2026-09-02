@@ -1,6 +1,6 @@
 /*
  * net_ws.c — WebSocket transport for net_wasm.c.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-only
  *
  * Fills out wasm_ws_transport. Non-blocking start(); send_raw() assumes
  * is_ready() per the contract in net_wasm.h. No sleeps here — all waits

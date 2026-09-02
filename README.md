@@ -92,6 +92,11 @@ README.md         You're still reading it (go play Quake!)
 
 ## License
 
-GPL-2.0-or-later, consistent with the original Quake GPL release.
+Split by component, per what NexQuake actually owns the copyright to:
+
+- `nexus/` (Go relay/server): **AGPL-3.0-only** (`nexus/LICENSE`). Original NexQuake code, and the one component that runs as a persistent network service — AGPL's network-source clause exists for exactly this.
+- `client/` and `server/` (WASM client + dedicated server, both built by patching id Software's GPL release): **GPL-3.0-only** (`LICENSE`, this directory), upgraded via id Software's own `GPL-2.0-or-later` grant. NexQuake doesn't hold copyright on that engine code, so it can't go further than GPLv3.
+
+The two licenses cross-combine explicitly (GPLv3 §13 / AGPLv3 §13), and AGPL's network-source obligation covers the combined system as distributed. See `ATTRIBUTIONS.md` for upstream lineage per component.
 
 Game data files (PAK files) have separate licensing. Shareware permits redistribution of official archives only. Full version has restrictive licensing; do not host PAK1.PAK publicly.

@@ -1,6 +1,6 @@
 /*
  * net_wasm.h — Portable browser transport shell for Quake-on-WASM projects.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-only
  *
  * Transport-level primitives only:
  *   - Pluggable transport vtable (wasm_transport_t) for browser substrates

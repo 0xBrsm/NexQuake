@@ -302,7 +302,7 @@ Without prefetch, connecting to a server triggers sequential downloads of every 
 
 ## Contributing
 
-NexQuake is GPL-2.0-or-later. Contributions are welcome. The best way to get started:
+NexQuake is split-licensed: `client/` and `server/` are GPL-3.0-only, `nexus/` is AGPL-3.0-only (see [License](../README.md#license) and [ATTRIBUTIONS.md](../ATTRIBUTIONS.md)). Contributions are welcome. The best way to get started:
 
 1. Read this document and the [Documentation Index](./README.md)
 2. Run the Docker quick start

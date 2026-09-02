@@ -55,4 +55,9 @@ The following projects provided inspiration and reference during NexQuake's deve
 
 ## License
 
-NexQuake code remains distributed under `GPL-2.0-or-later`, consistent with upstream Quake GPL lineage.
+License is split by component, reflecting who actually holds copyright on what:
+
+- **`client/` and `server/`** — `GPL-3.0-only`. Both are built by patching id Software's GPL-released Quake engine (`WinQuake/`, GPL-2.0-or-later per the id Software headers). NexQuake doesn't own that copyright, so the most it can do is exercise the "or any later version" option id Software already granted — that reaches GPLv3, not AGPL, which is a separate license document rather than a later GPL version.
+- **`nexus/`** — `AGPL-3.0-only`. Wholly original NexQuake code (its own websocket-tunnel/orchestration lineage noted above, plus the MIT-licensed `koron-go/lha` derivative), and the one component that runs as a persistent network service, which is the case AGPL's network-source clause exists for.
+
+GPLv3 §13 and AGPLv3 §13 each carry an explicit cross-compatibility clause permitting a combined work built from a GPLv3 part and an AGPLv3 part; the special AGPL network-source requirement then applies to the combination as distributed. This isn't a workaround — it's the standard, documented mechanism for exactly this split (network service vs. embedded/derivative engine).

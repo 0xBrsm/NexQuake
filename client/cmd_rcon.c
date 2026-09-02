@@ -1,6 +1,6 @@
 /*
  * cmd_rcon.c
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-only
  *
  * In-game rcon console command. Collects the user's arguments and the
  * rcon_password cvar, hands them off to the JS-side JSON-RPC client

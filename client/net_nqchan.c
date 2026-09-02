@@ -1,6 +1,6 @@
 /*
  * net_nqchan.c — NexQuake landriver. See net_nqchan.h.
- * SPDX-License-Identifier: GPL-2.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-only
  *
  * Derivative work; see ../ATTRIBUTIONS.md.
  */

@@ -1,6 +1,8 @@
 /*
 Copyright (C) 1996-1997 Id Software, Inc.
-Copyright (C) 2024 NexQuake contributors
+Copyright (C) 2026 Brian St. Marie
+
+SPDX-License-Identifier: GPL-3.0-only
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
