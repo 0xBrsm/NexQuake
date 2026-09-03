@@ -77,7 +77,7 @@ The login scopes aren't configured directly — they're derived from `AUTH_ADMIN
 | Variable | Default | Description |
 |------|---------|-------------|
 | `CL_CONCURRENCY` | `16` | Sets the number of game files to download simultaneously. Set `0` for unbounded (capped by queue size). |
-| `CL_SMENU` | `0` | If `1`, auto-opens the server search menu on client start up to make joining a server easier. |
+| `CL_SMENU` | `0` | If `1`, auto-opens the server search menu on client start up to make joining a server easier. Skipped when the client is already headed into a game (`+connect`, `+map`, `+playdemo`), including from `CL_ARGS`, URL args, or `autoexec.cfg`. |
 | `CL_ARGS` | empty | Set launch arguments for client start up in shell-style strings (i.e. use single quotes for multiple args). |
 | `CL_URL_ARGS` | `1` | If `1`, lets players add extra client startup arguments in the URL after `?`, separated by `&`. Set `0` to disable URL argument passthrough. |
 

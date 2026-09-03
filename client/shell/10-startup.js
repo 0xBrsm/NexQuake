@@ -242,7 +242,12 @@ function nqStartGameRuntime() {
       // explosion on a frag) doesn't trigger a blocking synchronous fetch.
       nqWasmPrefetchKnownSounds();
       if (Module.nexquakeAutoSMenuOnFirstLoad === true) {
-        if (!nqWasmExecCommand('smenu'))
+        // `idle` (not a bare `smenu`) so the engine drops the auto-open if the
+        // player is already headed into a game. This lands in the cbuf behind
+        // quake.rc, so by the time it runs stuffcmds has executed any
+        // +connect/+map/+playdemo and the engine can just look at its own state
+        // -- args are not the only way in (autoexec.cfg, aliases, +exec).
+        if (!nqWasmExecCommand('smenu idle'))
           console.info('Auto-open server search menu skipped: wasm command bridge unavailable');
       }
     }

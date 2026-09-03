@@ -64,7 +64,7 @@ The control channel also flows the other way: Nexus can push admin-driven consol
 |------|---------|
 | `patches/net.h.patch` | `gamedir[16]` field in `hostcache_t`. |
 | `patches/net_main.c.patch` | gamedir column in `slist` output; reads the SSE-fed hostcache. |
-| `net_slist.c` | SSE ingest seam: `NET_SlistBegin`/`IngestEntry`/`Commit` rebuild `hostcache[]` from each snapshot; `slist_agg_done` short-circuits the broadcast wait. |
+| `net_slist.c` | SSE ingest seam: `NET_SlistBegin`/`IngestEntry`/`Commit` rebuild `hostcache[]` from each snapshot; `slist_agg_done` short-circuits the broadcast wait. Also hosts the `smenu` command: `smenu idle` (the `CL_SMENU` auto-open) yields to a game the player already asked for. |
 | `shell/56-sse.js` | Owns the always-on `EventSource`/fetch-stream subscription to `/events`; parses snapshots and drives the ingest seam. |
 | `patches/menu.c.patch` | Gamedir column, centered layout, console auto-close, `smenu` command; live menu repaint on snapshot. |
 

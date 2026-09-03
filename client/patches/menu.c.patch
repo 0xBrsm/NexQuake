@@ -320,7 +320,7 @@
  	Cmd_AddCommand ("menu_video", M_Menu_Video_f);
  	Cmd_AddCommand ("help", M_Menu_Help_f);
  	Cmd_AddCommand ("menu_quit", M_Menu_Quit_f);
-+	Cmd_AddCommand ("smenu", M_Menu_Search_f);
++	Cmd_AddCommand ("smenu", NET_SMenu_Cmd_f);
  }
  
  

@@ -15,7 +15,7 @@
  	int		driver;
  	int		ldriver;
  	struct qsockaddr addr;
-@@ -237,6 +239,17 @@
+@@ -237,6 +239,18 @@
  
  extern int hostCacheCount;
  extern hostcache_t hostcache[HOSTCACHESIZE];
@@ -29,11 +29,12 @@
 +int NET_SlistWidth(int budget);
 +int NET_SlistFormatHeaderLine(int budget, char *out, int outsz);
 +int NET_SlistFormatEntryLine(int budget, const hostcache_t *host, char *out, int outsz);
++void NET_SMenu_Cmd_f(void);
 +extern qboolean slist_agg_done;
  
  #if !defined(_WIN32 ) && !defined (__linux__) && !defined (__sun__)
  #ifndef htonl
-@@ -314,7 +328,7 @@
+@@ -314,7 +329,7 @@
  {
  	struct _PollProcedure	*next;
  	double					nextTime;

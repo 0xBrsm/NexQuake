@@ -493,3 +493,45 @@ int NET_SlistFormatEntryLine(int budget, const hostcache_t *host, char *out, int
 	NET_SlistBuildLayout(budget, &layout);
 	return NET_SlistFormatEntry(&layout, host, out, outsz);
 }
+
+// -----------------------------------------------------------------------
+// The `smenu` console command.
+//
+// A bare `smenu` is a player request (console, bind, or the two menu.c
+// callsites) and always opens the browser, even mid-game. `smenu idle` is the
+// CL_SMENU boot auto-open, which steps aside when the player is already headed
+// somewhere. Any other argument falls through to the unconditional path, so a
+// typo opens the menu rather than silently eating the request.
+// -----------------------------------------------------------------------
+
+extern void M_Menu_Search_f(void); // menu.c
+
+// True when nothing the player asked for owns the client. The attract demo
+// loop counts as idle: quake.rc's `startdemos` runs `playdemo`, and
+// CL_PlayDemo_f sets cls.state = ca_connected for demos too, so cls.demonum
+// (>= 0 only while the loop is driving playback) is the only thing separating
+// attract mode from an explicit +playdemo/+timedemo.
+static qboolean NET_ClientIdle(void)
+{
+	if (sv.active)
+		return false;			// +map / +load
+	if (cls.demoplayback)
+		return cls.demonum != -1;	// attract loop, not a requested demo
+	return cls.state == ca_disconnected;
+}
+
+void NET_SMenu_Cmd_f(void)
+{
+	// Host_Init only queues "exec quake.rc"; the buffer runs on the first
+	// Host_Frame, and both `exec` and `stuffcmds` insert ahead of whatever is
+	// already queued. The boot `smenu idle` is appended behind all of it, so
+	// any +connect/+map/+playdemo has already run by the time we get here and
+	// the state below is settled.
+	if (Cmd_Argc() > 1 && !Q_strcasecmp(Cmd_Argv(1), "idle") && !NET_ClientIdle())
+	{
+		Con_DPrintf("smenu idle skipped: game in progress\n");
+		return;
+	}
+
+	M_Menu_Search_f();
+}
