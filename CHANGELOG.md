@@ -4,6 +4,20 @@ Code evolution in `0xBrsm/NexQuake` — client, Nexus (relay), and server.
 
 Versioning note: entries through `0.19.x` represent pre-1.0 development history. Legacy `0.20.0` is the stable-versioning commitment point and maps to `1.0.0`.
 
+## 1.15.1
+
+### Changed
+- `client/` and `server/` are now licensed GPL-3.0-only; `nexus/` (the
+  network-facing relay) is now licensed AGPL-3.0-only.
+
+### Fixed
+- Touch console: left-zone hold now recalls command history, right-zone
+  hold now scrolls the backlog, and text entry shows the current edit line
+  instead of opening blank.
+- Auto server-menu on first load no longer fires when the client is already
+  headed into a game via config/autoexec/alias commands outside the startup
+  arg list.
+
 ## 1.15.0
 
 ### Added
