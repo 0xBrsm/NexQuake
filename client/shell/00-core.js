@@ -195,6 +195,11 @@ function nqWasmGetTextInputValue() {
   return value || '';
 }
 
+function nqWasmGetConsoleLineValue() {
+  var value = nqWasmCall('NQWasm_GetConsoleLineValue', 'string', [], [], '');
+  return value || '';
+}
+
 function nqWasmGetVideoWidth() {
   return Number(nqWasmCall('NQWasm_GetVideoWidth', 'number', [], [], 0)) | 0;
 }

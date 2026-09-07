@@ -72,6 +72,7 @@ extern void SNDDMA_Resume(void);
 #define TOUCH_MOVE_ZONE_SPLIT 0.40f
 #define TOUCH_MENU_ZONE_SPLIT 0.50f
 #define JOY_MENU_NAV_THRESH   0.35f
+#define TOUCH_CONSOLE_SWIPE_PX 24.0f
 
 #define JOY_DEAD_ZONE             0.20f
 #define JOY_LOOK_DEAD_ZONE        0.14f
@@ -178,7 +179,9 @@ static qboolean joy_enabled = true;
 #define CTRL_JOY_BTN_COUNT    JOY_MAX_BUTTONS
 #define CTRL_JOY_NAV_BASE    (CTRL_JOY_BTN_BASE + CTRL_JOY_BTN_COUNT)
 #define CTRL_JOY_NAV_COUNT    4
-#define CTRL_TOTAL           (CTRL_JOY_NAV_BASE + CTRL_JOY_NAV_COUNT)
+#define CTRL_TOUCH_HISTORY_BASE (CTRL_JOY_NAV_BASE + CTRL_JOY_NAV_COUNT)
+#define CTRL_TOUCH_HISTORY_COUNT 2
+#define CTRL_TOTAL           (CTRL_TOUCH_HISTORY_BASE + CTRL_TOUCH_HISTORY_COUNT)
 
 static qboolean vctrl_down[CTRL_TOTAL];
 static int      vctrl_emitted_key[CTRL_TOTAL];
@@ -365,10 +368,44 @@ static void update_touch_nav(int nav_base, float thresh, float nx, float ny)
 	qboolean in_con = touch_in_console();
 	qboolean nav = in_menu || in_con;
 
+	// Left-zone joystick: menu nav when the menu is up, console backlog
+	// scroll (K_PGUP/K_PGDN, same as the desktop scroll binds to, see
+	// Key_Console) when the console is up.
 	emit_virtual_control(nav_base + 0, in_con ? K_PGUP : 0, K_UPARROW,    nav && ny < -thresh);
 	emit_virtual_control(nav_base + 1, in_con ? K_PGDN : 0, K_DOWNARROW,  nav && ny >  thresh);
 	emit_virtual_control(nav_base + 2, 0, K_LEFTARROW,  in_menu && nx < -thresh);
 	emit_virtual_control(nav_base + 3, 0, K_RIGHTARROW, in_menu && nx >  thresh);
+}
+
+// Right-zone swipe: while the console is up, a vertical swipe/hold on the
+// look-drag touch point recalls command history (K_UPARROW/K_DOWNARROW,
+// same as the desktop history binds to, see Key_Console) instead of
+// turning the view. Reuses touch_look_points' existing lastY/startY
+// tracking (already maintained by on_touchmove's in-nav-mode branch) rather
+// than adding new per-point state.
+static void update_touch_console_history(int history_base)
+{
+	qboolean up = false, down = false;
+
+	if (touch_in_console())
+	{
+		int i;
+
+		for (i = 0; i < MAX_TOUCH_POINTS; i++)
+		{
+			float dy;
+
+			if (!touch_look_points[i].active)
+				continue;
+			dy = touch_look_points[i].lastY - touch_look_points[i].startY;
+			up = dy < -TOUCH_CONSOLE_SWIPE_PX;
+			down = dy > TOUCH_CONSOLE_SWIPE_PX;
+			break;
+		}
+	}
+
+	emit_virtual_control(history_base + 0, K_UPARROW, 0, up);
+	emit_virtual_control(history_base + 1, K_DOWNARROW, 0, down);
 }
 
 // ---------------------------------------------------------------------------
@@ -1582,6 +1619,8 @@ void IN_Commands(void)
 	// joy_connected is authoritative after IN_PollGamepads runs.
 	if (!joy_connected && touch_enabled)
 		update_touch_nav(CTRL_JOY_NAV_BASE, JOY_MENU_NAV_THRESH, touch_move.axisX, touch_move.axisY);
+	if (touch_enabled)
+		update_touch_console_history(CTRL_TOUCH_HISTORY_BASE);
 }
 
 void IN_Move(usercmd_t *cmd)

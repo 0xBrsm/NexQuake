@@ -37,11 +37,9 @@
     var gameValue;
     if (captureMode)
       return;
-    if (Module.nqConsoleTextEntryOpen) {
-      setTextEntryValue('');
-      return;
-    }
-    gameValue = normalizeTextEntryValue(nqWasmGetTextInputValue());
+    gameValue = normalizeTextEntryValue(
+      Module.nqConsoleTextEntryOpen ? nqWasmGetConsoleLineValue() : nqWasmGetTextInputValue()
+    );
     if (gameValue === textEntryValue)
       return;
     setTextEntryValue(gameValue);
@@ -59,10 +57,7 @@
     if (!Module.nqTextEntryOpen)
       return;
     ctx.textEntryInput.placeholder = 'tap to type';
-    if (Module.nqConsoleTextEntryOpen)
-      setTextEntryValue('');
-    else
-      syncTextEntryValueFromGame();
+    syncTextEntryValueFromGame();
     focusTextEntryInput();
   }
 

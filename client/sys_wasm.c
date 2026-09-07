@@ -275,6 +275,11 @@ static qboolean text_entry_was_dismissed(void)
 	return text_input_latched && !js_text_entry_open();
 }
 
+static qboolean console_active(void)
+{
+	return key_dest == key_console || (key_dest == key_game && con_forcedup);
+}
+
 void main_loop(void) {
 	qboolean in_con, in_msg, want_text;
 
@@ -311,7 +316,7 @@ void main_loop(void) {
 	// text entry no longer supports them.
 	if (menu_text_editing && (!M_TextInputActive() || text_entry_was_dismissed()))
 		menu_text_editing = false;
-	in_con = key_dest == key_console || (key_dest == key_game && con_forcedup);
+	in_con = console_active();
 	if (console_text_editing && (!in_con || text_entry_was_dismissed()))
 		console_text_editing = false;
 
@@ -331,8 +336,9 @@ void main_loop(void) {
 	else if (!want_text && text_input_latched)
 		js_close_text_entry();
 
-	// Keep menu text field in sync while editing.
-	if (menu_text_editing)
+	// Keep the text field in sync while editing (menu, or console recall
+	// via the swipe-history gesture while the box is already open).
+	if (menu_text_editing || console_text_editing)
 		js_sync_menu_text_entry();
 
 	console_text_latched = in_con;
@@ -389,7 +395,7 @@ EMSCRIPTEN_KEEPALIVE void NQWasm_TextInputKey(int key)
 {
 	if (key < 1 || key > 127)
 		return;
-	if (!(key_dest == key_message || key_dest == key_console || (key_dest == key_game && con_forcedup) || M_TextInputActive()))
+	if (!(key_dest == key_message || console_active() || M_TextInputActive()))
 		return;
 	Key_Event(key, true);
 	Key_Event(key, false);
@@ -400,6 +406,18 @@ EMSCRIPTEN_KEEPALIVE const char *NQWasm_GetTextInputValue(void)
 	if (!M_TextInputActive())
 		return "";
 	return M_TextInputValue();
+}
+
+EMSCRIPTEN_KEEPALIVE const char *NQWasm_GetConsoleLineValue(void)
+{
+#define MAXCMDLINE 256
+	extern char key_lines[32][MAXCMDLINE];
+	extern int edit_line;
+#undef MAXCMDLINE
+
+	if (!console_active())
+		return "";
+	return key_lines[edit_line] + 1; // +1 skips the ']' prompt char
 }
 
 EMSCRIPTEN_KEEPALIVE int NQWasm_GetVideoWidth(void)
